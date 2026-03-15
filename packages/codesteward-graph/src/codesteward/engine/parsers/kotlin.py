@@ -3,8 +3,8 @@
 
 import structlog
 
-from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 from ._ast_utils import TreeSitterBase, _walk
+from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 
 log = structlog.get_logger()
 
@@ -342,4 +342,5 @@ class KotlinParser(TreeSitterBase, LanguageParser):
 
 # Auto-register when this module is imported
 from . import register_language  # noqa: E402
+
 register_language("kotlin", KotlinParser, frozenset({".kt", ".kts"}))

@@ -3,8 +3,8 @@
 
 import structlog
 
-from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 from ._ast_utils import TreeSitterBase, _strip_quotes, _walk
+from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 from .c import _c_function_name  # reuse helper
 
 log = structlog.get_logger()
@@ -233,4 +233,5 @@ class CppParser(TreeSitterBase, LanguageParser):
 
 
 from . import register_language  # noqa: E402
+
 register_language("cpp", CppParser, frozenset({".cpp", ".cxx", ".cc", ".hpp", ".hxx"}))

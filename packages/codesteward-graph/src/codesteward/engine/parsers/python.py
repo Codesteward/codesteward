@@ -6,13 +6,12 @@ from typing import Any
 
 import structlog
 
-from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 from ._ast_utils import (
     TreeSitterBase,
     _import_edge,
     _walk,
-    is_available,
 )
+from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 
 log = structlog.get_logger()
 
@@ -213,7 +212,9 @@ class PythonParser(TreeSitterBase, LanguageParser):
         if not name_node:
             return None
         name = name_node.text.decode()
-        is_async = node.type == "async_function_definition"
+        is_async = node.type == "async_function_definition" or any(
+            c.type == "async" for c in node.children
+        )
         return LexicalNode(
             node_id=LexicalNode.make_id(tenant_id, repo_id, file_path, name, "function"),
             node_type="function",

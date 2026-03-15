@@ -30,7 +30,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --all-packages --frozen
+        run: uv sync --all-packages --extra graph --frozen
 
       - name: Run tests
         run: uv run pytest tests/ -v --cov-report=xml
@@ -56,7 +56,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --all-packages --frozen
+        run: uv sync --all-packages --extra graph --frozen
 
       - name: Ruff
         run: uv run ruff check packages/ tests/

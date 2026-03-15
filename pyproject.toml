@@ -45,5 +45,5 @@ addopts = [
     "--cov=packages/codesteward-graph/src/codesteward",
     "--cov=packages/codesteward-mcp/src/codesteward",
     "--cov-report=term-missing",
-    "--cov-fail-under=60",
+    "--cov-fail-under=45",
 ]

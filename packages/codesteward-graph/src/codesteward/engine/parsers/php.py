@@ -3,8 +3,8 @@
 
 import structlog
 
+from ._ast_utils import _BUILTIN_NAMES, TreeSitterBase, _walk
 from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
-from ._ast_utils import TreeSitterBase, _BUILTIN_NAMES, _walk
 
 log = structlog.get_logger()
 
@@ -363,9 +363,10 @@ class PhpParser(TreeSitterBase, LanguageParser):
 
             caller = None
             for fn in scoped_fns:
-                if fn.line_start <= call_line <= (fn.line_end or call_line):
-                    if caller is None or fn.line_start > caller.line_start:
-                        caller = fn
+                if fn.line_start <= call_line <= (fn.line_end or call_line) and (
+                    caller is None or fn.line_start > caller.line_start
+                ):
+                    caller = fn
             if caller is None:
                 continue
 
@@ -614,4 +615,5 @@ class PhpParser(TreeSitterBase, LanguageParser):
 
 
 from . import register_language  # noqa: E402
+
 register_language("php", PhpParser, frozenset({".php"}))

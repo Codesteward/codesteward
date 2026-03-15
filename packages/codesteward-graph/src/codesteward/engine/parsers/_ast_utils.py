@@ -15,7 +15,7 @@ from typing import Any
 
 import structlog
 
-from .base import GraphEdge, LexicalNode, ParseResult
+from .base import GraphEdge, LexicalNode
 
 log = structlog.get_logger()
 
@@ -347,9 +347,10 @@ class TreeSitterBase:
             # Find the tightest (innermost) enclosing function by line range
             caller: LexicalNode | None = None
             for fn in scoped_fns:
-                if fn.line_start <= call_line <= (fn.line_end or call_line):
-                    if caller is None or fn.line_start > caller.line_start:
-                        caller = fn
+                if fn.line_start <= call_line <= (fn.line_end or call_line) and (
+                    caller is None or fn.line_start > caller.line_start
+                ):
+                    caller = fn
 
             if caller is None:
                 continue
@@ -530,7 +531,7 @@ class TreeSitterBase:
                 continue
             param_str = param_match.group(1)
             params = [
-                p.split(":")[0].strip().lstrip("*").lstrip("...")
+                p.split(":")[0].strip().lstrip("*").lstrip(".")
                 for p in param_str.split(",")
                 if p.strip() and p.strip() not in ("", "void", "self", "cls")
             ]

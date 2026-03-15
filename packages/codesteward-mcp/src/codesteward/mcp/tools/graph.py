@@ -28,6 +28,7 @@ from typing import Any
 import structlog
 import yaml
 
+from codesteward.engine.graph_builder import GraphBuilder
 from codesteward.mcp.config import McpConfig
 
 log = structlog.get_logger()
@@ -140,8 +141,6 @@ async def tool_graph_rebuild(
     t0 = time.monotonic()
 
     try:
-        from codesteward.engine.graph_builder import GraphBuilder
-
         builder = GraphBuilder(neo4j_driver=driver)
         summary = await builder.build_graph(
             repo_path=repo_path,

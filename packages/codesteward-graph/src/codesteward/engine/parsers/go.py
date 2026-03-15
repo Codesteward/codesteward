@@ -3,8 +3,8 @@
 
 import structlog
 
-from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 from ._ast_utils import TreeSitterBase, _strip_quotes, _walk
+from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 
 log = structlog.get_logger()
 
@@ -97,23 +97,7 @@ class GoParser(TreeSitterBase, LanguageParser):
         """
         nodes: list[LexicalNode] = []
         for node in _walk(root):
-            if node.type == "function_declaration":
-                name_node = node.child_by_field_name("name")
-                if name_node:
-                    nodes.append(LexicalNode(
-                        node_id=LexicalNode.make_id(
-                            tenant_id, repo_id, file_path, name_node.text.decode(), "function"
-                        ),
-                        node_type="function",
-                        name=name_node.text.decode(),
-                        file=file_path,
-                        line_start=node.start_point[0] + 1,
-                        line_end=node.end_point[0] + 1,
-                        language=language,
-                        tenant_id=tenant_id,
-                        repo_id=repo_id,
-                    ))
-            elif node.type == "method_declaration":
+            if node.type == "function_declaration" or node.type == "method_declaration":
                 name_node = node.child_by_field_name("name")
                 if name_node:
                     nodes.append(LexicalNode(
@@ -343,4 +327,5 @@ class GoParser(TreeSitterBase, LanguageParser):
 
 
 from . import register_language  # noqa: E402
+
 register_language("go", GoParser, frozenset({".go"}))

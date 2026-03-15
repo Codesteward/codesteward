@@ -117,42 +117,26 @@ __all__ = [
 # Eager-register new language parsers by importing their modules.
 # Each module calls register_language() at import time.
 def _register_new_languages() -> None:
-    try:
+    import contextlib
+
+    with contextlib.suppress(Exception):
         from . import csharp as _  # noqa: F401
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         from . import kotlin as _  # noqa: F401
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         from . import scala as _  # noqa: F401
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         from . import cobol as _  # noqa: F401
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         from . import go as _  # noqa: F401
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         from . import c as _  # noqa: F401
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         from . import cpp as _  # noqa: F401
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         from . import rust as _  # noqa: F401
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         from . import php as _  # noqa: F401
-    except Exception:
-        pass
 
 
 _register_new_languages()

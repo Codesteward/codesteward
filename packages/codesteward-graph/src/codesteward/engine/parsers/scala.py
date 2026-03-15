@@ -3,8 +3,8 @@
 
 import structlog
 
-from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 from ._ast_utils import TreeSitterBase, _walk
+from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 
 log = structlog.get_logger()
 
@@ -313,4 +313,5 @@ class ScalaParser(TreeSitterBase, LanguageParser):
 
 
 from . import register_language  # noqa: E402
+
 register_language("scala", ScalaParser, frozenset({".scala"}))

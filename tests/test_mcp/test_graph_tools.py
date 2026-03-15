@@ -1,8 +1,6 @@
 """Tests for MCP graph tool implementations."""
 
 
-import os
-import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,7 +14,6 @@ from codesteward.mcp.tools.graph import (
     tool_graph_rebuild,
     tool_graph_status,
 )
-
 
 # ---------------------------------------------------------------------------
 # graph_rebuild

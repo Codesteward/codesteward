@@ -6,13 +6,12 @@ from typing import Any
 
 import structlog
 
-from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 from ._ast_utils import (
     TreeSitterBase,
     _import_edge,
     _walk,
-    is_available,
 )
+from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 
 log = structlog.get_logger()
 

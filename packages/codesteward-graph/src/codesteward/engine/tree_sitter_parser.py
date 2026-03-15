@@ -23,9 +23,9 @@ class TreeSitterParser:
 
     def __init__(self) -> None:
         """Initialise internal AST parsers for each language."""
-        from codesteward.engine.parsers.typescript import TypeScriptParser
-        from codesteward.engine.parsers.python import PythonParser
         from codesteward.engine.parsers.java import JavaParser
+        from codesteward.engine.parsers.python import PythonParser
+        from codesteward.engine.parsers.typescript import TypeScriptParser
 
         self._ts = TypeScriptParser() if is_available("typescript") else None
         self._py = PythonParser() if is_available("python") else None

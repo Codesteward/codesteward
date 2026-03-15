@@ -12,7 +12,6 @@ import pytest
 
 from codesteward.engine.graph_builder import (
     GraphBuilder,
-    LexicalNode,
     PackageJsonParser,
     ParseResult,
     TypeScriptParser,
@@ -762,6 +761,7 @@ class TestCSharpParser:
     """Tests for the regex-based C# parser."""
 
     def _parse(self, content: str, file_path: str = "src/Services/UserService.cs") -> ParseResult:
+        pytest.importorskip("tree_sitter_c_sharp", reason="tree-sitter-c-sharp not installed (install with: uv pip install -e '.[graph-csharp]')")
         from codesteward.engine.parsers.csharp import CSharpParser
         parser = CSharpParser()
         return parser.parse(file_path, content, "t1", "r1", "csharp")
@@ -823,6 +823,7 @@ class TestKotlinParser:
     """Tests for the regex-based Kotlin parser."""
 
     def _parse(self, content: str, file_path: str = "src/PaymentService.kt") -> ParseResult:
+        pytest.importorskip("tree_sitter_kotlin", reason="tree-sitter-kotlin not installed (install with: uv pip install -e '.[graph-kotlin]')")
         from codesteward.engine.parsers.kotlin import KotlinParser
         parser = KotlinParser()
         return parser.parse(file_path, content, "t1", "r1", "kotlin")
@@ -879,6 +880,7 @@ class TestScalaParser:
     """Tests for the regex-based Scala parser."""
 
     def _parse(self, content: str, file_path: str = "src/ReportService.scala") -> ParseResult:
+        pytest.importorskip("tree_sitter_scala", reason="tree-sitter-scala not installed (install with: uv pip install -e '.[graph-scala]')")
         from codesteward.engine.parsers.scala import ScalaParser
         parser = ScalaParser()
         return parser.parse(file_path, content, "t1", "r1", "scala")
@@ -984,6 +986,7 @@ class TestGoParser:
     """Tests for the tree-sitter Go parser."""
 
     def _parse(self, content: str, file_path: str = "payments/service.go") -> ParseResult:
+        pytest.importorskip("tree_sitter_go", reason="tree-sitter-go not installed (install with: uv pip install -e '.[graph-go]')")
         from codesteward.engine.parsers.go import GoParser
         parser = GoParser()
         return parser.parse(file_path, content, "t1", "r1", "go")
@@ -1035,6 +1038,7 @@ class TestCParser:
     """Tests for the tree-sitter C parser."""
 
     def _parse(self, content: str, file_path: str = "src/payment.c") -> ParseResult:
+        pytest.importorskip("tree_sitter_c", reason="tree-sitter-c not installed (install with: uv pip install -e '.[graph-c]')")
         from codesteward.engine.parsers.c import CParser
         parser = CParser()
         return parser.parse(file_path, content, "t1", "r1", "c")
@@ -1077,6 +1081,7 @@ class TestCppParser:
     """Tests for the tree-sitter C++ parser."""
 
     def _parse(self, content: str, file_path: str = "src/PaymentService.cpp") -> ParseResult:
+        pytest.importorskip("tree_sitter_cpp", reason="tree-sitter-cpp not installed (install with: uv pip install -e '.[graph-cpp]')")
         from codesteward.engine.parsers.cpp import CppParser
         parser = CppParser()
         return parser.parse(file_path, content, "t1", "r1", "cpp")
@@ -1124,6 +1129,7 @@ class TestRustParser:
     """Tests for the tree-sitter Rust parser."""
 
     def _parse(self, content: str, file_path: str = "src/payment.rs") -> ParseResult:
+        pytest.importorskip("tree_sitter_rust", reason="tree-sitter-rust not installed (install with: uv pip install -e '.[graph-rust]')")
         from codesteward.engine.parsers.rust import RustParser
         parser = RustParser()
         return parser.parse(file_path, content, "t1", "r1", "rust")
@@ -1180,6 +1186,7 @@ class TestPhpParser:
     """Tests for the tree-sitter PHP parser."""
 
     def _parse(self, content: str, file_path: str = "app/Services/PaymentService.php") -> ParseResult:
+        pytest.importorskip("tree_sitter_php", reason="tree-sitter-php not installed (install with: uv pip install -e '.[graph-php]')")
         from codesteward.engine.parsers.php import PhpParser
         parser = PhpParser()
         return parser.parse(file_path, content, "t1", "r1", "php")

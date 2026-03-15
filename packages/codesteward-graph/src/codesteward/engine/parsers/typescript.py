@@ -6,15 +6,14 @@ from typing import Any
 
 import structlog
 
-from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 from ._ast_utils import (
-    TreeSitterBase,
     _SQL_RE,
-    _import_edge,
+    TreeSitterBase,
     _node_has_child_type,
     _strip_quotes,
     _walk,
 )
+from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 
 log = structlog.get_logger()
 
@@ -440,7 +439,6 @@ class TypeScriptParser(TreeSitterBase, LanguageParser):
                                 break
 
             elif node.type == "class_declaration":
-                heritage = node.child_by_field_name("body")
                 # Extends clause lives in the class_heritage node, not body —
                 # walk the class_declaration's named children
                 for child in node.named_children:

@@ -24,6 +24,12 @@ from typing import Any
 
 import structlog
 
+from codesteward.engine.parsers import (  # noqa: F401
+    all_source_extensions,
+    get_parser,
+    lang_for_ext,
+)
+
 # ---------------------------------------------------------------------------
 # Backward-compat re-exports: data models and parsers moved to engine/parsers/
 # ---------------------------------------------------------------------------
@@ -31,11 +37,6 @@ from codesteward.engine.parsers.base import (  # noqa: F401
     GraphEdge,
     LexicalNode,
     ParseResult,
-)
-from codesteward.engine.parsers import (  # noqa: F401
-    all_source_extensions,
-    get_parser,
-    lang_for_ext,
 )
 from codesteward.engine.parsers.java import JavaParser  # noqa: F401
 from codesteward.engine.parsers.python import PythonParser  # noqa: F401

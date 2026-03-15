@@ -16,7 +16,7 @@ import pytest
 pytest.importorskip("tree_sitter", reason="tree-sitter not installed (install with: uv pip install -e '.[graph]')")
 pytest.importorskip("tree_sitter_typescript", reason="tree-sitter-typescript not installed")
 
-from codesteward.engine.graph_builder import GraphEdge, LexicalNode, ParseResult, TypeScriptParser
+from codesteward.engine.graph_builder import ParseResult, TypeScriptParser
 from codesteward.engine.tree_sitter_parser import TreeSitterParser, is_available
 
 # ---------------------------------------------------------------------------
@@ -108,8 +108,7 @@ export function buildResponse(data: unknown, status: number) {
 }
 
 export async function fetchAndReturn(userId: string) {
-  const record = await db.get(userId);
-  return record;
+  return await db.get(userId);
 }
 """
 
@@ -765,7 +764,6 @@ class TestCallsEdgesTypeScript:
 
     def test_calls_edge_source_is_caller_function(self, parser: TreeSitterParser) -> None:
         """CALLS edge source_id matches the calling function's node ID."""
-        from codesteward.engine.graph_builder import LexicalNode
         result = parser.parse("src/users.ts", _CALLS_TS, "t", "r", "typescript")
         calls = [e for e in result.edges if e.edge_type == "calls"]
         fn_ids = {n.node_id for n in result.nodes if n.node_type == "function"}

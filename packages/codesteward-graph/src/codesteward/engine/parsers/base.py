@@ -91,6 +91,8 @@ class GraphEdge:
         line: Line number of the edge.
         tenant_id: Tenant namespace.
         repo_id: Repository identifier.
+        confidence: Certainty score in (0.0, 1.0]; 1.0 reserved for parser-emitted edges.
+        source: Tag identifying what wrote this edge (e.g. "agent:<id>").
     """
 
     edge_id: str
@@ -102,6 +104,8 @@ class GraphEdge:
     line: int | None = None
     tenant_id: str = ""
     repo_id: str = ""
+    confidence: float = 1.0
+    source: str = ""
 
     @staticmethod
     def make_id(source_id: str, edge_type: str, target_id: str) -> str:

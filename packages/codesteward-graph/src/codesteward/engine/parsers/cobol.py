@@ -193,6 +193,7 @@ class CobolParser(LanguageParser):
 
 
 from . import register_language  # noqa: E402
+
 register_language(
     "cobol",
     CobolParser,

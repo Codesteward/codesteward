@@ -27,14 +27,12 @@ writes to stdout — suitable for direct subprocess use by MCP clients.
 
 
 import argparse
-import asyncio
 import logging
 import sys
 from typing import Any
 
 import structlog
 import uvicorn
-from mcp.server.fastmcp import FastMCP
 
 from codesteward.mcp.config import load_config
 from codesteward.mcp.tools.graph import (
@@ -43,6 +41,7 @@ from codesteward.mcp.tools.graph import (
     tool_graph_rebuild,
     tool_graph_status,
 )
+from mcp.server.fastmcp import FastMCP
 
 log = structlog.get_logger()
 
