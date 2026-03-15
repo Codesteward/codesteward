@@ -1,1 +1,0 @@
-"""Codesteward MCP server package."""
