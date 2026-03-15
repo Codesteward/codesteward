@@ -53,11 +53,12 @@ COPY --from=builder /install /usr/local
 
 # Non-root user for security
 RUN useradd --uid 1001 --no-create-home --shell /bin/false codesteward
-USER codesteward
 
-# Workspace directory for build metadata
-RUN mkdir -p /workspace
+# Workspace directory for build metadata (must be created as root, then chowned)
+RUN mkdir -p /workspace && chown codesteward /workspace
 VOLUME ["/workspace"]
+
+USER codesteward
 
 ENV TRANSPORT=http
 ENV HOST=0.0.0.0
