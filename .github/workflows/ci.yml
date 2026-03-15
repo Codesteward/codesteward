@@ -1,0 +1,65 @@
+# Codesteward MCP — CI
+#
+# Runs on every push and pull request (excluding version tags, which go through
+# the release workflow).  Executes the test suite and linters.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["v*"]
+  pull_request:
+
+jobs:
+
+  # ── Tests ────────────────────────────────────────────────────────────────────
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --all-packages --frozen
+
+      - name: Run tests
+        run: uv run pytest tests/ -v --cov-report=xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          flags: python-${{ matrix.python-version }}
+        continue-on-error: true
+
+  # ── Lint + type-check ────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --all-packages --frozen
+
+      - name: Ruff
+        run: uv run ruff check packages/ tests/
+
+      - name: Mypy
+        run: uv run mypy packages/codesteward-graph/src packages/codesteward-mcp/src

@@ -54,11 +54,10 @@ no arguments — the server already knows the repo path from the volume mount.
 ### Manual Docker run
 
 ```bash
-docker build -f Dockerfile.mcp -t codesteward-mcp .
 docker run -p 3000:3000 \
   -v /path/to/your/repo:/repos/project:ro \
   -e NEO4J_PASSWORD=secret \
-  codesteward-mcp
+  ghcr.io/bitkaio/codesteward-mcp:latest
 ```
 
 For full setup instructions covering Claude Code, Cursor, Windsurf, Gemini CLI,

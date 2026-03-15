@@ -49,12 +49,16 @@ services:
 
   # ── Codesteward MCP Server ─────────────────────────────────────────────────
   codesteward:
-    build:
-      context: .
-      dockerfile: Dockerfile.mcp
-      args:
-        INSTALL_EXTRA: "graph-all"   # all 14 languages; use "graph" for core 4 only
-    image: codesteward-mcp:local
+    # Published image (recommended) — pulls from GitHub Container Registry.
+    # Replace the tag with a specific version (e.g. :0.1.0) to pin to a release.
+    image: ghcr.io/bitkaio/codesteward-mcp:latest
+    # ── Local build alternative (uncomment to build from source) ──────────────
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.mcp
+    #   args:
+    #     INSTALL_EXTRA: "graph-all"   # all 14 languages; use "graph" for core 4 only
+    # image: codesteward-mcp:local
     container_name: codesteward-mcp
     restart: unless-stopped
     depends_on:
