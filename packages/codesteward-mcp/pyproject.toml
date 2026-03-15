@@ -44,6 +44,9 @@ Changelog  = "https://github.com/bitkaio/codesteward-mcp/blob/main/CHANGELOG.md"
 graph     = ["codesteward-graph[graph]"]
 graph-all = ["codesteward-graph[graph-all]"]
 
+[tool.uv.sources]
+codesteward-graph = { workspace = true }
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
