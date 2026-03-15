@@ -34,7 +34,6 @@ from typing import Any
 
 import structlog
 import uvicorn
-
 from codesteward.mcp.config import load_config
 from codesteward.mcp.tools.graph import (
     tool_codebase_graph_query,
@@ -42,6 +41,7 @@ from codesteward.mcp.tools.graph import (
     tool_graph_rebuild,
     tool_graph_status,
 )
+
 from mcp.server.fastmcp import FastMCP
 
 log = structlog.get_logger()

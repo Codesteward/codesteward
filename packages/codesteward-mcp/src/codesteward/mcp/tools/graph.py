@@ -27,7 +27,6 @@ from typing import Any
 
 import structlog
 import yaml
-
 from codesteward.engine.graph_builder import GraphBuilder
 from codesteward.mcp.config import McpConfig
 

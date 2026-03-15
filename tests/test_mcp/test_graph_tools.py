@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
-
 from codesteward.mcp.config import McpConfig
 from codesteward.mcp.tools.graph import (
     tool_codebase_graph_query,

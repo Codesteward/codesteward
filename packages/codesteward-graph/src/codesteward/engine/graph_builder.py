@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-
 from codesteward.engine.parsers import (  # noqa: F401
     all_source_extensions,
     get_parser,

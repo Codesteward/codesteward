@@ -9,7 +9,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from codesteward.engine.graph_builder import (
     GraphBuilder,
     PackageJsonParser,

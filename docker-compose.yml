@@ -24,7 +24,7 @@ services:
 
   # ── Neo4j ──────────────────────────────────────────────────────────────────
   neo4j:
-    image: neo4j:5-community
+    image: neo4j:2026.02.2
     container_name: codesteward-neo4j
     restart: unless-stopped
     environment:
