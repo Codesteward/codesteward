@@ -16,10 +16,11 @@ Exposes four tools over Model Context Protocol:
     Return metadata about the current graph state.
 
 Transport selection (in priority order):
-1. ``--transport`` CLI flag  (``http`` or ``stdio``)
+1. ``--transport`` CLI flag  (``sse``, ``http``, or ``stdio``)
 2. ``TRANSPORT`` environment variable
-3. Default: ``http``
+3. Default: ``sse``
 
+SSE transport uses Server-Sent Events, binding on ``HOST:PORT`` from config.
 HTTP transport uses Streamable HTTP (MCP 2025-03-26 spec) via uvicorn,
 binding on ``HOST:PORT`` from config.  Stdio transport reads from stdin and
 writes to stdout — suitable for direct subprocess use by MCP clients.
@@ -311,7 +312,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--transport",
-        choices=["http", "stdio"],
+        choices=["sse", "http", "stdio"],
         default=None,
         help="MCP transport (overrides TRANSPORT env var and config)",
     )
@@ -351,13 +352,16 @@ def main() -> None:
     log.info(
         "codesteward_mcp_starting",
         transport=transport,
-        host=host if transport == "http" else "n/a",
-        port=port if transport == "http" else "n/a",
+        host=host if transport in ("http", "sse") else "n/a",
+        port=port if transport in ("http", "sse") else "n/a",
     )
 
     if transport == "stdio":
         # Stdio: synchronous run on the current thread
         mcp.run(transport="stdio")
+    elif transport == "sse":
+        # SSE: Server-Sent Events transport
+        mcp.run(transport="sse", host=host, port=port)
     else:
         # HTTP: Streamable HTTP via uvicorn
         app = mcp.streamable_http_app()

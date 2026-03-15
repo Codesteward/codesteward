@@ -24,7 +24,7 @@ tool and drop them into the root of the repository you want to analyse.
 ## Choosing a transport
 
 **HTTP (Docker — recommended for most users)**
-The server runs as a persistent process. All tools connect to `http://localhost:3000/mcp`.
+The server runs as a persistent process. All tools connect to `http://localhost:3000/sse`.
 Neo4j is included in the Docker setup for persistent graph storage.
 
 **Stdio (uvx — zero install, no Docker)**
@@ -64,7 +64,7 @@ echo "REPO_PATH=/path/to/your/repository" > .env
 docker compose up -d
 ```
 
-The server starts at **`http://localhost:3000/mcp`**.  It already knows the
+The server starts at **`http://localhost:3000/sse`**.  It already knows the
 repository path — tools call `graph_rebuild()` with no arguments.
 
 ---
@@ -90,7 +90,7 @@ will appear in the tool list.
 {
   "mcpServers": {
     "codesteward-graph": {
-      "url": "http://localhost:3000/mcp"
+      "url": "http://localhost:3000/sse"
     }
   }
 }
@@ -117,7 +117,7 @@ Reload the Cursor window (`Ctrl+Shift+P` → *Reload Window*).
 {
   "mcpServers": {
     "codesteward-graph": {
-      "url": "http://localhost:3000/mcp"
+      "url": "http://localhost:3000/sse"
     }
   }
 }
@@ -133,7 +133,7 @@ Windsurf reads MCP servers from the **Windsurf settings panel**.
 2. Click **Add Server** and enter:
    - Name: `codesteward-graph`
    - Type: `HTTP`
-   - URL: `http://localhost:3000/mcp`
+   - URL: `http://localhost:3000/sse`
 3. Click **Save** and reload the window.
 
 Alternatively, if your Windsurf version supports a project-level config, create
@@ -143,7 +143,7 @@ Alternatively, if your Windsurf version supports a project-level config, create
 {
   "mcpServers": {
     "codesteward-graph": {
-      "url": "http://localhost:3000/mcp"
+      "url": "http://localhost:3000/sse"
     }
   }
 }
@@ -169,7 +169,7 @@ VS Code will prompt you to enable the server.  Accept, then reload the window.
 {
   "mcp.servers": {
     "codesteward-graph": {
-      "url": "http://localhost:3000/mcp"
+      "url": "http://localhost:3000/sse"
     }
   }
 }
@@ -188,7 +188,7 @@ Add the server to `~/.gemini/settings.json`:
 {
   "mcpServers": {
     "codesteward-graph": {
-      "url": "http://localhost:3000/mcp"
+      "url": "http://localhost:3000/sse"
     }
   }
 }
@@ -209,8 +209,8 @@ workspace-level `.continue/config.json`.
     {
       "name": "codesteward-graph",
       "transport": {
-        "type": "http",
-        "url": "http://localhost:3000/mcp"
+        "type": "sse",
+        "url": "http://localhost:3000/sse"
       }
     }
   ]
@@ -232,7 +232,7 @@ Claude Desktop reads MCP servers from a global config file:
 {
   "mcpServers": {
     "codesteward-graph": {
-      "url": "http://localhost:3000/mcp"
+      "url": "http://localhost:3000/sse"
     }
   }
 }
@@ -386,5 +386,5 @@ root and that the MCP server config is in the right location for your tool.
 | `templates/copilot-instructions.md` | `.github/copilot-instructions.md` | GitHub Copilot instructions |
 | `templates/AGENTS.md` | `AGENTS.md` | OpenAI Codex instructions |
 
-All MCP config files point to `http://localhost:3000/mcp`.  If you run the
+All MCP config files point to `http://localhost:3000/sse`.  If you run the
 server on a different host or port, update the `url` field accordingly.

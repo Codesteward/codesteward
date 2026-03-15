@@ -65,7 +65,7 @@ services:
       neo4j:
         condition: service_healthy
     environment:
-      TRANSPORT: "http"
+      TRANSPORT: "sse"
       HOST: "0.0.0.0"
       PORT: "3000"
       NEO4J_URI: "bolt://neo4j:7687"
@@ -85,7 +85,7 @@ services:
       - ${REPO_PATH:-.}:/repos/project:ro
     healthcheck:
       test: ["CMD", "python", "-c",
-             "import urllib.request; urllib.request.urlopen('http://localhost:3000/health')"]
+             "import socket; s=socket.socket(); s.settimeout(3); s.connect(('localhost',3000)); s.close()"]
       interval: 30s
       timeout: 5s
       retries: 3

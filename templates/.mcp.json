@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "codesteward-graph": {
-      "url": "http://localhost:3000/mcp"
+      "url": "http://localhost:3000/sse"
     }
   }
 }

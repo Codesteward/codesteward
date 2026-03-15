@@ -28,7 +28,7 @@ class McpConfig(BaseSettings):
     """
 
     # ── Transport ────────────────────────────────────────────────────────────
-    transport: str = Field("http", description="MCP transport: 'http' or 'stdio'")
+    transport: str = Field("sse", description="MCP transport: 'sse', 'http', or 'stdio'")
     host: str = Field("0.0.0.0", description="HTTP server bind host")
     port: int = Field(3000, description="HTTP server port")
 

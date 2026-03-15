@@ -48,7 +48,7 @@ cp templates/.mcp.json /path/to/your/repository/
 cp templates/CLAUDE.md /path/to/your/repository/
 ```
 
-The server runs at **`http://localhost:3000/mcp`**.  Call `graph_rebuild()` with
+The server runs at **`http://localhost:3000/sse`**.  Call `graph_rebuild()` with
 no arguments — the server already knows the repo path from the volume mount.
 
 ### Manual Docker run
@@ -101,7 +101,7 @@ All settings can be provided via environment variables, a YAML config file, or C
 
 | Setting | Env var | Default | Description |
 | ------- | ------- | ------- | ----------- |
-| Transport | `TRANSPORT` | `http` | `http` or `stdio` |
+| Transport | `TRANSPORT` | `sse` | `sse`, `http`, or `stdio` |
 | Host | `HOST` | `0.0.0.0` | HTTP bind host |
 | Port | `PORT` | `3000` | HTTP bind port |
 | Neo4j URI | `NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection URI |
