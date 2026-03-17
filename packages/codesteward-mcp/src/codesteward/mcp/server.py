@@ -306,6 +306,8 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
     # ── taint_analysis (optional — only when codesteward-taint is on PATH) ──
 
     if _TAINT_BINARY is not None:
+        _taint_binary: str = _TAINT_BINARY  # narrow str | None → str for the closure
+
         @mcp.tool()
         async def taint_analysis(
             tenant_id: str = "",
@@ -344,7 +346,7 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
                 hops, level), and duration_ms. TAINT_FLOW edges are written
                 to Neo4j so subsequent semantic queries return results.
             """
-            return await tool_taint_analysis(
+            return str(await tool_taint_analysis(
                 tenant_id=tenant_id or cfg.default_tenant_id,
                 repo_id=repo_id or cfg.default_repo_id,
                 repo_path=repo_path or cfg.default_repo_path,
@@ -352,8 +354,8 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
                 max_hops=max_hops,
                 persist_cfg=persist_cfg,
                 cfg=cfg,
-                binary=_TAINT_BINARY,
-            )
+                binary=_taint_binary,
+            ))
 
         log.info("taint_analysis_tool_registered", binary=_TAINT_BINARY)
 
