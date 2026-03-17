@@ -24,7 +24,7 @@ class CSharpParser(TreeSitterBase, LanguageParser):
     """Tree-sitter-based C# parser.
 
     Extracts all edge types: IMPORTS, CALLS, EXTENDS, GUARDED_BY, PROTECTED_BY,
-    DATA_FLOW, plus function parameter metadata.
+    plus function parameter metadata.
     PROTECTED_BY is emitted for ASP.NET Core Minimal API
     ``MapGroup(...).RequireAuthorization().MapGet(...)`` chains.
     """

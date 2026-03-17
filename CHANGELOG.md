@@ -11,6 +11,32 @@ Both packages share a version number and are always released together.
 
 ## [Unreleased]
 
+### Added — codesteward-mcp
+
+- `taint_analysis` MCP tool: invokes the `codesteward-taint` Go binary as an async subprocess
+  and returns YAML with unsafe/sanitized path counts and a findings list. The tool is registered
+  only when the binary is present on `PATH` (`shutil.which`); the server starts normally without it.
+- `TAINT_FLOW` edges are now writable via `graph_augment` (added `taint_flow` to
+  `_ALLOWED_EDGE_TYPES`).
+- Docker image: new `taint-fetcher` build stage downloads the `codesteward-taint` binary from
+  GitHub Releases when `--build-arg TAINT_VERSION=<version>` is supplied. The binary is installed
+  to `/usr/local/bin/` in the final image; omitting `TAINT_VERSION` leaves the binary absent and
+  the server starts without the `taint_analysis` tool.
+
+### Changed — codesteward-mcp
+
+- `codebase_graph_query` `semantic` template updated from `DATA_FLOW` to `TAINT_FLOW`: results
+  now return `source_name`, `source_file`, `sink_name`, `sink_file`, `cwe`, `hops`, `level`,
+  `framework` instead of `function_name`, `file`, `line`, `flow_description`. Returns empty
+  until `taint_analysis` has been run.
+
+### Removed — codesteward-graph
+
+- `DATA_FLOW` edges are no longer emitted by any parser. Use `TAINT_FLOW` edges written by the
+  `codesteward-taint` binary for data-flow analysis.
+- `_extract_semantic_edges()` removed from `TreeSitterBase` (and all callers in `python.py`,
+  `typescript.py`, `java.py`).
+
 ## [0.2.2] — 2026-03-16
 
 ### Fixed — codesteward-graph

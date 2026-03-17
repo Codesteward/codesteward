@@ -29,6 +29,7 @@ writes to stdout — suitable for direct subprocess use by MCP clients.
 
 import argparse
 import logging
+import shutil
 import sys
 from typing import Any
 
@@ -41,6 +42,7 @@ from codesteward.mcp.tools.graph import (
     tool_graph_rebuild,
     tool_graph_status,
 )
+from codesteward.mcp.tools.taint import tool_taint_analysis
 
 from mcp.server.fastmcp import FastMCP
 
@@ -58,6 +60,9 @@ def _configure_logging(level: str) -> None:
             getattr(logging, level.upper(), logging.INFO)
         ),
     )
+
+
+_TAINT_BINARY: str | None = shutil.which("codesteward-taint")
 
 
 def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
@@ -89,7 +94,8 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
             "based on your goal:\n"
             "   - lexical     → find functions/classes/methods by name or file path\n"
             "   - referential → find call/import/extends relationships (who calls what)\n"
-            "   - semantic    → find data-flow relationships\n"
+            "   - semantic    → find taint-flow paths (source → sink). Requires "
+            "codesteward-taint to have been run first. Returns empty until then.\n"
             "   - dependency  → list external package dependencies\n"
             "   - cypher      → raw Cypher for anything not covered by the above\n"
             "4. Optionally call graph_augment to record relationships you have inferred "
@@ -177,9 +183,9 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
           PROTECTED_BY edges.  Results: from_name, from_file, edge_type,
           to_name, to_file, line.  Use this to answer "what does function X
           call?", "what imports module Y?", "is route Z protected by auth?".
-        - ``semantic`` — traverse DATA_FLOW edges.  Results: function_name,
-          file, line, flow_description.  Use this to trace how data moves
-          through the codebase.
+        - ``semantic`` — traverse TAINT_FLOW edges (source → sink).  Results:
+          source_name, source_file, sink_name, sink_file, cwe, hops, level,
+          framework.  Requires ``taint_analysis`` to have run first.
         - ``dependency`` — list external package dependencies per file.
           Results: package, type, referenced_from.
         - ``cypher`` — raw Cypher passthrough.  The ``query`` parameter must
@@ -241,7 +247,7 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
         Each item in ``additions`` must have:
         - ``source_id``: node_id of the source LexicalNode (from query results)
         - ``edge_type``: one of ``calls``, ``guarded_by``, ``protected_by``,
-          ``data_flow``, ``type_equivalent``, ``migration_target``,
+          ``taint_flow``, ``type_equivalent``, ``migration_target``,
           ``audit_sink``, ``pii_source``, ``phi_source``, ``custom``
         - ``target_id``: node_id of the target node
         - ``target_name``: human-readable name for the target
@@ -296,6 +302,60 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
             repo_id=repo_id or cfg.default_repo_id,
             cfg=cfg,
         ))
+
+    # ── taint_analysis (optional — only when codesteward-taint is on PATH) ──
+
+    if _TAINT_BINARY is not None:
+        @mcp.tool()
+        async def taint_analysis(
+            tenant_id: str = "",
+            repo_id: str = "",
+            repo_path: str = "",
+            frameworks: list[str] | None = None,
+            max_hops: int = 8,
+            persist_cfg: bool = False,
+        ) -> str:
+            """Run taint-flow analysis and write TAINT_FLOW edges to Neo4j.
+
+            Traces how untrusted input (HTTP parameters, request bodies, form
+            fields) propagates through the call graph to dangerous operations
+            (SQL execution, shell commands, file I/O, outbound HTTP). Flags
+            paths where no sanitizer is present.
+
+            Requires ``graph_rebuild`` to have completed first. After this tool
+            returns, ``codebase_graph_query`` with ``query_type="semantic"`` will
+            return taint findings.
+
+            Args:
+                tenant_id: Tenant namespace. Defaults to server default.
+                repo_id: Repository identifier. Defaults to server default.
+                repo_path: Absolute path to the repository on disk. Used by
+                    the taint engine to read source files for Level 2 and 3
+                    analysis. Defaults to server default.
+                frameworks: Catalog names to activate, e.g. ``["fastapi",
+                    "express"]``. Omit to auto-detect from languages in graph.
+                max_hops: Maximum CALLS depth for Level 1 traversal (default 8).
+                persist_cfg: Write BasicBlock nodes and CFG_EDGE relationships
+                    to Neo4j (enables path-level Cypher queries). Default false.
+
+            Returns:
+                YAML with paths_unsafe, paths_sanitized, findings list (each
+                with source_name, source_file, sink_name, sink_file, cwe,
+                hops, level), and duration_ms. TAINT_FLOW edges are written
+                to Neo4j so subsequent semantic queries return results.
+            """
+            return await tool_taint_analysis(
+                tenant_id=tenant_id or cfg.default_tenant_id,
+                repo_id=repo_id or cfg.default_repo_id,
+                repo_path=repo_path or cfg.default_repo_path,
+                frameworks=frameworks,
+                max_hops=max_hops,
+                persist_cfg=persist_cfg,
+                cfg=cfg,
+                binary=_TAINT_BINARY,
+            )
+
+        log.info("taint_analysis_tool_registered", binary=_TAINT_BINARY)
 
     return mcp, cfg
 

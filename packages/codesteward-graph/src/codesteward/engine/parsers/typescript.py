@@ -27,8 +27,7 @@ class TypeScriptParser(TreeSitterBase, LanguageParser):
     """Tree-sitter-based TypeScript/JavaScript/TSX parser.
 
     All TS-specific extraction methods are concentrated here. Shared methods
-    (_extract_call_edges, _extract_callee_name, _extract_semantic_edges) are
-    inherited from TreeSitterBase.
+    (_extract_call_edges, _extract_callee_name) are inherited from TreeSitterBase.
     """
 
 
@@ -92,10 +91,6 @@ class TypeScriptParser(TreeSitterBase, LanguageParser):
             self._extract_call_edges(root, fn_nodes, file_path, tenant_id, repo_id, language)
         )
 
-        # Semantic data-flow edges
-        result.edges.extend(
-            self._extract_semantic_edges(fn_nodes, content_bytes, file_path, tenant_id, repo_id)
-        )
 
         # GUARDED_BY edges
         result.edges.extend(

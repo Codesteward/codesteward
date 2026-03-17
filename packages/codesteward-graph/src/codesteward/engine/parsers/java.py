@@ -25,8 +25,7 @@ class JavaParser(TreeSitterBase, LanguageParser):
     """Tree-sitter-based Java parser.
 
     All Java-specific extraction methods are concentrated here. Shared methods
-    (_extract_call_edges, _extract_callee_name, _extract_semantic_edges) are
-    inherited from TreeSitterBase.
+    (_extract_call_edges, _extract_callee_name) are inherited from TreeSitterBase.
     """
 
     def parse(
@@ -79,11 +78,6 @@ class JavaParser(TreeSitterBase, LanguageParser):
         fn_nodes = [n for n in result.nodes if n.node_type == "function"]
         result.edges.extend(
             self._extract_call_edges(root, fn_nodes, file_path, tenant_id, repo_id, language)
-        )
-
-        # Semantic data-flow edges
-        result.edges.extend(
-            self._extract_semantic_edges(fn_nodes, content_bytes, file_path, tenant_id, repo_id)
         )
 
         # EXTENDS edges

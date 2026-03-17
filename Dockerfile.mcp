@@ -6,8 +6,14 @@
 #   graph-core           — TypeScript / JavaScript / Python / Java only
 #   base                 — no tree-sitter (Neo4j query-only mode)
 #
+# Taint analysis (optional):
+#   Pass --build-arg TAINT_VERSION=<version> to bundle the codesteward-taint
+#   binary. Omitting it leaves the binary absent; the MCP server starts
+#   normally with the four core tools only.
+#
 # Usage:
 #   docker build -t codesteward-mcp .
+#   docker build --build-arg TAINT_VERSION=0.1.0 -t codesteward-mcp:taint .
 #   docker run -p 3000:3000 \
 #     -e NEO4J_URI=bolt://neo4j:7687 \
 #     -e NEO4J_USER=neo4j \
@@ -16,6 +22,26 @@
 
 ARG PYTHON_VERSION=3.12
 ARG INSTALL_EXTRA=graph-all
+ARG TAINT_VERSION=
+
+# ── taint-fetcher stage ───────────────────────────────────────────────────────
+# Downloads the codesteward-taint binary when TAINT_VERSION is set.
+# Produces a zero-byte sentinel when not set; the final stage removes it.
+FROM alpine:3.20 AS taint-fetcher
+
+ARG TAINT_VERSION
+
+RUN apk add --no-cache curl \
+ && mkdir -p /opt/taint \
+ && if [ -n "${TAINT_VERSION}" ]; then \
+      ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') \
+   && curl -fsSL \
+        "https://github.com/bitkaio/codesteward-taint/releases/download/v${TAINT_VERSION}/codesteward-taint-linux-${ARCH}" \
+        -o /opt/taint/codesteward-taint \
+   && chmod +x /opt/taint/codesteward-taint; \
+    else \
+      touch /opt/taint/codesteward-taint; \
+    fi
 
 # ── builder stage ────────────────────────────────────────────────────────────
 FROM python:${PYTHON_VERSION}-slim AS builder
@@ -53,6 +79,14 @@ COPY --from=builder /install /usr/local
 
 # Non-root user for security
 RUN useradd --uid 1001 --no-create-home --shell /bin/false codesteward
+
+# Install taint binary — present only when TAINT_VERSION was supplied at build time.
+# The taint-fetcher stage always produces a file (zero-byte when not set); we remove
+# it here if it is empty so shutil.which() in the MCP server returns None cleanly.
+COPY --from=taint-fetcher /opt/taint/codesteward-taint /usr/local/bin/codesteward-taint
+RUN if [ ! -s /usr/local/bin/codesteward-taint ]; then \
+      rm /usr/local/bin/codesteward-taint; \
+    fi
 
 # Workspace directory for build metadata (must be created as root, then chowned)
 RUN mkdir -p /workspace && chown codesteward /workspace

@@ -102,16 +102,6 @@ export class AdminService extends UserService {
 }
 """
 
-_DATA_FLOW_TS = """\
-export function buildResponse(data: unknown, status: number) {
-  return { data, status, timestamp: Date.now() };
-}
-
-export async function fetchAndReturn(userId: string) {
-  return await db.get(userId);
-}
-"""
-
 _SQL_TEMPLATE_TS = """\
 import { db } from './db';
 
@@ -463,41 +453,6 @@ const path = `${base}/users/${id}`;
         # safe() uses a string literal — only the template literal in getUserById should be tagged
         sql_nodes = [n for n in result.nodes if n.node_type == "expression"]
         assert len(sql_nodes) == 1  # only the template string in getUserById
-
-
-# ===========================================================================
-# Semantic data-flow edges
-# ===========================================================================
-
-
-class TestSemanticEdges:
-    """Parameter → return data-flow edge extraction."""
-
-    def test_data_flow_edge_detected(self) -> None:
-        parser = TreeSitterParser()
-        result = _parse(parser, _DATA_FLOW_TS)
-        data_flow_edges = [e for e in result.edges if e.edge_type == "data_flow"]
-        assert len(data_flow_edges) >= 1
-
-    def test_data_flow_edge_references_function(self) -> None:
-        parser = TreeSitterParser()
-        result = _parse(parser, _DATA_FLOW_TS)
-        edge = next(
-            (e for e in result.edges if e.edge_type == "data_flow" and "fetchAndReturn" in e.target_id),
-            None,
-        )
-        assert edge is not None
-
-    def test_data_flow_param_in_target_name(self) -> None:
-        parser = TreeSitterParser()
-        result = _parse(parser, _DATA_FLOW_TS)
-        edge = next(
-            (e for e in result.edges if e.edge_type == "data_flow"),
-            None,
-        )
-        assert edge is not None
-        assert "param '" in edge.target_name
-        assert "→ return" in edge.target_name
 
 
 # ===========================================================================
