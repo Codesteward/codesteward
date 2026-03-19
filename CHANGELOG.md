@@ -11,6 +11,41 @@ Both packages share a version number and are always released together.
 
 ## [Unreleased]
 
+### Added — codesteward-graph
+
+- Taint-source node and edge emission across all 12 parsers, enabling L1 taint analysis by the
+  `codesteward-taint` binary without requiring a separate source-annotation pass:
+  - **Python** — Flask/Django/FastAPI `request.*`, WSGI `environ`, Starlette `Request`
+  - **TypeScript/JavaScript** — Express `req.body`/`req.query`/`req.params`/`req.headers`/`req.cookies`;
+    NestJS parameter decorators (`@Body`, `@Param`, `@Query`, `@Headers`, etc.)
+  - **Java** — Spring MVC `@RequestParam`, `@PathVariable`, `@RequestBody`, `@RequestHeader`,
+    `@CookieValue`; Jakarta EE `@QueryParam`, `@PathParam`, `@FormParam`, `@HeaderParam`
+  - **Go** — `net/http` `r.URL.Query()`, `r.FormValue()`, `r.Header.Get()`, `r.Body`;
+    Gin `c.Query()`, `c.Param()`, `c.PostForm()`, `c.GetHeader()`
+  - **Rust** — Actix-web/Axum typed extractors: `web::Path<T>`, `web::Query<T>`, `web::Json<T>`,
+    `web::Form<T>`, `web::Bytes`, `web::Multipart`, `extract::Path`, `extract::Json`, etc.
+  - **PHP** — superglobals (`$_GET`, `$_POST`, `$_REQUEST`, `$_FILES`, `$_COOKIE`, `$_SERVER`);
+    Laravel `$request->input()`/`query()`/`file()`/etc.; Symfony property bags (`$request->query`,
+    `$request->headers`, …); PSR-7 `getQueryParams()`/`getParsedBody()`/etc.;
+    CodeIgniter4 `getGet()`/`getPost()`/`getJSON()`/etc.
+  - **C#** — ASP.NET Core parameter attributes (`[FromQuery]`, `[FromRoute]`, `[FromBody]`,
+    `[FromForm]`, `[FromHeader]`); `HttpRequest` property access (`Request.Query`,
+    `Request.Form`, `Request.Headers`, `Request.Cookies`)
+  - **Kotlin** — Spring Boot `@RequestParam`, `@PathVariable`, `@RequestBody`, `@RequestHeader`,
+    `@CookieValue`; Ktor `call.receive*()`, `call.parameters`, `call.request.queryParameters`;
+    Http4k `request.query()`, `request.path()`, `request.bodyString()`
+  - **Scala** — Play Framework `request.body.*`, `request.queryString`, `request.headers`;
+    Akka HTTP directives (`parameters`, `entity`, `formField`, `headerValueByName`, `cookie`, `path`)
+  - **C** — CGI `getenv()` for HTTP env vars (`QUERY_STRING`, `HTTP_COOKIE`, etc.), stdin reads
+    (`fread`/`fgets`/`read`); Mongoose `mg_http_get_var`/`mg_http_get_header`;
+    libmicrohttpd `MHD_lookup_connection_value`
+  - **C++** — all C patterns reused; Crow `req.body`/`req.url_params`/`req.headers`;
+    Drogon `req->getBody()`/`req->getParameter()`/`req->getHeader()`/`req->getCookie()`;
+    Pistache `request.query()`/`request.resource()`; Oat++ `getPathVariable()`/`getQueryParameter()`
+  - **COBOL** — no applicable web taint patterns; no change
+- `tests/test_engine/test_taint_sources.py` — new test module with 50+ tests covering taint-source
+  detection for C, C++, C#, Rust, PHP, Kotlin, Scala, and NestJS (TypeScript)
+
 ### Added — codesteward-mcp
 
 - `taint_analysis` MCP tool: invokes the `codesteward-taint` Go binary as an async subprocess

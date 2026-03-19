@@ -10,6 +10,30 @@ from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 
 log = structlog.get_logger()
 
+# Actix-web / Axum / Rocket extractor type name components.
+# Scoped forms (web::Path, web::Json, ...) are checked as substrings of the type text.
+_RUST_SCOPED_EXTRACTORS: frozenset[str] = frozenset({
+    # Actix-web
+    "web::Path", "web::Query", "web::Json", "web::Form", "web::Bytes", "web::Multipart",
+    # Axum (fully qualified)
+    "extract::Path", "extract::Query", "extract::Json", "extract::Form",
+    "extract::Bytes", "extract::Multipart",
+})
+
+# Bare type names that are treated as extractors only when used in generic form
+# (i.e. the type text starts with one of these followed by '<'), which strongly
+# implies an Actix-web / Axum extractor rather than an unrelated `Path` type.
+_RUST_GENERIC_EXTRACTORS: frozenset[str] = frozenset({
+    "Path", "Query", "Json", "Form", "Bytes", "Multipart",
+})
+
+# Bare type names that are always treated as extractors regardless of generics.
+_RUST_BARE_EXTRACTORS: frozenset[str] = frozenset({
+    "HttpRequest",   # Actix-web
+    "TypedHeader",   # Axum
+    "HeaderMap",     # Axum / Hyper
+})
+
 _KEYWORDS = frozenset({
     "if", "else", "for", "while", "loop", "match", "return", "break",
     "continue", "let", "const", "static", "fn", "struct", "enum", "trait",
@@ -82,6 +106,14 @@ class RustParser(TreeSitterBase, LanguageParser):
                 root, fn_nodes, result.nodes, file_path, tenant_id, repo_id
             )
         )
+
+        # Taint source nodes (Actix-web / Axum / Rocket extractor parameters)
+        taint_nodes, taint_edges = self._extract_rust_taint_sources(
+            root, fn_nodes, file_path, tenant_id, repo_id, language
+        )
+        result.nodes.extend(taint_nodes)
+        result.edges.extend(taint_edges)
+
         return result
 
     def _extract_rust_nodes(
@@ -435,18 +467,155 @@ class RustParser(TreeSitterBase, LanguageParser):
         while node is not None:
             if node.type != "call_expression":  # type: ignore[attr-defined]
                 break
-            fn_f = node.child_by_field_name("function")  # type: ignore[attr-defined]
+            fn_f = node.child_by_field_name("function")
             if fn_f is None or fn_f.type != "field_expression":
                 break
             fld = fn_f.child_by_field_name("field")
             if fld and fld.text.decode() == "wrap":
-                args = node.child_by_field_name("arguments")  # type: ignore[attr-defined]
+                args = node.child_by_field_name("arguments")
                 if args:
                     for a in args.children:
                         if a.type == "identifier":
                             middlewares.append(a.text.decode())
             node = fn_f.child_by_field_name("value")
         return middlewares
+
+
+    # ------------------------------------------------------------------
+    # Taint source emission (Actix-web / Axum / Rocket extractor parameters)
+    # ------------------------------------------------------------------
+
+    def _extract_rust_taint_sources(
+        self,
+        root: object,
+        fn_nodes: list[LexicalNode],
+        file_path: str,
+        tenant_id: str,
+        repo_id: str,
+        language: str,
+    ) -> tuple[list[LexicalNode], list[GraphEdge]]:
+        """Emit taint-source nodes and CALLS edges for Rust web framework extractors.
+
+        Rust web frameworks (Actix-web, Axum, Rocket) express HTTP input binding
+        through typed function parameters called *extractors*.  A route handler
+        like::
+
+            async fn get_user(
+                path: web::Path<u64>,
+                query: web::Query<Filter>,
+                body: web::Json<CreateUser>,
+            ) -> impl Responder { ... }
+
+        receives request data through those typed parameters.  The parser detects
+        parameters whose type text matches known extractor names and emits a
+        synthetic ``LexicalNode`` with ``file="actix_axum"`` for each matched
+        extractor category (``Path``, ``Query``, ``Json``, ``Form``, ``Bytes``,
+        etc.), plus a ``CALLS`` edge to the handler function.
+
+        Detection rules (applied to the full type text of each parameter):
+
+        - Scoped extractors — type contains ``web::Path``, ``extract::Json``, etc.
+        - Generic bare extractors — type starts with ``Path<``, ``Query<``, etc.
+        - Bare non-generic extractors — type is exactly ``HttpRequest``,
+          ``TypedHeader``, or ``HeaderMap``.
+
+        Non-taint parameters (``web::Data``, ``Extension``, ``State``) are
+        excluded by these rules (they have no entry in the detection sets).
+
+        Args:
+            root: AST root node.
+            fn_nodes: Function LexicalNodes from this file.
+            file_path: Repo-relative file path.
+            tenant_id: Tenant namespace.
+            repo_id: Repository identifier.
+            language: Language string.
+
+        Returns:
+            Tuple of ``(nodes, edges)`` — synthetic source LexicalNodes and
+            CALLS edges pointing from each source to its handler.
+        """
+        nodes: list[LexicalNode] = []
+        edges: list[GraphEdge] = []
+        seen_nodes: set[str] = set()
+        seen_edges: set[str] = set()
+
+        fn_id_by_name: dict[str, LexicalNode] = {n.name: n for n in fn_nodes}
+
+        def _emit(source_name: str, handler: LexicalNode, line: int) -> None:
+            source_id = LexicalNode.make_id(
+                tenant_id, repo_id, "actix_axum", source_name, "external"
+            )
+            if source_id not in seen_nodes:
+                seen_nodes.add(source_id)
+                nodes.append(LexicalNode(
+                    node_id=source_id,
+                    node_type="external",
+                    name=source_name,
+                    file="actix_axum",
+                    line_start=1,
+                    line_end=1,
+                    language=language,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+            edge_key = f"{source_id}:{handler.node_id}"
+            if edge_key not in seen_edges:
+                seen_edges.add(edge_key)
+                edges.append(GraphEdge(
+                    edge_id=GraphEdge.make_id(source_id, "calls", handler.name),
+                    edge_type="calls",
+                    source_id=source_id,
+                    target_id=handler.node_id,
+                    target_name=handler.name,
+                    file=file_path,
+                    line=line,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+
+        def _extractor_name(type_text: str) -> str | None:
+            """Return the canonical extractor name for a type string, or None."""
+            # Scoped: web::Path<T>, extract::Json<T>, etc.
+            for scoped in _RUST_SCOPED_EXTRACTORS:
+                if scoped in type_text:
+                    return scoped.split("::")[-1]
+            # Bare non-generic: HttpRequest, TypedHeader, HeaderMap
+            stripped = type_text.strip().lstrip("&").strip()
+            if stripped in _RUST_BARE_EXTRACTORS:
+                return stripped
+            # Generic bare: Path<T>, Query<T>, etc. (avoids matching plain `Path`)
+            for bare in _RUST_GENERIC_EXTRACTORS:
+                if type_text.strip().startswith(f"{bare}<"):
+                    return bare
+            return None
+
+        for node in _walk(root):
+            if node.type != "function_item":
+                continue
+            name_node = node.child_by_field_name("name")
+            if name_node is None:
+                continue
+            fn_name = name_node.text.decode()
+            handler = fn_id_by_name.get(fn_name)
+            if handler is None:
+                continue
+
+            params_node = node.child_by_field_name("parameters")
+            if params_node is None:
+                continue
+
+            for param in params_node.children:
+                if param.type != "parameter":
+                    continue
+                type_node = param.child_by_field_name("type")
+                if type_node is None:
+                    continue
+                type_text = type_node.text.decode()
+                extractor = _extractor_name(type_text)
+                if extractor:
+                    _emit(f"actix_axum.{extractor}", handler, param.start_point[0] + 1)
+
+        return nodes, edges
 
 
 from . import register_language  # noqa: E402

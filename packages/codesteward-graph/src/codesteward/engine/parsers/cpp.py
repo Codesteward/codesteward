@@ -5,7 +5,23 @@ import structlog
 
 from ._ast_utils import TreeSitterBase, _strip_quotes, _walk
 from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
-from .c import _c_function_name  # reuse helper
+from .c import _C_CGI_HTTP_ENV_VARS, _C_HTTP_SOURCE_FUNCTIONS, _c_function_name  # reuse helpers
+
+# Crow / Drogon / Pistache: method names on request objects that expose HTTP input.
+# req.body, req.url_params, req.headers (Crow); req->getBody(), req->getParameter() (Drogon)
+_CPP_HTTP_REQUEST_MEMBERS: frozenset[str] = frozenset({
+    # Crow (request object fields and methods)
+    "body", "url_params", "headers",
+    # Drogon (HttpRequestPtr methods)
+    "getBody", "getParameter", "getParameters", "getHeader", "getHeaders",
+    "getCookie", "getCookies", "getJsonBody", "getJsonObject",
+    "getPath", "getQuery",
+    # Pistache
+    "query", "resource",
+    # Generic / Oat++ (oatpp)
+    "getPathVariable", "getQueryParameter", "readBodyToString",
+    "readBodyToDto",
+})
 
 log = structlog.get_logger()
 
@@ -77,6 +93,14 @@ class CppParser(TreeSitterBase, LanguageParser):
         result.edges.extend(
             self._extract_call_edges(root, fn_nodes, file_path, tenant_id, repo_id, language)
         )
+
+        # Taint source nodes and edges (CGI + Crow + Drogon + Pistache)
+        taint_nodes, taint_edges = self._extract_cpp_taint_sources(
+            root, fn_nodes, file_path, tenant_id, repo_id, language
+        )
+        result.nodes.extend(taint_nodes)
+        result.edges.extend(taint_edges)
+
         return result
 
     def _extract_cpp_nodes(
@@ -230,6 +254,152 @@ class CppParser(TreeSitterBase, LanguageParser):
                 repo_id=repo_id,
             ))
         return edges
+
+
+    def _extract_cpp_taint_sources(
+        self,
+        root: object,
+        fn_nodes: list[LexicalNode],
+        file_path: str,
+        tenant_id: str,
+        repo_id: str,
+        language: str,
+    ) -> tuple[list[LexicalNode], list[GraphEdge]]:
+        """Emit taint-source nodes and CALLS edges for C++ HTTP input patterns.
+
+        Detects three categories:
+
+        1. **CGI** — same as the C parser: ``getenv("QUERY_STRING")``,
+           ``fread(buf, 1, n, stdin)``, Mongoose / libmicrohttpd functions.
+           Reuses the ``_C_HTTP_SOURCE_FUNCTIONS`` and ``_C_CGI_HTTP_ENV_VARS``
+           constants from the C parser.
+
+        2. **Crow framework** — field access on request objects:
+           ``req.body``, ``req.url_params``, ``req.headers``.
+           Detected via ``field_expression`` where the field name is in
+           ``_CPP_HTTP_REQUEST_MEMBERS``.
+
+        3. **Drogon / Pistache / Oat++** — method calls on request pointer/objects:
+           ``req->getBody()``, ``req->getParameter("name")``,
+           ``req->getHeader("name")``, ``req->getCookie("name")``, etc.
+           Detected via ``call_expression`` where the callee is a
+           ``field_expression`` (pointer or member call) with a field name
+           in ``_CPP_HTTP_REQUEST_MEMBERS``.
+
+        Args:
+            root: AST root node.
+            fn_nodes: Function LexicalNodes from this file.
+            file_path: Repo-relative file path.
+            tenant_id: Tenant namespace.
+            repo_id: Repository identifier.
+            language: Language string.
+
+        Returns:
+            Tuple of ``(nodes, edges)``.
+        """
+        nodes: list[LexicalNode] = []
+        edges: list[GraphEdge] = []
+        seen_nodes: set[str] = set()
+        seen_edges: set[str] = set()
+
+        scoped_fns = sorted(
+            [fn for fn in fn_nodes if fn.line_end is not None],
+            key=lambda n: n.line_start,
+        )
+
+        def _find_caller(line: int) -> LexicalNode | None:
+            caller: LexicalNode | None = None
+            for fn in scoped_fns:
+                if fn.line_start <= line <= (fn.line_end or line) and (
+                    caller is None or fn.line_start > caller.line_start
+                ):
+                    caller = fn
+            return caller
+
+        def _emit(source_name: str, caller: LexicalNode, line: int) -> None:
+            source_id = LexicalNode.make_id(tenant_id, repo_id, "cpp_http", source_name, "external")
+            if source_id not in seen_nodes:
+                seen_nodes.add(source_id)
+                nodes.append(LexicalNode(
+                    node_id=source_id,
+                    node_type="external",
+                    name=source_name,
+                    file="cpp_http",
+                    line_start=1,
+                    line_end=1,
+                    language=language,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+            edge_key = f"{source_id}:{caller.node_id}"
+            if edge_key not in seen_edges:
+                seen_edges.add(edge_key)
+                edges.append(GraphEdge(
+                    edge_id=GraphEdge.make_id(source_id, "calls", caller.name),
+                    edge_type="calls",
+                    source_id=source_id,
+                    target_id=caller.node_id,
+                    target_name=caller.name,
+                    file=file_path,
+                    line=line,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+
+        for node in _walk(root):
+            node_type: str = node.type
+
+            if node_type == "call_expression":
+                fn_field = node.child_by_field_name("function")
+                if fn_field is None:
+                    continue
+
+                # ── CGI / Mongoose / libmicrohttpd (same as C) ───────────────
+                if fn_field.type == "identifier":
+                    fn_name = fn_field.text.decode()
+                    if fn_name in _C_HTTP_SOURCE_FUNCTIONS:
+                        node_line = node.start_point[0] + 1
+                        caller = _find_caller(node_line)
+                        if caller is None:
+                            continue
+                        if fn_name == "getenv":
+                            args = node.child_by_field_name("arguments")
+                            if args:
+                                for arg in args.children:
+                                    if arg.type in ("string_literal", "string"):
+                                        env_var = _strip_quotes(arg.text.decode())
+                                        if env_var in _C_CGI_HTTP_ENV_VARS:
+                                            _emit(f"cpp_http.cgi.{env_var}", caller, node_line)
+                                        break
+                        elif fn_name in ("fread", "fgets", "read"):
+                            args = node.child_by_field_name("arguments")
+                            if args and ("stdin" in args.text.decode() or "STDIN_FILENO" in args.text.decode()):
+                                _emit("cpp_http.cgi.stdin", caller, node_line)
+                        else:
+                            _emit(f"cpp_http.{fn_name}", caller, node_line)
+                    continue
+
+                # ── Drogon req->getBody() / req->getParameter() ──────────────
+                if fn_field.type == "field_expression":
+                    field_id = fn_field.child_by_field_name("field")
+                    if field_id and field_id.text.decode() in _CPP_HTTP_REQUEST_MEMBERS:
+                        node_line = node.start_point[0] + 1
+                        caller = _find_caller(node_line)
+                        if caller:
+                            method_name = field_id.text.decode()
+                            _emit(f"cpp_http.{method_name}", caller, node_line)
+
+            elif node_type == "field_expression":
+                # ── Crow req.body / req.url_params / req.headers ─────────────
+                field_id = node.child_by_field_name("field")
+                if field_id and field_id.text.decode() in _CPP_HTTP_REQUEST_MEMBERS:
+                    node_line = node.start_point[0] + 1
+                    caller = _find_caller(node_line)
+                    if caller:
+                        field_name = field_id.text.decode()
+                        _emit(f"cpp_http.{field_name}", caller, node_line)
+
+        return nodes, edges
 
 
 from . import register_language  # noqa: E402
