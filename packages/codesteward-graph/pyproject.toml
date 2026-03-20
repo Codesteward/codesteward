@@ -1,6 +1,6 @@
 [project]
 name = "codesteward-graph"
-version = "0.2.2"
+version = "0.3.0"
 description = "Multi-language structural code graph builder — 13 tree-sitter parsers + Neo4j writer"
 readme = "README.md"
 requires-python = ">=3.12"
