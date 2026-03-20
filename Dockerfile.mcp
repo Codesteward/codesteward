@@ -6,8 +6,15 @@
 #   graph-core           — TypeScript / JavaScript / Python / Java only
 #   base                 — no tree-sitter (Neo4j query-only mode)
 #
+# Taint analysis (optional):
+#   The codesteward-taint binary is bundled by default using the latest GitHub
+#   release. Pin a specific version with --build-arg TAINT_VERSION=<version>.
+#   Set --build-arg TAINT_VERSION=none to build without the binary.
+#
 # Usage:
-#   docker build -t codesteward-mcp .
+#   docker build -t codesteward-mcp .                                  # latest taint
+#   docker build --build-arg TAINT_VERSION=0.1.0 -t codesteward-mcp .  # pinned taint
+#   docker build --build-arg TAINT_VERSION=none -t codesteward-mcp .   # no taint
 #   docker run -p 3000:3000 \
 #     -e NEO4J_URI=bolt://neo4j:7687 \
 #     -e NEO4J_USER=neo4j \
@@ -16,6 +23,29 @@
 
 ARG PYTHON_VERSION=3.12
 ARG INSTALL_EXTRA=graph-all
+ARG TAINT_VERSION=latest
+
+# ── taint-fetcher stage ───────────────────────────────────────────────────────
+# Downloads the codesteward-taint binary from GitHub Releases.
+# TAINT_VERSION=latest  → /releases/latest/download/  (default)
+# TAINT_VERSION=0.1.0   → /releases/download/v0.1.0/  (pinned)
+# TAINT_VERSION=none    → skipped; server starts without taint_analysis tool
+FROM alpine:3.20 AS taint-fetcher
+
+ARG TAINT_VERSION
+
+RUN apk add --no-cache curl \
+ && mkdir -p /opt/taint \
+ && if [ "${TAINT_VERSION}" != "none" ]; then \
+      ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') \
+   && if [ "${TAINT_VERSION}" = "latest" ]; then \
+        URL="https://github.com/bitkaio/codesteward-taint/releases/latest/download/codesteward-taint-linux-${ARCH}"; \
+      else \
+        URL="https://github.com/bitkaio/codesteward-taint/releases/download/v${TAINT_VERSION}/codesteward-taint-linux-${ARCH}"; \
+      fi \
+   && curl -fsSL "${URL}" -o /opt/taint/codesteward-taint \
+   && chmod +x /opt/taint/codesteward-taint; \
+    fi
 
 # ── builder stage ────────────────────────────────────────────────────────────
 FROM python:${PYTHON_VERSION}-slim AS builder
@@ -53,6 +83,11 @@ COPY --from=builder /install /usr/local
 
 # Non-root user for security
 RUN useradd --uid 1001 --no-create-home --shell /bin/false codesteward
+
+# Install taint binary when present (absent when TAINT_VERSION=none).
+RUN --mount=type=bind,from=taint-fetcher,source=/opt/taint,target=/opt/taint-src \
+    [ ! -f /opt/taint-src/codesteward-taint ] || \
+    install -m 0755 /opt/taint-src/codesteward-taint /usr/local/bin/codesteward-taint
 
 # Workspace directory for build metadata (must be created as root, then chowned)
 RUN mkdir -p /workspace && chown codesteward /workspace

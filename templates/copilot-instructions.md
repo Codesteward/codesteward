@@ -18,11 +18,16 @@ the standard Docker setup. Call this before querying if the graph does not exist
 or after significant code changes.
 
 **codebase_graph_query** — Search the graph. Use the `query_type` parameter:
+
 - `lexical` — find functions, classes, methods by name or file
 - `referential` — find call/import/extends relationships and auth guards
-- `semantic` — trace data-flow relationships
+- `semantic` — read taint-flow findings (run `taint_analysis` first; returns empty until then)
 - `dependency` — list external package dependencies
 - `cypher` — custom Cypher query
+
+**taint_analysis** — Trace how untrusted input propagates to dangerous sinks
+(SQL, shell, file I/O). Run this before querying `semantic`. Only available
+when the `codesteward-taint` binary is bundled in the Docker image.
 
 **graph_augment** — Record a relationship you inferred through reasoning that
 the parser could not detect statically. Use `node_id` values from query results

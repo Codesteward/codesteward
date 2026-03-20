@@ -103,18 +103,6 @@ export class AdminService extends UserService {
 }
 """
 
-# A file with data flow (params flow to return values)
-_DATA_FLOW_TS = """\
-export function buildResponse(data: unknown, status: number) {
-  return { data, status, timestamp: Date.now() };
-}
-
-export async function fetchAndReturn(userId: string) {
-  const record = await db.get(userId);
-  return record;
-}
-"""
-
 _CSHARP_SERVICE = """\
 using System.Collections.Generic;
 using Microsoft.AspNetCore.Authorization;
@@ -444,20 +432,6 @@ class TestTypeScriptParser:
         targets = {e.target_name for e in ext_edges}
         assert "BaseService" in targets
         assert "UserService" in targets
-
-    # -- Semantic: data flow --------------------------------------------
-
-    def test_param_to_return_data_flow_edge_created(self, parser: TypeScriptParser) -> None:
-        """Parameters appearing in return statements create data_flow edges."""
-        result = self._parse(parser, _DATA_FLOW_TS)
-        df_edges = [e for e in result.edges if e.edge_type == "data_flow"]
-        assert len(df_edges) >= 1
-
-    def test_data_flow_edge_references_function(self, parser: TypeScriptParser) -> None:
-        """data_flow edge target_name references the function and parameter."""
-        result = self._parse(parser, _DATA_FLOW_TS)
-        df_edges = [e for e in result.edges if e.edge_type == "data_flow"]
-        assert any("buildResponse" in e.target_name for e in df_edges)
 
     # -- All-nodes accessor ---------------------------------------------
 

@@ -38,6 +38,7 @@ Rather than scanning files repeatedly, the agent queries a pre-built graph — c
 | `codebase_graph_query` | Query via named templates (`lexical`, `referential`, `semantic`, `dependency`) or raw Cypher |
 | `graph_augment` | Add agent-inferred relationships (confidence < 1.0) back into the graph |
 | `graph_status` | Return metadata: node/edge counts, last build time, Neo4j connectivity |
+| `taint_analysis` | *(optional)* Run taint-flow analysis via the `codesteward-taint` binary and write `TAINT_FLOW` edges to Neo4j |
 
 ## Quick Start
 
@@ -126,6 +127,40 @@ Priority: **CLI flags > env vars > YAML file > defaults**.
 | Workspace | `WORKSPACE_BASE` | `workspace` | Directory for build metadata |
 | Log level | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 
+## Taint Analysis (optional)
+
+The `taint_analysis` tool is registered automatically when the `codesteward-taint` binary is on
+`PATH`. Without it the server starts normally and the other four tools are unaffected.
+
+### Docker
+
+Pass `--build-arg TAINT_VERSION=<version>` to download and bundle the binary:
+
+```bash
+docker build --build-arg TAINT_VERSION=0.1.0 -t codesteward-mcp:taint .
+```
+
+### Standalone
+
+Download a pre-built binary from the
+[codesteward-taint releases](https://github.com/bitkaio/codesteward-taint/releases) and place it
+on `PATH`:
+
+```bash
+# macOS (Apple Silicon)
+curl -L https://github.com/bitkaio/codesteward-taint/releases/latest/download/codesteward-taint-darwin-arm64 \
+     -o /usr/local/bin/codesteward-taint
+chmod +x /usr/local/bin/codesteward-taint
+```
+
+### Workflow
+
+```text
+graph_rebuild          # build the structural graph first
+taint_analysis         # trace taint paths; writes TAINT_FLOW edges to Neo4j
+codebase_graph_query   # query_type="semantic" to read findings
+```
+
 ## Graph Model
 
 ### Nodes — `LexicalNode`
@@ -153,8 +188,8 @@ Every parsed symbol becomes a `LexicalNode`:
 | `GUARDED_BY` | Function protected by a decorator/annotation (`@login_required`, `@UseGuards`, FastAPI `Depends`, `@PreAuthorize`, …) |
 | `PROTECTED_BY` | Function protected by router-scope middleware (`APIRouter`, Express `router.use()`, Gin group, Actix scope, Laravel route group, ASP.NET `MapGroup().RequireAuthorization()`) |
 | `DEPENDS_ON` | File depends on an external package |
-| `DATA_FLOW` | Data flows from one node to another |
-| `calls` / `guarded_by` / … | Agent-inferred edges with `confidence < 1.0` via `graph_augment` |
+| `TAINT_FLOW` | Untrusted input reaches a dangerous sink (written by `codesteward-taint`; queryable via `semantic`) |
+| `calls` / `guarded_by` / `taint_flow` / … | Agent-inferred edges with `confidence < 1.0` via `graph_augment` |
 
 ## Development
 

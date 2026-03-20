@@ -60,11 +60,14 @@ _CYPHER_TEMPLATES: dict[str, str] = {
     """,
     "semantic": """
         MATCH (src:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
-              -[r:DATA_FLOW]->(tgt)
+              -[r:TAINT_FLOW]->(tgt:LexicalNode)
         WHERE ($filter = '' OR src.name CONTAINS $filter OR src.file CONTAINS $filter)
-        RETURN src.name AS function_name, src.file AS file,
-               r.line AS line, tgt.name AS flow_description
-        ORDER BY src.file, r.line
+          AND NOT r.sanitized
+        RETURN src.name AS source_name, src.file AS source_file,
+               tgt.name AS sink_name,   tgt.file AS sink_file,
+               r.cwe AS cwe, r.hops AS hops,
+               r.level AS level, r.framework AS framework
+        ORDER BY r.hops ASC, src.file ASC
         LIMIT $limit
     """,
     "dependency": """
@@ -80,7 +83,7 @@ _CYPHER_TEMPLATES: dict[str, str] = {
 }
 
 _ALLOWED_EDGE_TYPES = frozenset({
-    "calls", "guarded_by", "protected_by", "data_flow",
+    "calls", "guarded_by", "protected_by", "taint_flow",
     "type_equivalent", "migration_target", "audit_sink",
     "pii_source", "phi_source", "custom",
 })

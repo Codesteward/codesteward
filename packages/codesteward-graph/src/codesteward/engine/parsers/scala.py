@@ -10,6 +10,34 @@ from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 
 log = structlog.get_logger()
 
+# Play Framework request body accessor method names.
+# request.body.asJson, request.body.asText, etc.
+_SCALA_PLAY_BODY_METHODS: frozenset[str] = frozenset({
+    "asJson", "asText", "asXml", "asMultipartFormData",
+    "asFormUrlEncoded", "asRaw",
+})
+
+# Play Framework direct request accessor methods.
+_SCALA_PLAY_REQUEST_METHODS: frozenset[str] = frozenset({
+    "queryString", "getQueryString", "headers", "cookies",
+    "session", "flash", "contentType", "body",
+    # form binding
+    "bindFromRequest",
+})
+
+# Akka HTTP / Pekko HTTP route directive names that extract HTTP input.
+_SCALA_AKKA_DIRECTIVES: frozenset[str] = frozenset({
+    "parameters", "parameter", "entity", "formField", "formFields",
+    "headerValueByName", "optionalHeaderValueByName", "cookie",
+    "optionalCookie", "path", "pathPrefix", "pathEnd",
+    "rawPathPrefix",
+})
+
+# ZIO HTTP / http4s: request accessor patterns (method names on request objects).
+_SCALA_ZIO_REQUEST_METHODS: frozenset[str] = frozenset({
+    "url", "body", "headers", "method",
+})
+
 _KEYWORDS = frozenset({
     "if", "else", "for", "while", "do", "match", "case", "return", "throw",
     "try", "catch", "finally", "new", "this", "super", "null", "true", "false",
@@ -76,6 +104,13 @@ class ScalaParser(TreeSitterBase, LanguageParser):
             self._extract_call_edges(root, fn_nodes, file_path, tenant_id, repo_id, language)
         )
         self._extract_sc_parameters(root, fn_nodes)
+
+        # Taint source nodes and edges (Play / Akka HTTP / ZIO HTTP / http4s)
+        taint_nodes, taint_edges = self._extract_scala_taint_sources(
+            root, fn_nodes, file_path, tenant_id, repo_id, language
+        )
+        result.nodes.extend(taint_nodes)
+        result.edges.extend(taint_edges)
 
         return result
 
@@ -312,6 +347,165 @@ class ScalaParser(TreeSitterBase, LanguageParser):
                         "type": ptype_node.text.decode() if ptype_node else None,
                     })
             fn.metadata["parameters"] = params
+
+
+    # ------------------------------------------------------------------
+    # Taint source emission (Play / Akka HTTP / ZIO HTTP / http4s)
+    # ------------------------------------------------------------------
+
+    def _extract_scala_taint_sources(
+        self,
+        root: object,
+        fn_nodes: "list[LexicalNode]",
+        file_path: str,
+        tenant_id: str,
+        repo_id: str,
+        language: str,
+    ) -> "tuple[list[LexicalNode], list[GraphEdge]]":
+        """Emit taint-source nodes and CALLS edges for Scala HTTP input patterns.
+
+        Detects three frameworks:
+
+        1. **Play Framework** — ``request.body.asJson``, ``request.body.asText``,
+           ``request.queryString``, ``request.getQueryString("name")``,
+           ``form.bindFromRequest()``, etc.  Detected by finding identifiers named
+           ``request`` followed by field access or method calls in
+           ``_SCALA_PLAY_BODY_METHODS`` / ``_SCALA_PLAY_REQUEST_METHODS``.
+
+        2. **Akka HTTP / Pekko HTTP** — route directives such as
+           ``parameters("name")``, ``entity(as[T])``, ``formField("f")``,
+           ``headerValueByName("h")``, ``cookie("c")`` etc.  Detected as
+           function calls whose callee matches ``_SCALA_AKKA_DIRECTIVES``.
+
+        3. **ZIO HTTP / http4s** — ``request.url``, ``request.body``,
+           ``request.headers`` accessed as fields on common request variable names.
+
+        Args:
+            root: AST root node.
+            fn_nodes: Function LexicalNodes from this file.
+            file_path: Repo-relative file path.
+            tenant_id: Tenant namespace.
+            repo_id: Repository identifier.
+            language: Language string.
+
+        Returns:
+            Tuple of ``(nodes, edges)``.
+        """
+        nodes: list[LexicalNode] = []
+        edges: list[GraphEdge] = []
+        seen_nodes: set[str] = set()
+        seen_edges: set[str] = set()
+
+        scoped_fns = sorted(
+            [fn for fn in fn_nodes if fn.line_end is not None],
+            key=lambda n: n.line_start,
+        )
+
+        def _find_caller(line: int) -> "LexicalNode | None":
+            caller: LexicalNode | None = None
+            for fn in scoped_fns:
+                if fn.line_start <= line <= (fn.line_end or line) and (
+                    caller is None or fn.line_start > caller.line_start
+                ):
+                    caller = fn
+            return caller
+
+        def _emit(source_name: str, caller: "LexicalNode", line: int) -> None:
+            source_id = LexicalNode.make_id(
+                tenant_id, repo_id, "scala_http", source_name, "external"
+            )
+            if source_id not in seen_nodes:
+                seen_nodes.add(source_id)
+                nodes.append(LexicalNode(
+                    node_id=source_id,
+                    node_type="external",
+                    name=source_name,
+                    file="scala_http",
+                    line_start=1,
+                    line_end=1,
+                    language=language,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+            edge_key = f"{source_id}:{caller.node_id}"
+            if edge_key not in seen_edges:
+                seen_edges.add(edge_key)
+                edges.append(GraphEdge(
+                    edge_id=GraphEdge.make_id(source_id, "calls", caller.name),
+                    edge_type="calls",
+                    source_id=source_id,
+                    target_id=caller.node_id,
+                    target_name=caller.name,
+                    file=file_path,
+                    line=line,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+
+        _play_all = _SCALA_PLAY_BODY_METHODS | _SCALA_PLAY_REQUEST_METHODS
+
+        for node in _walk(root):
+            node_type: str = node.type
+
+            if node_type == "call_expression":
+                # Extract callee text (tree-sitter-scala uses "function" field or first child)
+                fn_field = node.child_by_field_name("function") or next(
+                    (c for c in node.children
+                     if c.type in ("field_expression", "identifier", "select_expression")),
+                    None,
+                )
+                if fn_field is None:
+                    continue
+                fn_text = fn_field.text.decode()
+
+                # ── Akka HTTP directives (bare function calls) ────────────────
+                # e.g. parameters("name"), entity(as[T])
+                callee_bare = fn_text.split(".")[-1]
+                if callee_bare in _SCALA_AKKA_DIRECTIVES:
+                    node_line = node.start_point[0] + 1
+                    caller = _find_caller(node_line)
+                    if caller:
+                        _emit(f"scala_http.akka.{callee_bare}", caller, node_line)
+                    continue
+
+                # ── Play request method calls ─────────────────────────────────
+                # e.g. request.getQueryString("name"), form.bindFromRequest()
+                parts = fn_text.split(".")
+                if (len(parts) >= 2
+                        and parts[-2] in ("request", "req", "form")
+                        and parts[-1] in _play_all):
+                    node_line = node.start_point[0] + 1
+                    caller = _find_caller(node_line)
+                    if caller:
+                        _emit(f"scala_http.play.{parts[-1]}", caller, node_line)
+
+            elif node_type == "field_expression":
+                # ── Play / ZIO field access: request.body, request.queryString ─
+                # e.g. request.body.asJson → two-level; detect both levels
+                value_node = node.child_by_field_name("value")
+                field_node = node.child_by_field_name("field")
+                if value_node is None or field_node is None:
+                    continue
+                field_name = field_node.text.decode()
+
+                # Check inner object text for "request" or "req"
+                value_text = value_node.text.decode()
+                is_request_chain = (
+                    value_text in ("request", "req")
+                    or value_text.endswith(".request")
+                    or value_text.endswith(".req")
+                    or "request.body" in value_text  # body.asJson level
+                )
+                if not is_request_chain:
+                    continue
+
+                if field_name in _SCALA_PLAY_BODY_METHODS | _SCALA_PLAY_REQUEST_METHODS | _SCALA_ZIO_REQUEST_METHODS:
+                    node_line = node.start_point[0] + 1
+                    caller = _find_caller(node_line)
+                    if caller:
+                        _emit(f"scala_http.play.{field_name}", caller, node_line)
+
+        return nodes, edges
 
 
 from . import register_language  # noqa: E402

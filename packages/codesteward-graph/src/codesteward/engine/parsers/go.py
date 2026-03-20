@@ -1,12 +1,67 @@
 """Go parser (tree-sitter AST). Requires ``tree-sitter-go`` (install with ``uv pip install -e '.[graph-go]'``).
 """
 
+from typing import Any
+
 import structlog
 
 from ._ast_utils import TreeSitterBase, _strip_quotes, _walk
 from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 
 log = structlog.get_logger()
+
+# net/http (*http.Request) direct method names treated as taint sources.
+_GO_HTTP_DIRECT_SOURCES: frozenset[str] = frozenset(
+    {"FormValue", "PostFormValue", "PathValue", "PostForm", "MultipartForm"}
+)
+
+# Chained selector patterns on *http.Request: (inner field, outer field) → source name.
+# Covers r.Header.Get(...) and r.URL.Query().
+_GO_HTTP_CHAINED_SOURCES: dict[tuple[str, str], str] = {
+    ("Header", "Get"): "Header.Get",
+    ("URL", "Query"): "URL.Query",
+    ("URL", "RawQuery"): "URL.RawQuery",
+}
+
+# Gin (*gin.Context) method names treated as taint sources.
+# These are unique to gin.Context and unlikely to collide with other types.
+_GIN_CONTEXT_METHODS: frozenset[str] = frozenset(
+    {
+        "Param", "Query", "DefaultQuery", "QueryArray", "QueryMap",
+        "PostForm", "DefaultPostForm", "PostFormArray", "PostFormMap",
+        "GetHeader", "Cookie", "FormFile", "MultipartForm",
+        "GetRawData",
+        "ShouldBind", "ShouldBindJSON", "ShouldBindXML", "ShouldBindQuery",
+        "ShouldBindHeader", "ShouldBindUri", "ShouldBindWith",
+        "BindJSON", "BindXML", "BindQuery", "BindHeader", "BindUri", "Bind",
+    }
+)
+
+# Echo (echo.Context) method names treated as taint sources.
+_ECHO_CONTEXT_METHODS: frozenset[str] = frozenset(
+    {
+        "Param", "QueryParam", "QueryParams", "QueryString",
+        "FormValue", "FormParams", "FormFile", "MultipartForm",
+        "Cookie", "Cookies",
+        "Bind", "BindJSON", "BindXML", "BindForm",
+    }
+)
+
+# Combined set for receiver-method detection (Gin ∪ Echo minus ambiguous names).
+# "Param", "Cookie", "FormFile", "MultipartForm", "Bind" appear in both —
+# that's fine; they're all taint sources regardless of which framework.
+_GO_FRAMEWORK_CONTEXT_METHODS: frozenset[str] = _GIN_CONTEXT_METHODS | _ECHO_CONTEXT_METHODS
+
+# Package-level function names that extract path parameters (Chi, Gorilla Mux).
+# Detected as call_expression where function is a selector on a package identifier.
+_GO_PATH_PARAM_PKG_FUNCTIONS: dict[str, str] = {
+    # chi.URLParam(r, "key") → package "chi", function "URLParam"
+    "URLParam": "chi.URLParam",
+    # chi.URLParamFromCtx(ctx, "key") → package "chi", function "URLParamFromCtx"
+    "URLParamFromCtx": "chi.URLParamFromCtx",
+    # mux.Vars(r) → package "mux", function "Vars"
+    "Vars": "mux.Vars",
+}
 
 
 class GoParser(TreeSitterBase, LanguageParser):
@@ -69,6 +124,12 @@ class GoParser(TreeSitterBase, LanguageParser):
                 root, fn_nodes, result.nodes, file_path, tenant_id, repo_id
             )
         )
+        # net/http taint source nodes and edges (r.FormValue/r.Header.Get/... → handler)
+        taint_nodes, taint_edges = self._extract_go_http_taint_sources(
+            root, fn_nodes, file_path, tenant_id, repo_id
+        )
+        result.nodes.extend(taint_nodes)
+        result.edges.extend(taint_edges)
         return result
 
     # ------------------------------------------------------------------
@@ -324,6 +385,158 @@ class GoParser(TreeSitterBase, LanguageParser):
                 _emit(src.node_id, mw, node.start_point[0] + 1)
 
         return edges
+
+
+    # ------------------------------------------------------------------
+    # Go net/http taint source emission
+    # ------------------------------------------------------------------
+
+    def _extract_go_http_taint_sources(
+        self,
+        root: Any,
+        fn_nodes: list[LexicalNode],
+        file_path: str,
+        tenant_id: str,
+        repo_id: str,
+    ) -> tuple[list[LexicalNode], list[GraphEdge]]:
+        """Emit taint-source nodes and CALLS edges for Go HTTP framework request inputs.
+
+        Covers four call patterns:
+
+        **net/http direct** — ``r.FormValue``, ``r.PostFormValue``,
+        ``r.PathValue``, ``r.PostForm``, ``r.MultipartForm``.  Identified by
+        method name alone; emits ``file="net/http"``.
+
+        **net/http chained** — ``r.Header.Get(...)`` and ``r.URL.Query()``
+        via two-level ``selector_expression`` chains.  Emits ``file="net/http"``.
+
+        **Gin / Echo context methods** — ``c.Param``, ``c.Query``,
+        ``c.QueryParam``, ``c.PostForm``, ``c.GetHeader``,
+        ``c.ShouldBindJSON``, etc.  Detected by method name (unique to these
+        frameworks); emits ``file="gin_echo"``.
+
+        **Chi / Gorilla Mux package functions** — ``chi.URLParam(r, "key")``,
+        ``chi.URLParamFromCtx(ctx, "key")``, ``mux.Vars(r)``.  Detected as
+        ``selector_expression`` call where the operand is a package-name
+        identifier; emits ``file="chi_mux"``.
+
+        For each detected call, emits:
+
+        - A synthetic external ``LexicalNode`` with the framework-specific
+          ``file`` marker and name equal to the method/function name.
+        - A ``CALLS`` edge **from** the source node **to** the enclosing
+          handler function.
+
+        Args:
+            root: AST root node.
+            fn_nodes: Function LexicalNodes from this file.
+            file_path: Repo-relative file path.
+            tenant_id: Tenant namespace.
+            repo_id: Repository identifier.
+
+        Returns:
+            Tuple of ``(nodes, edges)`` — synthetic source LexicalNodes and
+            CALLS edges pointing from each source to its handler.
+        """
+        nodes: list[LexicalNode] = []
+        edges: list[GraphEdge] = []
+        seen_nodes: set[str] = set()
+        seen_edges: set[str] = set()
+
+        scoped_fns = sorted(
+            [fn for fn in fn_nodes if fn.line_end is not None],
+            key=lambda n: n.line_start,
+        )
+
+        def _emit(source_name: str, source_file: str, node_line: int) -> None:
+            # Find the tightest enclosing function by line range
+            caller: LexicalNode | None = None
+            for fn in scoped_fns:
+                if fn.line_start <= node_line <= (fn.line_end or node_line) and (
+                    caller is None or fn.line_start > caller.line_start
+                ):
+                    caller = fn
+            if caller is None:
+                return
+
+            source_id = LexicalNode.make_id(tenant_id, repo_id, source_file, source_name, "external")
+            if source_id not in seen_nodes:
+                seen_nodes.add(source_id)
+                nodes.append(LexicalNode(
+                    node_id=source_id,
+                    node_type="external",
+                    name=source_name,
+                    file=source_file,
+                    line_start=1,
+                    line_end=1,
+                    language="go",
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+
+            edge_key = f"{source_id}:{caller.node_id}"
+            if edge_key not in seen_edges:
+                seen_edges.add(edge_key)
+                edges.append(GraphEdge(
+                    edge_id=GraphEdge.make_id(source_id, "calls", caller.name),
+                    edge_type="calls",
+                    source_id=source_id,
+                    target_id=caller.node_id,
+                    target_name=caller.name,
+                    file=file_path,
+                    line=node_line,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+
+        for node in _walk(root):
+            if node.type != "call_expression":
+                continue
+            fn_field = node.child_by_field_name("function")
+            if fn_field is None or fn_field.type != "selector_expression":
+                continue
+            outer_field = fn_field.child_by_field_name("field")
+            operand = fn_field.child_by_field_name("operand")
+            if outer_field is None or operand is None:
+                continue
+
+            outer_name = outer_field.text.decode()
+            node_line = node.start_point[0] + 1
+
+            if operand.type == "identifier":
+                # net/http direct: r.FormValue(...), r.PostFormValue(...), etc.
+                if outer_name in _GO_HTTP_DIRECT_SOURCES:
+                    _emit(outer_name, "net/http", node_line)
+                    continue
+
+                # Gin / Echo context methods: c.Param(...), c.Query(...), etc.
+                # Detected by method name uniqueness — no type inference available.
+                if outer_name in _GO_FRAMEWORK_CONTEXT_METHODS:
+                    _emit(outer_name, "gin_echo", node_line)
+                    continue
+
+                # Chi / Gorilla Mux package functions: chi.URLParam(r, ...), mux.Vars(r)
+                # The operand is the package identifier (e.g. "chi", "mux").
+                source_name = _GO_PATH_PARAM_PKG_FUNCTIONS.get(outer_name)
+                if source_name:
+                    _emit(source_name, "chi_mux", node_line)
+                    continue
+
+            # net/http chained: r.Header.Get(...), r.URL.Query()
+            if operand.type == "selector_expression":
+                inner_field = operand.child_by_field_name("field")
+                inner_operand = operand.child_by_field_name("operand")
+                if (
+                    inner_field is not None
+                    and inner_operand is not None
+                    and inner_operand.type == "identifier"
+                ):
+                    key = (inner_field.text.decode(), outer_name)
+                    chained_name = _GO_HTTP_CHAINED_SOURCES.get(key)
+                    if chained_name:
+                        _emit(chained_name, "net/http", node_line)
+
+        return nodes, edges
 
 
 from . import register_language  # noqa: E402

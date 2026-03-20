@@ -10,6 +10,19 @@ from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 
 log = structlog.get_logger()
 
+# ASP.NET Core parameter binding attributes that mark method parameters as HTTP input sources.
+# [FromQuery], [FromBody], [FromRoute], [FromForm], [FromHeader] are the standard MVC/Minimal API
+# attributes for binding controller action / endpoint parameters to request data.
+_CS_HTTP_PARAM_ATTRIBUTES: frozenset[str] = frozenset({
+    "FromQuery", "FromRoute", "FromBody", "FromForm", "FromHeader",
+})
+
+# HttpRequest / HttpContext property names that expose raw HTTP input.
+# Accessed as request.Query["key"], request.Form["field"], context.Request.Headers["name"], etc.
+_CS_HTTP_REQUEST_MEMBERS: frozenset[str] = frozenset({
+    "Query", "Form", "Body", "Headers", "Cookies", "RouteValues",
+})
+
 _KEYWORDS = frozenset({
     "if", "else", "for", "foreach", "while", "do", "switch", "case", "return",
     "new", "throw", "catch", "finally", "try", "using", "namespace", "class",
@@ -24,7 +37,7 @@ class CSharpParser(TreeSitterBase, LanguageParser):
     """Tree-sitter-based C# parser.
 
     Extracts all edge types: IMPORTS, CALLS, EXTENDS, GUARDED_BY, PROTECTED_BY,
-    DATA_FLOW, plus function parameter metadata.
+    plus function parameter metadata.
     PROTECTED_BY is emitted for ASP.NET Core Minimal API
     ``MapGroup(...).RequireAuthorization().MapGet(...)`` chains.
     """
@@ -85,6 +98,13 @@ class CSharpParser(TreeSitterBase, LanguageParser):
                 root, fn_nodes, result.nodes, file_path, tenant_id, repo_id
             )
         )
+
+        # Taint source nodes and edges (ASP.NET Core HTTP input)
+        taint_nodes, taint_edges = self._extract_cs_taint_sources(
+            root, fn_nodes, file_path, tenant_id, repo_id, language
+        )
+        result.nodes.extend(taint_nodes)
+        result.edges.extend(taint_edges)
 
         return result
 
@@ -513,6 +533,162 @@ class CSharpParser(TreeSitterBase, LanguageParser):
             else:
                 break
         return False
+
+
+    # ------------------------------------------------------------------
+    # Taint source emission (ASP.NET Core HTTP input)
+    # ------------------------------------------------------------------
+
+    def _extract_cs_taint_sources(
+        self,
+        root: object,
+        fn_nodes: list[LexicalNode],
+        file_path: str,
+        tenant_id: str,
+        repo_id: str,
+        language: str,
+    ) -> tuple[list[LexicalNode], list[GraphEdge]]:
+        """Emit taint-source nodes and CALLS edges for ASP.NET Core HTTP input.
+
+        Detects two patterns:
+
+        1. **Parameter binding attributes** — ``[FromQuery]``, ``[FromRoute]``,
+           ``[FromBody]``, ``[FromForm]``, ``[FromHeader]`` applied to individual
+           method parameters in MVC controller actions or Minimal API endpoint
+           handlers.  A synthetic external ``LexicalNode`` with
+           ``file="aspnetcore"`` and ``name="aspnetcore.<Attribute>"`` is emitted,
+           with a CALLS edge to the enclosing method.
+
+        2. **Direct HttpRequest member access** — indexed access such as
+           ``request.Query["key"]``, ``request.Form["field"]``,
+           ``request.Headers["name"]``, ``request.Cookies["c"]``,
+           ``request.Body``, ``request.RouteValues["id"]``.  Detected via
+           ``element_access_expression`` whose base is a ``member_access_expression``
+           with a property name in ``_CS_HTTP_REQUEST_MEMBERS``.
+
+        Args:
+            root: AST root node.
+            fn_nodes: Function LexicalNodes from this file.
+            file_path: Repo-relative file path.
+            tenant_id: Tenant namespace.
+            repo_id: Repository identifier.
+            language: Language string.
+
+        Returns:
+            Tuple of ``(nodes, edges)`` — synthetic source LexicalNodes and
+            CALLS edges pointing from each source to its handler.
+        """
+        nodes: list[LexicalNode] = []
+        edges: list[GraphEdge] = []
+        seen_nodes: set[str] = set()
+        seen_edges: set[str] = set()
+
+        fn_id_by_name: dict[str, str] = {n.name: n.node_id for n in fn_nodes}
+        scoped_fns = sorted(
+            [fn for fn in fn_nodes if fn.line_end is not None],
+            key=lambda n: n.line_start,
+        )
+
+        def _emit(source_name: str, method_name: str, method_id: str, line: int) -> None:
+            source_id = LexicalNode.make_id(tenant_id, repo_id, "aspnetcore", source_name, "external")
+            if source_id not in seen_nodes:
+                seen_nodes.add(source_id)
+                nodes.append(LexicalNode(
+                    node_id=source_id,
+                    node_type="external",
+                    name=source_name,
+                    file="aspnetcore",
+                    line_start=1,
+                    line_end=1,
+                    language=language,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+            edge_key = f"{source_id}:{method_id}"
+            if edge_key not in seen_edges:
+                seen_edges.add(edge_key)
+                edges.append(GraphEdge(
+                    edge_id=GraphEdge.make_id(source_id, "calls", method_name),
+                    edge_type="calls",
+                    source_id=source_id,
+                    target_id=method_id,
+                    target_name=method_name,
+                    file=file_path,
+                    line=line,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+
+        # ── Section 1: parameter-level binding attributes ────────────────────
+        for node in _walk(root):
+            if node.type not in self._METHOD_TYPES:
+                continue
+            name_node = node.child_by_field_name("name") or next(
+                (c for c in node.children if c.type == "identifier"), None
+            )
+            if name_node is None:
+                continue
+            method_name = name_node.text.decode()
+            method_id = fn_id_by_name.get(method_name) or LexicalNode.make_id(
+                tenant_id, repo_id, file_path, method_name, "function"
+            )
+            param_list = next(
+                (c for c in node.children if c.type == "parameter_list"), None
+            )
+            if param_list is None:
+                continue
+            for param in param_list.children:
+                if param.type != "parameter":
+                    continue
+                for pchild in param.children:
+                    if pchild.type != "attribute_list":
+                        continue
+                    for attr in pchild.children:
+                        if attr.type != "attribute":
+                            continue
+                        attr_name_node = attr.child_by_field_name("name") or next(
+                            (c for c in attr.children
+                             if c.type in ("identifier", "qualified_name")), None
+                        )
+                        if attr_name_node is None:
+                            continue
+                        # qualified names like "Microsoft.AspNetCore.Mvc.FromQuery" → take last part
+                        attr_name = attr_name_node.text.decode().split(".")[-1]
+                        if attr_name in _CS_HTTP_PARAM_ATTRIBUTES:
+                            _emit(
+                                f"aspnetcore.{attr_name}",
+                                method_name,
+                                method_id,
+                                param.start_point[0] + 1,
+                            )
+                            break  # one matching attribute per parameter is enough
+
+        # ── Section 2: HttpRequest indexed access ────────────────────────────
+        # Matches: request.Query["key"], context.Request.Form["field"], etc.
+        for node in _walk(root):
+            if node.type != "element_access_expression":
+                continue
+            expr = node.child_by_field_name("expression")
+            if expr is None or expr.type != "member_access_expression":
+                continue
+            prop = expr.child_by_field_name("name")
+            if prop is None or prop.text.decode() not in _CS_HTTP_REQUEST_MEMBERS:
+                continue
+
+            node_line = node.start_point[0] + 1
+            caller: LexicalNode | None = None
+            for fn in scoped_fns:
+                if fn.line_start <= node_line <= (fn.line_end or node_line) and (
+                    caller is None or fn.line_start > caller.line_start
+                ):
+                    caller = fn
+            if caller is None:
+                continue
+
+            prop_name = prop.text.decode()
+            _emit(f"aspnetcore.Request.{prop_name}", caller.name, caller.node_id, node_line)
+
+        return nodes, edges
 
 
 # Auto-register when this module is imported

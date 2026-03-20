@@ -83,7 +83,7 @@ class GraphEdge:
     Attributes:
         edge_id: Deterministic ID.
         edge_type: "imports" | "exports" | "calls" | "extends" |
-                   "implements" | "depends_on" | "data_flow" | "guarded_by".
+                   "implements" | "depends_on" | "guarded_by" | "taint_flow".
         source_id: ID of the source node.
         target_id: ID of the target node (or target name for unresolved).
         target_name: Human-readable target name (for unresolved cross-file refs).

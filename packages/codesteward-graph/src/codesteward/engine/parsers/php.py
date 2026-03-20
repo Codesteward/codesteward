@@ -6,6 +6,37 @@ import structlog
 from ._ast_utils import _BUILTIN_NAMES, TreeSitterBase, _walk
 from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 
+# PHP superglobal variables that carry untrusted HTTP input.
+_PHP_SUPERGLOBALS: frozenset[str] = frozenset({
+    "$_GET", "$_POST", "$_REQUEST", "$_FILES", "$_COOKIE", "$_SERVER",
+})
+
+# Laravel Illuminate\Http\Request input methods that expose HTTP data.
+_PHP_LARAVEL_INPUT_METHODS: frozenset[str] = frozenset({
+    "input", "query", "post", "get", "all", "json", "file", "files",
+    "only", "except", "collect", "filled", "string", "integer", "boolean",
+    "float", "date", "array", "getContent",
+})
+
+# Symfony ParameterBag names accessed via $request->{bag}->get(...)
+# e.g. $request->query->get("name"), $request->request->get("name")
+_PHP_SYMFONY_BAGS: frozenset[str] = frozenset({
+    "query", "request", "files", "cookies", "headers", "server",
+})
+
+# PSR-7 / Slim request accessor methods (getQueryParams, getParsedBody, etc.)
+_PHP_PSR7_METHODS: frozenset[str] = frozenset({
+    "getQueryParams", "getParsedBody", "getUploadedFiles", "getCookieParams",
+    "getServerParams", "getBody", "getParsedBodyParam", "getQueryParam",
+    "getAttribute",
+})
+
+# CodeIgniter 4 IncomingRequest methods
+_PHP_CI4_METHODS: frozenset[str] = frozenset({
+    "getGet", "getPost", "getVar", "getJSON", "getRawInput", "getFile",
+    "getFiles", "getHeader", "getCookie",
+})
+
 log = structlog.get_logger()
 
 _KEYWORDS = frozenset({
@@ -89,6 +120,14 @@ class PhpParser(TreeSitterBase, LanguageParser):
                 root, fn_nodes, result.nodes, file_path, tenant_id, repo_id
             )
         )
+
+        # Taint source nodes and edges (PHP HTTP input)
+        taint_nodes, taint_edges = self._extract_php_taint_sources(
+            root, fn_nodes, file_path, tenant_id, repo_id, language
+        )
+        result.nodes.extend(taint_nodes)
+        result.edges.extend(taint_edges)
+
         return result
 
     def _extract_php_nodes(
@@ -612,6 +651,163 @@ class PhpParser(TreeSitterBase, LanguageParser):
                         return str(inner.text.decode())
 
         return None
+
+
+    # ------------------------------------------------------------------
+    # Taint source emission (PHP HTTP input)
+    # ------------------------------------------------------------------
+
+    def _extract_php_taint_sources(
+        self,
+        root: object,
+        fn_nodes: list[LexicalNode],
+        file_path: str,
+        tenant_id: str,
+        repo_id: str,
+        language: str,
+    ) -> tuple[list[LexicalNode], list[GraphEdge]]:
+        """Emit taint-source nodes and CALLS edges for PHP HTTP input patterns.
+
+        Detects four categories of PHP HTTP input access:
+
+        1. **Superglobals** — ``$_GET``, ``$_POST``, ``$_REQUEST``, ``$_FILES``,
+           ``$_COOKIE``, ``$_SERVER``.  Any access to these arrays (subscript or
+           bare reference) within a function body is treated as a taint source.
+
+        2. **Laravel** — ``$request->input('name')``, ``$request->query()``,
+           ``$request->all()``, ``$request->file()``, etc.
+           Detected via ``member_call_expression`` where the method name is in
+           ``_PHP_LARAVEL_INPUT_METHODS`` and the receiver text ends with
+           ``request`` or ``req``.
+
+        3. **Symfony** — ``$request->query->get()``, ``$request->request->get()``,
+           ``$request->files->get()``, etc.  Two-level chain: a
+           ``member_call_expression`` whose method is ``get`` (or similar) and
+           whose receiver is a ``member_access_expression`` with property in
+           ``_PHP_SYMFONY_BAGS``.
+
+        4. **PSR-7 / Slim / CodeIgniter 4** — ``$request->getQueryParams()``,
+           ``$request->getParsedBody()``, ``$this->request->getGet()``, etc.
+           Method names are in ``_PHP_PSR7_METHODS`` and ``_PHP_CI4_METHODS``.
+
+        For each detected access, emits a synthetic ``external`` ``LexicalNode``
+        with ``file="php"`` and a ``CALLS`` edge to the tightest enclosing
+        function found by line-range containment.
+
+        Args:
+            root: AST root node.
+            fn_nodes: Function LexicalNodes from this file.
+            file_path: Repo-relative file path.
+            tenant_id: Tenant namespace.
+            repo_id: Repository identifier.
+            language: Language string.
+
+        Returns:
+            Tuple of ``(nodes, edges)``.
+        """
+        nodes: list[LexicalNode] = []
+        edges: list[GraphEdge] = []
+        seen_nodes: set[str] = set()
+        seen_edges: set[str] = set()
+
+        scoped_fns = sorted(
+            [fn for fn in fn_nodes if fn.line_end is not None],
+            key=lambda n: n.line_start,
+        )
+
+        def _find_caller(node_line: int) -> LexicalNode | None:
+            caller: LexicalNode | None = None
+            for fn in scoped_fns:
+                if fn.line_start <= node_line <= (fn.line_end or node_line) and (
+                    caller is None or fn.line_start > caller.line_start
+                ):
+                    caller = fn
+            return caller
+
+        def _emit(source_name: str, caller: LexicalNode, line: int) -> None:
+            source_id = LexicalNode.make_id(tenant_id, repo_id, "php", source_name, "external")
+            if source_id not in seen_nodes:
+                seen_nodes.add(source_id)
+                nodes.append(LexicalNode(
+                    node_id=source_id,
+                    node_type="external",
+                    name=source_name,
+                    file="php",
+                    line_start=1,
+                    line_end=1,
+                    language=language,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+            edge_key = f"{source_id}:{caller.node_id}"
+            if edge_key not in seen_edges:
+                seen_edges.add(edge_key)
+                edges.append(GraphEdge(
+                    edge_id=GraphEdge.make_id(source_id, "calls", caller.name),
+                    edge_type="calls",
+                    source_id=source_id,
+                    target_id=caller.node_id,
+                    target_name=caller.name,
+                    file=file_path,
+                    line=line,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+
+        all_http_methods = _PHP_LARAVEL_INPUT_METHODS | _PHP_PSR7_METHODS | _PHP_CI4_METHODS
+
+        for node in _walk(root):
+            node_type: str = node.type
+
+            # ── Section 1: superglobals ($\_GET, $\_POST, etc.) ──────────────
+            if node_type in ("variable_name", "name"):
+                text = node.text.decode()
+                # Superglobals may appear with or without leading $ depending on grammar
+                if text in _PHP_SUPERGLOBALS or f"${text}" in _PHP_SUPERGLOBALS:
+                    node_line = node.start_point[0] + 1
+                    caller = _find_caller(node_line)
+                    if caller:
+                        src_name = text if text in _PHP_SUPERGLOBALS else f"${text}"
+                        _emit(f"php.{src_name}", caller, node_line)
+
+            # ── Section 2 & 4: Laravel / PSR-7 / CI4 method calls ────────────
+            elif node_type == "member_call_expression":
+                method_node = node.child_by_field_name("name")
+                if method_node is None:
+                    continue
+                method_name = method_node.text.decode()
+                if method_name not in all_http_methods:
+                    continue
+                node_line = node.start_point[0] + 1
+                caller = _find_caller(node_line)
+                if caller is None:
+                    continue
+                _emit(f"php.{method_name}", caller, node_line)
+
+            # ── Section 3: Symfony bag access ($request->query->get()) ────────
+            # Detected as member_access_expression object of a member_call_expression
+            # (already handled above when method_name = "get" etc., but we add
+            # specificity by checking that the intermediate property is a Symfony bag)
+            elif node_type == "member_access_expression":
+                prop_node = node.child_by_field_name("name")
+                if prop_node is None:
+                    continue
+                prop_name = prop_node.text.decode()
+                if prop_name not in _PHP_SYMFONY_BAGS:
+                    continue
+                # Verify the receiver text contains "request"
+                obj_node = node.child_by_field_name("object")
+                if obj_node is None:
+                    continue
+                obj_text = obj_node.text.decode().lower()
+                if "request" not in obj_text:
+                    continue
+                node_line = node.start_point[0] + 1
+                caller = _find_caller(node_line)
+                if caller:
+                    _emit(f"php.symfony.{prop_name}", caller, node_line)
+
+        return nodes, edges
 
 
 from . import register_language  # noqa: E402

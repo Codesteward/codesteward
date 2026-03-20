@@ -18,6 +18,26 @@ from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 log = structlog.get_logger()
 
 
+# Express / Fastify / Koa request property names treated as taint sources.
+# Covers req.body (Express), request.body (Fastify), ctx.query (Koa), etc.
+_EXPRESS_REQUEST_PROPS: frozenset[str] = frozenset(
+    {"body", "query", "params", "headers", "cookies", "files"}
+)
+
+# Common request object parameter names used by Express, Fastify, and Koa.
+_EXPRESS_REQUEST_PARAM_NAMES: frozenset[str] = frozenset({"req", "request", "ctx"})
+
+# NestJS parameter decorator names that mark method parameters as taint sources.
+# These appear as decorators on individual parameters, e.g.:
+#   create(@Body() dto: CreateUserDto, @Param('id') id: string)
+_NESTJS_PARAM_DECORATORS: frozenset[str] = frozenset(
+    {
+        "Body", "Param", "Query", "Headers", "Req", "Request",
+        "Ip", "HostParam", "Session", "UploadedFile", "UploadedFiles",
+    }
+)
+
+
 # ===========================================================================
 # AST-based TypeScript/JavaScript parser (tree-sitter)
 # ===========================================================================
@@ -27,8 +47,7 @@ class TypeScriptParser(TreeSitterBase, LanguageParser):
     """Tree-sitter-based TypeScript/JavaScript/TSX parser.
 
     All TS-specific extraction methods are concentrated here. Shared methods
-    (_extract_call_edges, _extract_callee_name, _extract_semantic_edges) are
-    inherited from TreeSitterBase.
+    (_extract_call_edges, _extract_callee_name) are inherited from TreeSitterBase.
     """
 
 
@@ -92,10 +111,6 @@ class TypeScriptParser(TreeSitterBase, LanguageParser):
             self._extract_call_edges(root, fn_nodes, file_path, tenant_id, repo_id, language)
         )
 
-        # Semantic data-flow edges
-        result.edges.extend(
-            self._extract_semantic_edges(fn_nodes, content_bytes, file_path, tenant_id, repo_id)
-        )
 
         # GUARDED_BY edges
         result.edges.extend(
@@ -111,6 +126,20 @@ class TypeScriptParser(TreeSitterBase, LanguageParser):
 
         # Parameter extraction (enriches function node metadata in-place)
         self._extract_ts_parameters(root, fn_nodes, language)
+
+        # Express taint source nodes and edges (req.body/req.query/... → handler)
+        taint_nodes, taint_edges = self._extract_express_taint_sources(
+            root, fn_nodes, file_path, tenant_id, repo_id, language
+        )
+        result.nodes.extend(taint_nodes)
+        result.edges.extend(taint_edges)
+
+        # NestJS parameter decorator taint source nodes and edges
+        nestjs_nodes, nestjs_edges = self._extract_nestjs_taint_sources(
+            root, fn_nodes, file_path, tenant_id, repo_id, language
+        )
+        result.nodes.extend(nestjs_nodes)
+        result.edges.extend(nestjs_edges)
 
         return result
 
@@ -874,4 +903,225 @@ class TypeScriptParser(TreeSitterBase, LanguageParser):
             inner = param_node.named_children[0] if param_node.named_children else None
             return {"name": f"...{inner.text.decode()}" if inner else "...rest", "type": None}
         return None
+
+    # ------------------------------------------------------------------
+    # Express taint source emission
+    # ------------------------------------------------------------------
+
+    def _extract_express_taint_sources(
+        self,
+        root: Any,
+        fn_nodes: list[LexicalNode],
+        file_path: str,
+        tenant_id: str,
+        repo_id: str,
+        language: str,
+    ) -> tuple[list[LexicalNode], list[GraphEdge]]:
+        """Emit taint-source nodes and CALLS edges for Express.js request inputs.
+
+        Detects member expression accesses on common Express request parameter
+        names (``req``, ``request``, ``ctx``):
+
+        - ``req.body``, ``req.query``, ``req.params``, ``req.headers``,
+          ``req.cookies``, ``req.files``
+
+        For each access, emits a synthetic external ``LexicalNode`` with
+        ``file="express"`` and name ``req.<prop>``, plus a ``CALLS`` edge
+        **from** that source node **to** the enclosing handler function.
+
+        Args:
+            root: AST root node.
+            fn_nodes: Function LexicalNodes from this file.
+            file_path: Repo-relative file path.
+            tenant_id: Tenant namespace.
+            repo_id: Repository identifier.
+            language: Source language string.
+
+        Returns:
+            Tuple of ``(nodes, edges)`` — synthetic source LexicalNodes and
+            CALLS edges pointing from each source to its handler.
+        """
+        nodes: list[LexicalNode] = []
+        edges: list[GraphEdge] = []
+        seen_nodes: set[str] = set()
+        seen_edges: set[str] = set()
+
+        scoped_fns = sorted(
+            [fn for fn in fn_nodes if fn.line_end is not None],
+            key=lambda n: n.line_start,
+        )
+
+        for node in _walk(root):
+            if node.type != "member_expression":
+                continue
+            obj_node = node.child_by_field_name("object")
+            prop_node = node.child_by_field_name("property")
+            if not obj_node or not prop_node:
+                continue
+            if obj_node.type != "identifier":
+                continue
+            if obj_node.text.decode() not in _EXPRESS_REQUEST_PARAM_NAMES:
+                continue
+            prop_name = prop_node.text.decode()
+            if prop_name not in _EXPRESS_REQUEST_PROPS:
+                continue
+
+            # Find the tightest enclosing function by line range
+            node_line = node.start_point[0] + 1
+            caller: LexicalNode | None = None
+            for fn in scoped_fns:
+                if fn.line_start <= node_line <= (fn.line_end or node_line) and (
+                    caller is None or fn.line_start > caller.line_start
+                ):
+                    caller = fn
+            if caller is None:
+                continue
+
+            source_name = f"req.{prop_name}"
+            source_id = LexicalNode.make_id(tenant_id, repo_id, "express", source_name, "external")
+            if source_id not in seen_nodes:
+                seen_nodes.add(source_id)
+                nodes.append(LexicalNode(
+                    node_id=source_id,
+                    node_type="external",
+                    name=source_name,
+                    file="express",
+                    line_start=1,
+                    line_end=1,
+                    language=language,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+
+            edge_key = f"{source_id}:{caller.node_id}"
+            if edge_key not in seen_edges:
+                seen_edges.add(edge_key)
+                edges.append(GraphEdge(
+                    edge_id=GraphEdge.make_id(source_id, "calls", caller.name),
+                    edge_type="calls",
+                    source_id=source_id,
+                    target_id=caller.node_id,
+                    target_name=caller.name,
+                    file=file_path,
+                    line=node_line,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+
+        return nodes, edges
+
+    # ------------------------------------------------------------------
+    # NestJS parameter decorator taint source emission
+    # ------------------------------------------------------------------
+
+    def _extract_nestjs_taint_sources(
+        self,
+        root: Any,
+        fn_nodes: list[LexicalNode],
+        file_path: str,
+        tenant_id: str,
+        repo_id: str,
+        language: str,
+    ) -> tuple[list[LexicalNode], list[GraphEdge]]:
+        """Emit taint-source nodes and CALLS edges for NestJS parameter decorators.
+
+        NestJS binds HTTP request data to controller method parameters via
+        decorators applied directly to each parameter:
+
+        .. code-block:: typescript
+
+            @Post('users/:id')
+            create(
+                @Param('id') id: string,
+                @Query('role') role: string,
+                @Body() dto: CreateUserDto,
+            ): Promise<User> { ... }
+
+        For each parameter carrying a decorator whose name is in
+        ``_NESTJS_PARAM_DECORATORS``, emits a synthetic external ``LexicalNode``
+        with ``file="nestjs"`` and ``name="nestjs.<DecoratorName>"``, plus a
+        ``CALLS`` edge from that source node to the enclosing method.
+
+        Args:
+            root: AST root node.
+            fn_nodes: Function LexicalNodes from this file.
+            file_path: Repo-relative file path.
+            tenant_id: Tenant namespace.
+            repo_id: Repository identifier.
+            language: Source language string.
+
+        Returns:
+            Tuple of ``(nodes, edges)`` — synthetic source LexicalNodes and
+            CALLS edges pointing from each source to its handler.
+        """
+        nodes: list[LexicalNode] = []
+        edges: list[GraphEdge] = []
+        seen_nodes: set[str] = set()
+        seen_edges: set[str] = set()
+
+        fn_id_by_name: dict[str, str] = {n.name: n.node_id for n in fn_nodes}
+
+        def _emit(decorator_name: str, method_name: str, line: int) -> None:
+            source_name = f"nestjs.{decorator_name}"
+            source_id = LexicalNode.make_id(tenant_id, repo_id, "nestjs", source_name, "external")
+            if source_id not in seen_nodes:
+                seen_nodes.add(source_id)
+                nodes.append(LexicalNode(
+                    node_id=source_id,
+                    node_type="external",
+                    name=source_name,
+                    file="nestjs",
+                    line_start=1,
+                    line_end=1,
+                    language=language,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+            handler_id = fn_id_by_name.get(method_name) or LexicalNode.make_id(
+                tenant_id, repo_id, file_path, method_name, "function"
+            )
+            edge_key = f"{source_id}:{handler_id}"
+            if edge_key not in seen_edges:
+                seen_edges.add(edge_key)
+                edges.append(GraphEdge(
+                    edge_id=GraphEdge.make_id(source_id, "calls", method_name),
+                    edge_type="calls",
+                    source_id=source_id,
+                    target_id=handler_id,
+                    target_name=method_name,
+                    file=file_path,
+                    line=line,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                ))
+
+        for node in _walk(root):
+            if node.type != "class_body":
+                continue
+            for member in node.children:
+                if member.type != "method_definition":
+                    continue
+                name_node = member.child_by_field_name("name")
+                if not name_node:
+                    continue
+                method_name = name_node.text.decode()
+                method_line = member.start_point[0] + 1
+
+                params_node = member.child_by_field_name("parameters")
+                if not params_node:
+                    continue
+
+                for param in params_node.children:
+                    if param.type not in ("required_parameter", "optional_parameter"):
+                        continue
+                    # Parameter decorators appear as named children of type "decorator"
+                    for pchild in param.children:
+                        if pchild.type != "decorator":
+                            continue
+                        dec_name = self._ts_decorator_name(pchild)
+                        if dec_name and dec_name in _NESTJS_PARAM_DECORATORS:
+                            _emit(dec_name, method_name, method_line)
+                            break  # one decorator per param is enough to classify it
+
+        return nodes, edges
 

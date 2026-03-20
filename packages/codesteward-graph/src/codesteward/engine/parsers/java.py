@@ -16,6 +16,28 @@ from .base import GraphEdge, LanguageParser, LexicalNode, ParseResult
 log = structlog.get_logger()
 
 
+# Method parameter annotations treated as taint sources across the major Java HTTP frameworks.
+#
+# Spring MVC / Spring WebFlux:
+#   RequestParam, PathVariable, RequestBody, RequestHeader, ModelAttribute, RequestAttribute
+# JAX-RS (Jakarta REST / Jersey / Quarkus / CXF):
+#   PathParam, QueryParam, FormParam, HeaderParam, CookieParam, MatrixParam, BeanParam
+# Micronaut HTTP:
+#   PathVariable, QueryValue, Body, Header, CookieValue, Part, RequestBean
+_JAVA_REQUEST_ANNOTATIONS: frozenset[str] = frozenset(
+    {
+        # Spring MVC / WebFlux
+        "RequestParam", "PathVariable", "RequestBody", "RequestHeader",
+        "ModelAttribute", "RequestAttribute",
+        # JAX-RS / Jakarta REST (Jersey, Quarkus, CXF)
+        "PathParam", "QueryParam", "FormParam", "HeaderParam",
+        "CookieParam", "MatrixParam", "BeanParam",
+        # Micronaut HTTP
+        "QueryValue", "Body", "Header", "CookieValue", "Part", "RequestBean",
+    }
+)
+
+
 # ===========================================================================
 # AST-based Java parser (tree-sitter)
 # ===========================================================================
@@ -25,8 +47,7 @@ class JavaParser(TreeSitterBase, LanguageParser):
     """Tree-sitter-based Java parser.
 
     All Java-specific extraction methods are concentrated here. Shared methods
-    (_extract_call_edges, _extract_callee_name, _extract_semantic_edges) are
-    inherited from TreeSitterBase.
+    (_extract_call_edges, _extract_callee_name) are inherited from TreeSitterBase.
     """
 
     def parse(
@@ -81,11 +102,6 @@ class JavaParser(TreeSitterBase, LanguageParser):
             self._extract_call_edges(root, fn_nodes, file_path, tenant_id, repo_id, language)
         )
 
-        # Semantic data-flow edges
-        result.edges.extend(
-            self._extract_semantic_edges(fn_nodes, content_bytes, file_path, tenant_id, repo_id)
-        )
-
         # EXTENDS edges
         class_nodes = [n for n in result.nodes if n.node_type == "class"]
         result.edges.extend(
@@ -99,6 +115,13 @@ class JavaParser(TreeSitterBase, LanguageParser):
 
         # Parameter extraction (enriches function node metadata in-place)
         self._extract_java_parameters(root, fn_nodes, language)
+
+        # Spring taint source nodes and edges (@RequestParam/@PathVariable/... → method)
+        taint_nodes, taint_edges = self._extract_java_request_taint_sources(
+            root, fn_nodes, file_path, tenant_id, repo_id, language
+        )
+        result.nodes.extend(taint_nodes)
+        result.edges.extend(taint_edges)
 
         return result
 
@@ -454,3 +477,117 @@ class JavaParser(TreeSitterBase, LanguageParser):
             return None
         type_text = type_node.text.decode() if type_node else None
         return {"name": name_node.text.decode(), "type": type_text}
+
+    # ------------------------------------------------------------------
+    # Spring taint source emission
+    # ------------------------------------------------------------------
+
+    def _extract_java_request_taint_sources(
+        self,
+        root: Any,
+        fn_nodes: list[LexicalNode],
+        file_path: str,
+        tenant_id: str,
+        repo_id: str,
+        language: str,
+    ) -> tuple[list[LexicalNode], list[GraphEdge]]:
+        """Emit taint-source nodes and CALLS edges for Java HTTP framework annotations.
+
+        Detects request-binding annotations on ``formal_parameter`` nodes within
+        method declarations, covering Spring MVC/WebFlux, JAX-RS (Jersey, Quarkus,
+        CXF), and Micronaut HTTP:
+
+        - **Spring**: ``@RequestParam``, ``@PathVariable``, ``@RequestBody``,
+          ``@RequestHeader``, ``@ModelAttribute``, ``@RequestAttribute``
+        - **JAX-RS**: ``@PathParam``, ``@QueryParam``, ``@FormParam``,
+          ``@HeaderParam``, ``@CookieParam``, ``@MatrixParam``, ``@BeanParam``
+        - **Micronaut**: ``@QueryValue``, ``@Body``, ``@Header``,
+          ``@CookieValue``, ``@Part``, ``@RequestBean``
+
+        For each annotated parameter, emits:
+
+        - A synthetic external ``LexicalNode`` with ``file="java_http"`` and
+          name equal to the annotation name (e.g. ``RequestParam``).
+        - A ``CALLS`` edge **from** the source node **to** the enclosing
+          method — e.g. ``(RequestParam) -[:CALLS]-> (getUser)``.
+
+        Args:
+            root: AST root node.
+            fn_nodes: Function LexicalNodes from this file.
+            file_path: Repo-relative file path.
+            tenant_id: Tenant namespace.
+            repo_id: Repository identifier.
+            language: Always ``"java"``.
+
+        Returns:
+            Tuple of ``(nodes, edges)`` — synthetic source LexicalNodes and
+            CALLS edges pointing from each source to its method.
+        """
+        nodes: list[LexicalNode] = []
+        edges: list[GraphEdge] = []
+        seen_nodes: set[str] = set()
+        seen_edges: set[str] = set()
+
+        fn_id_by_name: dict[str, str] = {n.name: n.node_id for n in fn_nodes}
+
+        for method_node in _walk(root):
+            if method_node.type not in ("method_declaration", "constructor_declaration"):
+                continue
+            name_node = method_node.child_by_field_name("name")
+            if not name_node:
+                continue
+            fn_name = name_node.text.decode()
+            handler_id = fn_id_by_name.get(fn_name) or LexicalNode.make_id(
+                tenant_id, repo_id, file_path, fn_name, "function"
+            )
+
+            params_node = method_node.child_by_field_name("parameters")
+            if not params_node:
+                continue
+
+            for param in params_node.children:
+                if param.type != "formal_parameter":
+                    continue
+                for child in param.children:
+                    if child.type != "modifiers":
+                        continue
+                    for modifier in child.children:
+                        if modifier.type not in ("annotation", "marker_annotation"):
+                            continue
+                        ann_name = self._java_annotation_name(modifier)
+                        if not ann_name or ann_name not in _JAVA_REQUEST_ANNOTATIONS:
+                            continue
+
+                        source_id = LexicalNode.make_id(
+                            tenant_id, repo_id, "java_http", ann_name, "external"
+                        )
+                        if source_id not in seen_nodes:
+                            seen_nodes.add(source_id)
+                            nodes.append(LexicalNode(
+                                node_id=source_id,
+                                node_type="external",
+                                name=ann_name,
+                                file="java_http",
+                                line_start=1,
+                                line_end=1,
+                                language=language,
+                                tenant_id=tenant_id,
+                                repo_id=repo_id,
+                            ))
+
+                        edge_key = f"{source_id}:{handler_id}"
+                        if edge_key not in seen_edges:
+                            seen_edges.add(edge_key)
+                            edges.append(GraphEdge(
+                                edge_id=GraphEdge.make_id(source_id, "calls", fn_name),
+                                edge_type="calls",
+                                source_id=source_id,
+                                target_id=handler_id,
+                                target_name=fn_name,
+                                file=file_path,
+                                line=modifier.start_point[0] + 1,
+                                tenant_id=tenant_id,
+                                repo_id=repo_id,
+                            ))
+
+        return nodes, edges
