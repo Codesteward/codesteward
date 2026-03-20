@@ -42,7 +42,114 @@ Rather than scanning files repeatedly, the agent queries a pre-built graph — c
 
 ## Quick Start
 
-### Zero-install — stdio via uvx
+### Global setup — recommended for local development
+
+One-time setup. Works across every repository on your machine without any per-project config.
+Supports **Claude Code** and **OpenAI Codex CLI**.
+
+**Prerequisites:** [uv](https://docs.astral.sh/uv/) · Neo4j 5+ running locally · *(optional)* `codesteward-taint` on `PATH`
+
+#### Claude Code
+
+**1. Register the MCP server globally in `~/.claude/settings.json`**
+
+Merge this into your existing file (or create it):
+
+```json
+{
+  "mcpServers": {
+    "codesteward": {
+      "command": "uvx",
+      "args": ["codesteward-mcp[graph-all]", "--transport", "stdio"],
+      "env": {
+        "NEO4J_URI": "bolt://localhost:7687",
+        "NEO4J_USER": "neo4j",
+        "NEO4J_PASSWORD": "your-neo4j-password"
+      }
+    }
+  }
+}
+```
+
+Claude Code spawns the MCP server as a subprocess — no Docker, no volume mounts, no separate process to manage. `uvx` downloads and caches the package on first run. Neo4j credentials are passed as env vars; omit them to run in stub mode (no persistence).
+
+**2. Add the global instruction file at `~/.claude/CLAUDE.md`**
+
+```bash
+cp templates/global-claude-code/CLAUDE.md ~/.claude/CLAUDE.md
+```
+
+This file is loaded into every Claude Code session automatically. It tells Claude to derive `repo_id` from the current directory, check whether the graph is fresh, rebuild if needed, and prefer graph queries over file reads for structural questions.
+
+**3. *(Optional)* Add the `/codesteward` skill**
+
+```bash
+mkdir -p ~/.claude/skills
+cp templates/global-claude-code/codesteward-skill.md ~/.claude/skills/codesteward.md
+```
+
+Type `/codesteward` in any session for an explicit guided workflow (rebuild → query → taint scan). The graph-first preference from `~/.claude/CLAUDE.md` applies automatically without invoking the skill.
+
+#### OpenAI Codex CLI
+
+**1. Register the MCP server globally in `~/.codex/config.yaml`**
+
+Merge this into your existing file (or create it):
+
+```yaml
+mcp_servers:
+  codesteward:
+    command: uvx
+    args:
+      - "codesteward-mcp[graph-all]"
+      - "--transport"
+      - "stdio"
+    env:
+      NEO4J_URI: "bolt://localhost:7687"
+      NEO4J_USER: "neo4j"
+      NEO4J_PASSWORD: "your-neo4j-password"
+```
+
+**2. Add the global instruction file at `~/AGENTS.md`**
+
+```bash
+cp templates/global-codex/AGENTS.md ~/AGENTS.md
+```
+
+Codex reads `AGENTS.md` from `~/AGENTS.md` (global), the repo root, and the current directory in that order. The global file gives Codex the same graph-first workflow instructions as Claude Code.
+
+#### Shared: enable taint analysis (optional)
+
+Place the [`codesteward-taint`](https://github.com/bitkaio/codesteward-taint/releases) binary anywhere on your `PATH`:
+
+```bash
+# macOS (Apple Silicon)
+curl -L https://github.com/bitkaio/codesteward-taint/releases/latest/download/codesteward-taint-darwin-arm64 \
+     -o /usr/local/bin/codesteward-taint
+chmod +x /usr/local/bin/codesteward-taint
+```
+
+The MCP server detects the binary at startup and registers `taint_analysis` automatically — for both clients.
+
+#### Usage — open any repo and start asking
+
+```bash
+cd /repos/serving-api
+claude   # or: codex
+```
+
+```text
+# The agent will automatically:
+graph_status(repo_id="serving-api")
+graph_rebuild(repo_path="/repos/serving-api", repo_id="serving-api")   # if stale
+codebase_graph_query(query_type="referential", query="authenticate", repo_id="serving-api")
+```
+
+No `.mcp.json`, no per-project `CLAUDE.md` / `AGENTS.md`, no repeated configuration.
+
+---
+
+### Zero-install — stdio via uvx (stub mode, no persistence)
 
 No Docker, no Neo4j, no pre-install. Add this to your MCP client config (Claude Code, Cursor, Windsurf, etc.):
 
@@ -196,7 +303,7 @@ Every parsed symbol becomes a `LexicalNode`:
 ```bash
 # Setup
 uv venv && source .venv/bin/activate
-uv sync --all-packages --extra graph
+uv sync --all-packages --extra graph-all
 
 # Run tests
 pytest tests/ -v
