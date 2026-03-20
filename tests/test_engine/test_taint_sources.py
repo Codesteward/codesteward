@@ -568,15 +568,18 @@ class UserController @Inject()(cc: ControllerComponents) extends AbstractControl
 
 _SCALA_AKKA_SOURCE = """\
 import akka.http.scaladsl.server.Directives._
+import akka.http.scaladsl.server.Route
 
-val route =
-  path("users") {
-    parameters("name", "page") { (name, page) =>
-      entity(as[String]) { body =>
-        complete("ok")
+object Routes {
+  def buildRoute(): Route =
+    path("users") {
+      parameters("name", "page") { (name, page) =>
+        entity(as[String]) { body =>
+          complete("ok")
+        }
       }
     }
-  }
+}
 """
 
 

@@ -490,28 +490,26 @@ class KotlinParser(TreeSitterBase, LanguageParser):
             )
             if param_list is None:
                 continue
-            for param in param_list.children:
-                if param.type != "parameter":
+            # Annotations appear on `parameter_modifiers` siblings, not inside
+            # `parameter` nodes.  Walk the whole param list for annotations.
+            for pchild in _walk(param_list):
+                if pchild.type != "annotation":
                     continue
-                # Annotations are direct children of parameter or inside modifiers
-                for pchild in _walk(param):
-                    if pchild.type != "annotation":
-                        continue
-                    for inner in _walk(pchild):
-                        if inner.type == "user_type":
-                            ident = next(
-                                (c for c in inner.children if c.type == "identifier"), None
-                            )
-                            if ident:
-                                annot = ident.text.decode()
-                                if annot in _KOTLIN_SPRING_PARAM_ANNOTATIONS:
-                                    _emit(
-                                        f"kotlin_http.{annot}",
-                                        fn_name,
-                                        fn_id,
-                                        param.start_point[0] + 1,
-                                    )
-                                    break
+                for inner in _walk(pchild):
+                    if inner.type == "user_type":
+                        ident = next(
+                            (c for c in inner.children if c.type == "identifier"), None
+                        )
+                        if ident:
+                            annot = ident.text.decode()
+                            if annot in _KOTLIN_SPRING_PARAM_ANNOTATIONS:
+                                _emit(
+                                    f"kotlin_http.{annot}",
+                                    fn_name,
+                                    fn_id,
+                                    pchild.start_point[0] + 1,
+                                )
+                            break
 
         # ── Section 2: Ktor call.parameters / receive ─────────────────────────
         for node in _walk(root):

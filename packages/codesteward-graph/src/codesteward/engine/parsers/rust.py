@@ -467,12 +467,12 @@ class RustParser(TreeSitterBase, LanguageParser):
         while node is not None:
             if node.type != "call_expression":  # type: ignore[attr-defined]
                 break
-            fn_f = node.child_by_field_name("function")
+            fn_f = node.child_by_field_name("function")  # type: ignore[attr-defined]
             if fn_f is None or fn_f.type != "field_expression":
                 break
             fld = fn_f.child_by_field_name("field")
             if fld and fld.text.decode() == "wrap":
-                args = node.child_by_field_name("arguments")
+                args = node.child_by_field_name("arguments")  # type: ignore[attr-defined]
                 if args:
                     for a in args.children:
                         if a.type == "identifier":
