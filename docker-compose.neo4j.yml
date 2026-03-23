@@ -1,8 +1,10 @@
-# Codesteward MCP Graph Server — local development stack
+# Codesteward MCP Graph Server — Neo4j stack
 #
 # Includes:
 #   neo4j         — graph database (bolt :7687, browser :7474)
 #   codesteward   — MCP server (HTTP+SSE :3000)
+#
+# For a fully open-source alternative, see docker-compose.janusgraph.yml.
 #
 # Quick start:
 #   1. Set REPO_PATH to the absolute path of the repository you want to analyse:
@@ -11,14 +13,14 @@
 #        $env:REPO_PATH="C:\path\to\your\repo"     # PowerShell
 #      Or create a .env file in this directory:
 #        echo "REPO_PATH=/path/to/your/repo" > .env
-#   2. Run:  docker compose up -d
+#   2. Run:  docker compose -f docker-compose.neo4j.yml up -d
 #   3. MCP server: http://localhost:3000/mcp
 #      Neo4j Browser: http://localhost:7474  (neo4j / changeme)
 #
 # The graph_rebuild tool requires no arguments in this setup — the server
 # already knows the repository is mounted at /repos/project.
 #
-# docker compose down -v    ← removes volumes (wipes graph data + Neo4j)
+# docker compose -f docker-compose.neo4j.yml down -v  ← removes volumes
 
 services:
 

@@ -4,7 +4,11 @@
 # Build targets:
 #   default (graph-all)  — all 14 tree-sitter language grammars
 #   graph-core           — TypeScript / JavaScript / Python / Java only
-#   base                 — no tree-sitter (Neo4j query-only mode)
+#   base                 — no tree-sitter (query-only mode)
+#
+# Graph backend:
+#   The image supports both Neo4j and JanusGraph. Select at runtime via
+#   GRAPH_BACKEND=neo4j (default) or GRAPH_BACKEND=janusgraph.
 #
 # Taint analysis (optional):
 #   The codesteward-taint binary is bundled by default using the latest GitHub
@@ -15,10 +19,18 @@
 #   docker build -t codesteward-mcp .                                  # latest taint
 #   docker build --build-arg TAINT_VERSION=0.1.0 -t codesteward-mcp .  # pinned taint
 #   docker build --build-arg TAINT_VERSION=none -t codesteward-mcp .   # no taint
+#
+#   # Neo4j backend:
 #   docker run -p 3000:3000 \
 #     -e NEO4J_URI=bolt://neo4j:7687 \
 #     -e NEO4J_USER=neo4j \
 #     -e NEO4J_PASSWORD=secret \
+#     codesteward-mcp
+#
+#   # JanusGraph backend:
+#   docker run -p 3000:3000 \
+#     -e GRAPH_BACKEND=janusgraph \
+#     -e JANUSGRAPH_URL=ws://janusgraph:8182/gremlin \
 #     codesteward-mcp
 
 ARG PYTHON_VERSION=3.12
@@ -68,7 +80,7 @@ COPY packages/ packages/
 # we can copy across.  Both packages are workspace members, so pip resolves them
 # from the local packages/ tree without hitting PyPI.
 RUN pip install --no-cache-dir --prefix=/install \
-    "./packages/codesteward-graph[${INSTALL_EXTRA}]" \
+    "./packages/codesteward-graph[${INSTALL_EXTRA},janusgraph]" \
     "./packages/codesteward-mcp"
 
 # ── final stage ──────────────────────────────────────────────────────────────

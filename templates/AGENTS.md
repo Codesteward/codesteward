@@ -51,7 +51,8 @@ codebase_graph_query(query_type="referential", query="authenticate")
 | `referential` | Find call/import/extends/auth-guard relationships                                |
 | `semantic`    | Read taint-flow findings (run `taint_analysis` first; returns empty until then) |
 | `dependency`  | List external package dependencies                                               |
-| `cypher`      | Write a custom Cypher query for anything not covered above                       |
+| `cypher`      | Raw Cypher query (Neo4j backend)                                                 |
+| `gremlin`     | Raw Gremlin query (JanusGraph backend)                                           |
 
 ## Taint-flow analysis
 

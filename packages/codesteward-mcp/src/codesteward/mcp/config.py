@@ -2,7 +2,7 @@
 
 Loaded from environment variables and/or a YAML config file.  All settings
 have sensible defaults so the server works out of the box without any config
-(Neo4j optional — parse-only stub mode when not configured).
+(graph backend optional — parse-only stub mode when not configured).
 """
 
 
@@ -32,10 +32,24 @@ class McpConfig(BaseSettings):
     host: str = Field("0.0.0.0", description="HTTP server bind host")
     port: int = Field(3000, description="HTTP server port")
 
+    # ── Graph backend ─────────────────────────────────────────────────────
+    graph_backend: str = Field(
+        "neo4j",
+        alias="GRAPH_BACKEND",
+        description="Graph database backend: 'neo4j' or 'janusgraph'",
+    )
+
     # ── Neo4j (optional) ─────────────────────────────────────────────────────
     neo4j_uri: str = Field("bolt://localhost:7687", alias="NEO4J_URI")
     neo4j_user: str = Field("neo4j", alias="NEO4J_USER")
     neo4j_password: str = Field("", alias="NEO4J_PASSWORD")
+
+    # ── JanusGraph (optional) ─────────────────────────────────────────────────
+    janusgraph_url: str = Field(
+        "ws://localhost:8182/gremlin",
+        alias="JANUSGRAPH_URL",
+        description="Gremlin Server WebSocket URL for JanusGraph",
+    )
 
     # ── Default tenant / repo for single-user local deployments ──────────────
     default_tenant_id: str = Field("local", description="Default tenant namespace")
@@ -45,7 +59,7 @@ class McpConfig(BaseSettings):
         description=(
             "Default filesystem path to the repository.  Used when graph_rebuild "
             "is called without an explicit repo_path argument.  In the Docker setup "
-            "this matches the mount point defined in docker-compose.yml."
+            "this matches the mount point defined in the docker-compose files."
         ),
     )
 
@@ -64,6 +78,18 @@ class McpConfig(BaseSettings):
     def neo4j_available(self) -> bool:
         """True when Neo4j credentials are configured."""
         return bool(self.neo4j_password)
+
+    @property
+    def janusgraph_available(self) -> bool:
+        """True when JanusGraph is the selected backend."""
+        return self.graph_backend == "janusgraph"
+
+    @property
+    def graph_available(self) -> bool:
+        """True when any graph backend is configured and usable."""
+        if self.graph_backend == "janusgraph":
+            return True  # JanusGraph has no mandatory auth
+        return self.neo4j_available
 
 
 def load_config(config_file: str | None = None) -> McpConfig:

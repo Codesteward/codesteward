@@ -61,7 +61,10 @@ $env:REPO_PATH = "C:\path\to\your\repo"        # PowerShell
 echo "REPO_PATH=/path/to/your/repository" > .env
 
 # Start Neo4j + MCP server
-docker compose up -d
+docker compose -f docker-compose.neo4j.yml up -d
+
+# Or: JanusGraph (Apache 2.0 alternative)
+# docker compose -f docker-compose.janusgraph.yml up -d
 ```
 
 The server starts at **`http://localhost:3000/sse`**.  It already knows the

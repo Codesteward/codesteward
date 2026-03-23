@@ -12,7 +12,7 @@
 
 <p align="center">
   <strong>Structural code graph server for AI agents.</strong><br>
-  Parse any repository into a queryable Neo4j graph via tree-sitter AST — and expose it as an MCP tool interface your AI agent can call directly.
+  Parse any repository into a queryable graph (Neo4j or JanusGraph) via tree-sitter AST — and expose it as an MCP tool interface your AI agent can call directly.
 </p>
 
 ---
@@ -34,8 +34,8 @@ Rather than scanning files repeatedly, the agent queries a pre-built graph — c
 
 | Tool | Description |
 | ---- | ----------- |
-| `graph_rebuild` | Parse a repository and write the structural graph to Neo4j (or run in stub mode without Neo4j) |
-| `codebase_graph_query` | Query via named templates (`lexical`, `referential`, `semantic`, `dependency`) or raw Cypher |
+| `graph_rebuild` | Parse a repository and write the structural graph to Neo4j or JanusGraph (or run in stub mode without a graph backend) |
+| `codebase_graph_query` | Query via named templates (`lexical`, `referential`, `semantic`, `dependency`) or raw passthrough (`cypher` / `gremlin`) |
 | `graph_augment` | Add agent-inferred relationships (confidence < 1.0) back into the graph |
 | `graph_status` | Return metadata: node/edge counts, last build time, Neo4j connectivity |
 | `taint_analysis` | *(optional)* Run taint-flow analysis via the `codesteward-taint` binary and write `TAINT_FLOW` edges to Neo4j |
@@ -47,7 +47,7 @@ Rather than scanning files repeatedly, the agent queries a pre-built graph — c
 One-time setup. Works across every repository on your machine without any per-project config.
 Supports **Claude Code** and **OpenAI Codex CLI**.
 
-**Prerequisites:** [uv](https://docs.astral.sh/uv/) · Neo4j 5+ running locally · *(optional)* `codesteward-taint` on `PATH`
+**Prerequisites:** [uv](https://docs.astral.sh/uv/) · Neo4j 5+ or JanusGraph 1.0+ running locally · *(optional)* `codesteward-taint` on `PATH`
 
 #### Claude Code
 
@@ -72,6 +72,17 @@ Merge this into your existing file (or create it):
 ```
 
 Claude Code spawns the MCP server as a subprocess — no Docker, no volume mounts, no separate process to manage. `uvx` downloads and caches the package on first run. Neo4j credentials are passed as env vars; omit them to run in stub mode (no persistence).
+
+**JanusGraph alternative** — replace the `env` block above with:
+
+```json
+      "env": {
+        "GRAPH_BACKEND": "janusgraph",
+        "JANUSGRAPH_URL": "ws://localhost:8182/gremlin"
+      }
+```
+
+Add `janusgraph` to the extras: `"codesteward-mcp[graph-all,janusgraph]"`.
 
 **2. Add the global instruction file at `~/.claude/CLAUDE.md`**
 
@@ -109,6 +120,8 @@ mcp_servers:
       NEO4J_USER: "neo4j"
       NEO4J_PASSWORD: "your-neo4j-password"
 ```
+
+For JanusGraph, replace the `env` block with `GRAPH_BACKEND: "janusgraph"` and `JANUSGRAPH_URL: "ws://localhost:8182/gremlin"`, and add the `janusgraph` extra to the args.
 
 **2. Add the global instruction file at `~/AGENTS.md`**
 
@@ -173,7 +186,7 @@ Requires [uv](https://docs.astral.sh/uv/). `uvx` downloads and caches the packag
 export REPO_PATH=/path/to/your/repository
 
 # 2. Start Neo4j + MCP server
-docker compose up -d
+docker compose -f docker-compose.neo4j.yml up -d
 
 # 3. Copy config templates into the repo you want to analyse
 cp templates/.mcp.json /path/to/your/repository/
@@ -181,6 +194,22 @@ cp templates/CLAUDE.md /path/to/your/repository/
 ```
 
 The server runs at **`http://localhost:3000/sse`**. Call `graph_rebuild()` with no arguments — the server already knows the repo path from the volume mount.
+
+### Docker + JanusGraph — persistent graph (Apache 2.0)
+
+```bash
+# 1. Point the server at your repository
+export REPO_PATH=/path/to/your/repository
+
+# 2. Start JanusGraph + MCP server
+docker compose -f docker-compose.janusgraph.yml up -d
+
+# 3. Copy config templates into the repo you want to analyse
+cp templates/.mcp.json /path/to/your/repository/
+cp templates/CLAUDE.md /path/to/your/repository/
+```
+
+Same workflow as the Neo4j stack — all named query templates work identically. Raw query passthrough uses Gremlin instead of Cypher.
 
 ### Manual Docker run
 
@@ -211,9 +240,12 @@ uv pip install "codesteward-mcp[graph-scala]"    # Scala
 uv pip install "codesteward-mcp[graph-c]"        # C
 uv pip install "codesteward-mcp[graph-cpp]"      # C++
 uv pip install "codesteward-mcp[graph-php]"      # PHP
+
+# JanusGraph backend (alternative to Neo4j)
+uv pip install "codesteward-mcp[graph-all,janusgraph]"
 ```
 
-Requires Python 3.12+. Neo4j 5+ is optional — the server runs in stub mode without it.
+Requires Python 3.12+. Neo4j 5+ or JanusGraph 1.0+ is optional — the server runs in stub mode without a graph backend.
 
 ## Configuration
 
@@ -225,9 +257,11 @@ Priority: **CLI flags > env vars > YAML file > defaults**.
 | Transport | `TRANSPORT` | `sse` | `sse`, `http`, or `stdio` |
 | Host | `HOST` | `0.0.0.0` | HTTP bind host |
 | Port | `PORT` | `3000` | HTTP bind port |
+| Graph backend | `GRAPH_BACKEND` | `neo4j` | `neo4j` or `janusgraph` |
 | Neo4j URI | `NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection URI |
 | Neo4j user | `NEO4J_USER` | `neo4j` | Neo4j username |
 | Neo4j password | `NEO4J_PASSWORD` | *(empty)* | Leave empty for stub mode |
+| JanusGraph URL | `JANUSGRAPH_URL` | `ws://localhost:8182/gremlin` | Gremlin Server WebSocket URL |
 | Default tenant | `DEFAULT_TENANT_ID` | `local` | Tenant namespace |
 | Default repo | `DEFAULT_REPO_ID` | *(empty)* | Repo ID |
 | Default repo path | `DEFAULT_REPO_PATH` | `/repos/project` | Server-side path for `graph_rebuild` |

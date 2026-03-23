@@ -210,6 +210,11 @@ class Neo4jWriter:
     When ``driver`` is None (tests, local dev without Neo4j), all write
     operations are no-ops and a warning is logged.
 
+    .. deprecated::
+        Use :class:`~codesteward.engine.backends.neo4j.Neo4jBackend` via
+        :class:`GraphWriter` instead. This class is retained for backward
+        compatibility.
+
     Cypher patterns used:
       - Nodes: ``MERGE (n:LexicalNode {node_id: $id}) SET n += $props``
       - Edges: ``MERGE (a)-[r:IMPORTS]->(b)`` style relationships via MATCH + MERGE
@@ -332,6 +337,99 @@ class Neo4jWriter:
             await session.run(cypher, tenant_id=tenant_id, repo_id=repo_id, file=file_path)
 
 
+class GraphWriter:
+    """Backend-agnostic graph writer that delegates to a GraphBackend.
+
+    When no backend is provided, all write operations are no-ops (stub mode).
+    """
+
+    def __init__(self, backend: Any | None = None) -> None:
+        """Initialise with an optional graph backend.
+
+        Args:
+            backend: A ``GraphBackend`` instance, or None for stub mode.
+        """
+        from codesteward.engine.backends.base import GraphBackend as _GB
+        self._backend: _GB | None = backend
+        if backend is None:
+            log.warning("graph_writer_stub_mode", reason="No graph backend provided")
+
+    def is_connected(self) -> bool:
+        """Return True if a graph backend is configured and connected."""
+        return self._backend is not None and self._backend.is_connected()
+
+    async def write_nodes(self, nodes: list[LexicalNode]) -> int:
+        """Upsert lexical nodes via the configured backend.
+
+        Args:
+            nodes: Nodes to write.
+
+        Returns:
+            Number of nodes written (0 in stub mode).
+        """
+        if not self._backend or not nodes:
+            return 0
+
+        props = [
+            {
+                "node_id": node.node_id,
+                "node_type": node.node_type,
+                "name": node.name,
+                "file": node.file,
+                "line_start": node.line_start,
+                "line_end": node.line_end,
+                "language": node.language,
+                "tenant_id": node.tenant_id,
+                "repo_id": node.repo_id,
+                "exported": node.exported,
+                "is_async": node.is_async,
+                "metadata": json.dumps(node.metadata) if node.metadata else "{}",
+            }
+            for node in nodes
+        ]
+        return await self._backend.write_nodes(props)
+
+    async def write_edges(self, edges: list[GraphEdge]) -> int:
+        """Upsert graph edges via the configured backend.
+
+        Args:
+            edges: Edges to write.
+
+        Returns:
+            Number of edges written (0 in stub mode).
+        """
+        if not self._backend or not edges:
+            return 0
+
+        by_type: dict[str, list[dict[str, Any]]] = {}
+        for edge in edges:
+            props = {
+                "source_id": edge.source_id,
+                "target_id": edge.target_id,
+                "target_name": edge.target_name,
+                "tenant_id": edge.tenant_id,
+                "repo_id": edge.repo_id,
+                "edge_id": edge.edge_id,
+                "file": edge.file,
+                "line": edge.line,
+            }
+            by_type.setdefault(edge.edge_type.upper(), []).append(props)
+
+        return await self._backend.write_edges(by_type)
+
+    async def delete_file_nodes(self, tenant_id: str, repo_id: str, file_path: str) -> None:
+        """Delete all nodes and edges scoped to a specific file.
+
+        Args:
+            tenant_id: Tenant namespace.
+            repo_id: Repository identifier.
+            file_path: Repo-relative path of the file to remove.
+        """
+        if not self._backend:
+            return
+        await self._backend.delete_file_nodes(tenant_id, repo_id, file_path)
+
+
 # ===========================================================================
 # GraphBuilder — public interface
 # ===========================================================================
@@ -361,8 +459,12 @@ class GraphBuilder:
         )
     """
 
-    def __init__(self, neo4j_driver: Any | None = None) -> None:
-        """Initialise with optional Neo4j driver.
+    def __init__(
+        self,
+        neo4j_driver: Any | None = None,
+        backend: Any | None = None,
+    ) -> None:
+        """Initialise with optional graph backend or Neo4j driver.
 
         The graph builder uses the parsers registry (``get_parser()``) to
         dispatch to the tree-sitter AST parser for each language.  COBOL is
@@ -370,11 +472,17 @@ class GraphBuilder:
         tree-sitter grammar is available for it.
 
         Args:
-            neo4j_driver: A ``neo4j.AsyncDriver`` instance. If None, the
-                builder parses the codebase but skips all database writes.
+            neo4j_driver: A ``neo4j.AsyncDriver`` instance (legacy). If both
+                ``neo4j_driver`` and ``backend`` are None, the builder parses
+                the codebase but skips all database writes.
+            backend: A ``GraphBackend`` instance. Takes precedence over
+                ``neo4j_driver`` if both are provided.
         """
         self._pkg_parser = PackageJsonParser()
-        self._writer = Neo4jWriter(neo4j_driver)
+        if backend is not None:
+            self._writer = GraphWriter(backend)
+        else:
+            self._writer = Neo4jWriter(neo4j_driver)
 
     def _parse_source(self, file_path: str, content: str, language: str) -> ParseResult:
         """Parse a source file using the language registry.

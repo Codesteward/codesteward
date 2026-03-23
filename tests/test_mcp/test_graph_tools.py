@@ -55,7 +55,7 @@ class TestToolGraphRebuild:
 
         data = yaml.safe_load(result)
         assert data["mode"] == "full"
-        assert data["neo4j_connected"] is False
+        assert data["backend_connected"] is False
         assert "duration_ms" in data
 
     async def test_incremental_mode(self, cfg: McpConfig, tmp_path: Path) -> None:
@@ -115,9 +115,35 @@ class TestToolGraphRebuild:
 # ---------------------------------------------------------------------------
 
 
+def _mock_neo4j_backend(records=None):
+    """Create a mock Neo4j backend for testing."""
+    backend = MagicMock()
+    backend.is_connected.return_value = True
+    backend.backend_name = "neo4j"
+    backend.raw_query_language = "cypher"
+    backend.close = AsyncMock()
+    backend.query_named = AsyncMock(return_value=records or [])
+    backend.query_raw = AsyncMock(return_value=records or [])
+    backend.count_nodes = AsyncMock(return_value=0)
+    return backend
+
+
+def _mock_janusgraph_backend(records=None):
+    """Create a mock JanusGraph backend for testing."""
+    backend = MagicMock()
+    backend.is_connected.return_value = True
+    backend.backend_name = "janusgraph"
+    backend.raw_query_language = "gremlin"
+    backend.close = AsyncMock()
+    backend.query_named = AsyncMock(return_value=records or [])
+    backend.query_raw = AsyncMock(return_value=records or [])
+    backend.count_nodes = AsyncMock(return_value=0)
+    return backend
+
+
 class TestToolCodebaseGraphQuery:
     async def test_stub_when_no_neo4j(self, cfg: McpConfig) -> None:
-        """Returns stub response when Neo4j is not configured."""
+        """Returns stub response when no backend is configured."""
         result = await tool_codebase_graph_query(
             query_type="lexical",
             query="",
@@ -133,13 +159,12 @@ class TestToolCodebaseGraphQuery:
 
     async def test_unknown_query_type_returns_error(self, cfg_with_neo4j: McpConfig) -> None:
         """Unknown query_type returns an error dict (no crash)."""
-        mock_driver = MagicMock()
-        mock_session = AsyncMock()
-        mock_driver.session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_driver.session.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_driver.close = AsyncMock()
+        backend = _mock_neo4j_backend()
+        backend.query_named = AsyncMock(
+            side_effect=ValueError("unknown query_type 'invalid_type'")
+        )
 
-        with patch("codesteward.mcp.tools.graph._make_async_driver", return_value=mock_driver):
+        with patch("codesteward.mcp.tools.graph._make_backend", return_value=backend):
             result = await tool_codebase_graph_query(
                 query_type="invalid_type",
                 query="",
@@ -160,17 +185,9 @@ class TestToolCodebaseGraphQuery:
              "line_start": 10, "line_end": 20, "language": "python", "is_async": False}
         ]
 
-        mock_result = AsyncMock()
-        mock_result.data = AsyncMock(return_value=mock_records)
-        mock_session = AsyncMock()
-        mock_session.run = AsyncMock(return_value=mock_result)
+        backend = _mock_neo4j_backend(records=mock_records)
 
-        mock_driver = MagicMock()
-        mock_driver.session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_driver.session.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_driver.close = AsyncMock()
-
-        with patch("codesteward.mcp.tools.graph._make_async_driver", return_value=mock_driver):
+        with patch("codesteward.mcp.tools.graph._make_backend", return_value=backend):
             result = await tool_codebase_graph_query(
                 query_type="lexical",
                 query="my_func",
@@ -184,6 +201,145 @@ class TestToolCodebaseGraphQuery:
         assert data["total"] == 1
         assert data["results"][0]["name"] == "my_func"
 
+    async def test_raw_cypher_on_neo4j(self, cfg_with_neo4j: McpConfig) -> None:
+        """Raw Cypher passthrough works on Neo4j backend."""
+        backend = _mock_neo4j_backend(records=[{"count": 42}])
+
+        with patch("codesteward.mcp.tools.graph._make_backend", return_value=backend):
+            result = await tool_codebase_graph_query(
+                query_type="cypher",
+                query="MATCH (n) RETURN count(n) AS count",
+                tenant_id="t1",
+                repo_id="r1",
+                limit=10,
+                cfg=cfg_with_neo4j,
+            )
+
+        data = yaml.safe_load(result)
+        assert data["total"] == 1
+        backend.query_raw.assert_called_once()
+
+    async def test_raw_gremlin_rejected_on_neo4j(self, cfg_with_neo4j: McpConfig) -> None:
+        """Gremlin query type is rejected when Neo4j backend is active."""
+        backend = _mock_neo4j_backend()
+
+        with patch("codesteward.mcp.tools.graph._make_backend", return_value=backend):
+            result = await tool_codebase_graph_query(
+                query_type="gremlin",
+                query="g.V().count()",
+                tenant_id="t1",
+                repo_id="r1",
+                limit=10,
+                cfg=cfg_with_neo4j,
+            )
+
+        data = yaml.safe_load(result)
+        assert "error" in data
+        assert "mismatch" in data["error"]
+
+
+# ---------------------------------------------------------------------------
+# codebase_graph_query — JanusGraph backend
+# ---------------------------------------------------------------------------
+
+
+class TestToolCodebaseGraphQueryJanusGraph:
+    async def test_lexical_query_on_janusgraph(
+        self, cfg_with_janusgraph: McpConfig
+    ) -> None:
+        """Lexical query works on JanusGraph backend."""
+        mock_records = [
+            {"type": "function", "name": "handler", "file": "routes.go",
+             "line_start": 5, "line_end": 15, "language": "go", "is_async": False}
+        ]
+        backend = _mock_janusgraph_backend(records=mock_records)
+
+        with patch("codesteward.mcp.tools.graph._make_backend", return_value=backend):
+            result = await tool_codebase_graph_query(
+                query_type="lexical",
+                query="handler",
+                tenant_id="t1",
+                repo_id="r1",
+                limit=50,
+                cfg=cfg_with_janusgraph,
+            )
+
+        data = yaml.safe_load(result)
+        assert data["total"] == 1
+        assert data["results"][0]["name"] == "handler"
+        backend.query_named.assert_called_once_with(
+            query_type="lexical",
+            tenant_id="t1",
+            repo_id="r1",
+            filter_str="handler",
+            limit=50,
+        )
+
+    async def test_raw_gremlin_on_janusgraph(
+        self, cfg_with_janusgraph: McpConfig
+    ) -> None:
+        """Raw Gremlin passthrough works on JanusGraph backend."""
+        backend = _mock_janusgraph_backend(records=[{"result": 42}])
+
+        with patch("codesteward.mcp.tools.graph._make_backend", return_value=backend):
+            result = await tool_codebase_graph_query(
+                query_type="gremlin",
+                query="g.V().count()",
+                tenant_id="t1",
+                repo_id="r1",
+                limit=10,
+                cfg=cfg_with_janusgraph,
+            )
+
+        data = yaml.safe_load(result)
+        assert data["total"] == 1
+        backend.query_raw.assert_called_once()
+
+    async def test_raw_cypher_rejected_on_janusgraph(
+        self, cfg_with_janusgraph: McpConfig
+    ) -> None:
+        """Cypher query type is rejected when JanusGraph backend is active."""
+        backend = _mock_janusgraph_backend()
+
+        with patch("codesteward.mcp.tools.graph._make_backend", return_value=backend):
+            result = await tool_codebase_graph_query(
+                query_type="cypher",
+                query="MATCH (n) RETURN n",
+                tenant_id="t1",
+                repo_id="r1",
+                limit=10,
+                cfg=cfg_with_janusgraph,
+            )
+
+        data = yaml.safe_load(result)
+        assert "error" in data
+        assert "mismatch" in data["error"]
+
+    async def test_referential_query_on_janusgraph(
+        self, cfg_with_janusgraph: McpConfig
+    ) -> None:
+        """Referential query works on JanusGraph backend."""
+        mock_records = [
+            {"from_name": "main", "from_file": "app.py", "edge_type": "CALLS",
+             "to_name": "helper", "to_file": "utils.py", "to_node_type": "function",
+             "line": 10}
+        ]
+        backend = _mock_janusgraph_backend(records=mock_records)
+
+        with patch("codesteward.mcp.tools.graph._make_backend", return_value=backend):
+            result = await tool_codebase_graph_query(
+                query_type="referential",
+                query="main",
+                tenant_id="t1",
+                repo_id="r1",
+                limit=50,
+                cfg=cfg_with_janusgraph,
+            )
+
+        data = yaml.safe_load(result)
+        assert data["total"] == 1
+        assert data["results"][0]["edge_type"] == "CALLS"
+
 
 # ---------------------------------------------------------------------------
 # graph_augment
@@ -192,7 +348,7 @@ class TestToolCodebaseGraphQuery:
 
 class TestToolGraphAugment:
     async def test_stub_mode_writes_without_neo4j(self, cfg: McpConfig) -> None:
-        """In stub mode (no Neo4j) valid edges are accepted and returned."""
+        """In stub mode (no backend) valid edges are accepted and returned."""
         result = await tool_graph_augment(
             tenant_id="t1",
             repo_id="r1",
@@ -309,6 +465,35 @@ class TestToolGraphAugment:
         assert data["written"] == 1
         assert data["skipped"] == 1
 
+    async def test_augment_with_janusgraph_backend(
+        self, cfg_with_janusgraph: McpConfig
+    ) -> None:
+        """graph_augment works with JanusGraph backend."""
+        backend = _mock_janusgraph_backend()
+        backend.write_augment_edge = AsyncMock()
+
+        with patch("codesteward.mcp.tools.graph._make_backend", return_value=backend):
+            result = await tool_graph_augment(
+                tenant_id="t1",
+                repo_id="r1",
+                agent_id="security-agent",
+                additions=[
+                    {
+                        "source_id": "fn:t1:r1:app.go:handler",
+                        "edge_type": "calls",
+                        "target_id": "fn:t1:r1:db.go:query",
+                        "target_name": "query",
+                        "confidence": 0.9,
+                    }
+                ],
+                cfg=cfg_with_janusgraph,
+            )
+
+        data = yaml.safe_load(result)
+        assert data["written"] == 1
+        assert data["graph_backend"] == "janusgraph"
+        backend.write_augment_edge.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # graph_status
@@ -317,7 +502,7 @@ class TestToolGraphAugment:
 
 class TestToolGraphStatus:
     async def test_stub_mode_no_neo4j(self, cfg: McpConfig, tmp_path: Path) -> None:
-        """Returns status with neo4j_connected=False when no driver."""
+        """Returns status with backend_connected=False when no backend."""
         cfg = McpConfig(
             neo4j_password="",
             workspace_base=str(tmp_path),
@@ -328,7 +513,7 @@ class TestToolGraphStatus:
         result = await tool_graph_status(tenant_id="t1", repo_id="r1", cfg=cfg)
         data = yaml.safe_load(result)
 
-        assert data["neo4j_connected"] is False
+        assert data["backend_connected"] is False
         assert data["tenant_id"] == "t1"
         assert data["repo_id"] == "r1"
 
@@ -358,3 +543,21 @@ class TestToolGraphStatus:
 
         assert data["last_build"] == "2026-01-01T12:00:00"
         assert data["nodes"]["total"] == 42
+
+    async def test_status_with_janusgraph_backend(
+        self, cfg_with_janusgraph: McpConfig, tmp_path: Path
+    ) -> None:
+        """graph_status works with JanusGraph backend."""
+        cfg_with_janusgraph.workspace_base = str(tmp_path)
+        backend = _mock_janusgraph_backend()
+        backend.count_nodes = AsyncMock(return_value=100)
+
+        with patch("codesteward.mcp.tools.graph._make_backend", return_value=backend):
+            result = await tool_graph_status(
+                tenant_id="t1", repo_id="r1", cfg=cfg_with_janusgraph
+            )
+
+        data = yaml.safe_load(result)
+        assert data["backend_connected"] is True
+        assert data["graph_backend"] == "janusgraph"
+        assert data["nodes"]["total"] == 100

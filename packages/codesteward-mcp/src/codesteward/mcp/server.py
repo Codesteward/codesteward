@@ -3,11 +3,12 @@
 Exposes four tools over Model Context Protocol:
 
 ``graph_rebuild``
-    Parse a repository and write the structural graph to Neo4j (or stub mode
-    without Neo4j).
+    Parse a repository and write the structural graph to Neo4j or JanusGraph
+    (or stub mode without a graph backend).
 
 ``codebase_graph_query``
-    Query the graph via named templates or raw Cypher.
+    Query the graph via named templates or raw query passthrough (Cypher for
+    Neo4j, Gremlin for JanusGraph).
 
 ``graph_augment``
     Add agent-inferred relationships (confidence < 1.0) to the graph.
@@ -84,7 +85,7 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
             "code graph and query it for code intelligence.\n\n"
             "TYPICAL WORKFLOW\n"
             "1. Call graph_status to check whether a graph already exists for the "
-            "repository.  If neo4j_connected is false or last_build is null, proceed "
+            "repository.  If backend_connected is false or last_build is null, proceed "
             "to step 2.\n"
             "2. Call graph_rebuild.  In the standard Docker setup all arguments "
             "can be omitted — the server already knows where the repository is "
@@ -97,7 +98,8 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
             "   - semantic    → find taint-flow paths (source → sink). Requires "
             "codesteward-taint to have been run first. Returns empty until then.\n"
             "   - dependency  → list external package dependencies\n"
-            "   - cypher      → raw Cypher for anything not covered by the above\n"
+            "   - cypher      → raw Cypher (Neo4j backend only)\n"
+            "   - gremlin     → raw Gremlin (JanusGraph backend only)\n"
             "4. Optionally call taint_analysis to trace how untrusted input propagates "
             "to dangerous sinks (SQL, shell, file I/O, outbound HTTP).  This tool is "
             "only present when the codesteward-taint binary is installed.  After it "
@@ -110,7 +112,10 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
             "IMPORTANT: graph_rebuild must complete successfully before "
             "codebase_graph_query will return non-empty results.  An empty result "
             "from a query does not mean the code has no symbols — it may mean the "
-            "graph has not been built yet."
+            "graph has not been built yet.\n\n"
+            "BACKENDS: The server supports Neo4j (default) and JanusGraph "
+            "(set GRAPH_BACKEND=janusgraph). Named query templates work identically "
+            "on both. Raw query passthrough uses the backend's native language."
         ),
     )
 
@@ -125,7 +130,8 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
     ) -> str:
         """Build or incrementally update the codebase graph.
 
-        Parse the repository and write LexicalNode / edge data to Neo4j.
+        Parse the repository and write LexicalNode / edge data to the
+        configured graph backend (Neo4j or JanusGraph).
         Must be called before ``codebase_graph_query`` will return results.
 
         ``repo_path`` is an absolute path on the **server's** filesystem (not
@@ -133,8 +139,8 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
         (``/repos/project`` in the Docker setup — the repository mounted via
         the ``REPO_PATH`` environment variable in docker-compose).
 
-        When Neo4j is not configured the parser still runs (stub mode) and
-        returns node/edge counts, but nothing is persisted — queries will
+        When no graph backend is configured the parser still runs (stub mode)
+        and returns node/edge counts, but nothing is persisted — queries will
         return empty results.
 
         Full rebuild vs incremental:
@@ -156,7 +162,8 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
 
         Returns:
             YAML summary: mode (full|incremental), files_parsed, nodes (dict
-            with total), edges (dict with total), duration_ms, neo4j_connected.
+            with total), edges (dict with total), duration_ms,
+            backend_connected, graph_backend.
         """
         return str(await tool_graph_rebuild(
             repo_path=repo_path or cfg.default_repo_path,
@@ -193,18 +200,19 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
           framework.  Requires ``taint_analysis`` to have run first.
         - ``dependency`` — list external package dependencies per file.
           Results: package, type, referenced_from.
-        - ``cypher`` — raw Cypher passthrough.  The ``query`` parameter must
-          be a full Cypher statement.  Use ``$tenant_id``, ``$repo_id``, and
-          ``$limit`` as parameters.  Use this when the named types do not cover
-          your query.
+        - ``cypher`` — raw Cypher passthrough (Neo4j backend only).  The
+          ``query`` parameter must be a full Cypher statement.  Use
+          ``$tenant_id``, ``$repo_id``, and ``$limit`` as parameters.
+        - ``gremlin`` — raw Gremlin passthrough (JanusGraph backend only).
+          The ``query`` parameter must be a Gremlin traversal string.
 
         The ``query`` parameter is a substring filter on name or file path for
-        named query types (pass ``""`` for no filter).  For ``cypher`` it is
-        the full Cypher statement.
+        named query types (pass ``""`` for no filter).  For ``cypher`` /
+        ``gremlin`` it is the full native query statement.
 
         Args:
             query_type: One of ``lexical``, ``referential``, ``semantic``,
-                ``dependency``, or ``cypher``.
+                ``dependency``, ``cypher`` (Neo4j), or ``gremlin`` (JanusGraph).
             query: Substring filter or raw Cypher statement (see above).
             tenant_id: Tenant namespace.  Defaults to server default.
             repo_id: Repository identifier.  Defaults to server default.
@@ -287,7 +295,7 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
         """Return metadata about the current graph state.
 
         Call this first before querying.  If ``last_build`` is null or
-        ``neo4j_connected`` is false, call ``graph_rebuild`` before attempting
+        ``backend_connected`` is false, call ``graph_rebuild`` before attempting
         ``codebase_graph_query``.
 
         This call is cheap — it reads a local workspace YAML file and does at
@@ -298,9 +306,10 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
             repo_id: Repository identifier.  Defaults to server default.
 
         Returns:
-            YAML dict with keys: ``neo4j_connected`` (bool), ``last_build``
-            (ISO timestamp or null), ``nodes`` (dict with ``total`` count or
-            null), ``edges`` (dict with ``total`` count or null).
+            YAML dict with keys: ``backend_connected`` (bool),
+            ``graph_backend`` (str), ``last_build`` (ISO timestamp or null),
+            ``nodes`` (dict with ``total`` count or null), ``edges`` (dict
+            with ``total`` count or null).
         """
         return str(await tool_graph_status(
             tenant_id=tenant_id or cfg.default_tenant_id,

@@ -165,26 +165,38 @@ jobs:
       contents: write
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download dist artifacts
         uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/
 
+      - name: Extract changelog for this version
+        run: |
+          # Strip leading "v" from tag to match changelog headers (e.g. v0.3.0 → 0.3.0)
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Extract the section between this version's header and the next "## [" header
+          awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > /tmp/release-notes.md
+          # Append Docker image section
+          {
+            echo ""
+            echo "## Docker image"
+            echo ""
+            echo '```bash'
+            echo "docker pull ghcr.io/bitkaio/codesteward:${{ github.ref_name }}"
+            echo '```'
+            echo ""
+            echo "Full setup guide: [AGENT_SETUP.md](https://github.com/bitkaio/codesteward/blob/main/AGENT_SETUP.md)"
+          } >> /tmp/release-notes.md
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: /tmp/release-notes.md
           files: |
             dist/codesteward-graph/dist/*.whl
             dist/codesteward-graph/dist/*.tar.gz
             dist/codesteward-mcp/dist/*.whl
             dist/codesteward-mcp/dist/*.tar.gz
-          body: |
-            ## Docker image
-
-            ```bash
-            docker pull ghcr.io/bitkaio/codesteward:${{ github.ref_name }}
-            ```
-
-            Full setup guide: [AGENT_SETUP.md](https://github.com/bitkaio/codesteward/blob/main/AGENT_SETUP.md)

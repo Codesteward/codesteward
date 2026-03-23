@@ -7,7 +7,12 @@
 #
 # MCP server is spawned as a subprocess via stdio — no Docker, no volume mounts.
 # The codesteward-taint binary is auto-detected on PATH if installed.
+#
+# Two backend options:
+#   Neo4j (default):      set NEO4J_URI/NEO4J_USER/NEO4J_PASSWORD
+#   JanusGraph:           set GRAPH_BACKEND=janusgraph and JANUSGRAPH_URL
 
+# ── Neo4j backend (default) ────────────────────────────────────────────────
 mcp_servers:
   codesteward:
     command: uvx
@@ -19,3 +24,17 @@ mcp_servers:
       NEO4J_URI: "bolt://localhost:7687"
       NEO4J_USER: "neo4j"
       NEO4J_PASSWORD: "your-neo4j-password"
+
+# ── JanusGraph backend (alternative) ───────────────────────────────────────
+# Uncomment below (and comment out the Neo4j block above) to use JanusGraph:
+#
+# mcp_servers:
+#   codesteward:
+#     command: uvx
+#     args:
+#       - "codesteward-mcp[graph-all,janusgraph]"
+#       - "--transport"
+#       - "stdio"
+#     env:
+#       GRAPH_BACKEND: "janusgraph"
+#       JANUSGRAPH_URL: "ws://localhost:8182/gremlin"

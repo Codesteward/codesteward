@@ -1,0 +1,96 @@
+# Codesteward MCP Graph Server — JanusGraph stack
+#
+# Drop-in alternative to docker-compose.neo4j.yml that uses JanusGraph
+# (Apache 2.0) instead of Neo4j. All MCP tools and named query templates
+# work identically.
+#
+# Includes:
+#   janusgraph    — graph database (Gremlin :8182)
+#   codesteward   — MCP server (HTTP+SSE :3000)
+#
+# Quick start:
+#   1. Set REPO_PATH to the absolute path of the repository you want to analyse:
+#        export REPO_PATH=/path/to/your/repo       # macOS / Linux
+#        set REPO_PATH=C:\path\to\your\repo        # Windows CMD
+#        $env:REPO_PATH="C:\path\to\your\repo"     # PowerShell
+#      Or create a .env file in this directory:
+#        echo "REPO_PATH=/path/to/your/repo" > .env
+#   2. Run:  docker compose -f docker-compose.janusgraph.yml up -d
+#   3. MCP server: http://localhost:3000/mcp
+#
+# The graph_rebuild tool requires no arguments in this setup — the server
+# already knows the repository is mounted at /repos/project.
+#
+# docker compose -f docker-compose.janusgraph.yml down -v  ← removes volumes
+
+services:
+
+  # ── JanusGraph ──────────────────────────────────────────────────────────────
+  janusgraph:
+    image: janusgraph/janusgraph:1.1.0
+    container_name: codesteward-janusgraph
+    restart: unless-stopped
+    environment:
+      # Default template: berkeleyje-lucene (BerkeleyDB JE storage + Lucene indexing)
+      # Embedded single-node backend — no external Cassandra/HBase required.
+      # Data is persisted to /var/lib/janusgraph via the volume below.
+      JANUS_PROPS_TEMPLATE: "berkeleyje-lucene"
+      JAVA_OPTIONS: "-Xms512m -Xmx1g"
+    ports:
+      - "8182:8182"   # Gremlin Server (WebSocket)
+    volumes:
+      - janusgraph-data:/var/lib/janusgraph   # persistent graph data + indexes
+    healthcheck:
+      test: ["CMD-SHELL",
+             "python3 -c \"import socket; s=socket.socket(); s.settimeout(5); s.connect(('localhost',8182)); s.close()\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+
+  # ── Codesteward MCP Server ─────────────────────────────────────────────────
+  codesteward:
+    # Published image (recommended) — pulls from GitHub Container Registry.
+    # Replace the tag with a specific version (e.g. :0.1.0) to pin to a release.
+    image: ghcr.io/bitkaio/codesteward:latest
+    # ── Local build alternative (uncomment to build from source) ──────────────
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.mcp
+    #   args:
+    #     INSTALL_EXTRA: "graph-all"
+    # image: codesteward-mcp:local
+    container_name: codesteward-mcp
+    restart: unless-stopped
+    depends_on:
+      janusgraph:
+        condition: service_healthy
+    environment:
+      TRANSPORT: "sse"
+      HOST: "0.0.0.0"
+      PORT: "3000"
+      GRAPH_BACKEND: "janusgraph"
+      JANUSGRAPH_URL: "ws://janusgraph:8182/gremlin"
+      DEFAULT_TENANT_ID: "local"
+      DEFAULT_REPO_ID: ""            # optional: set to a stable name for your repo
+      DEFAULT_REPO_PATH: "/repos/project"   # matches the volume mount below
+      WORKSPACE_BASE: "/workspace"
+      LOG_LEVEL: "INFO"
+    ports:
+      - "3000:3000"
+    volumes:
+      - mcp-workspace:/workspace
+      # The repository to analyse — set REPO_PATH in your environment or .env file.
+      # Falls back to the current directory if REPO_PATH is not set.
+      - ${REPO_PATH:-.}:/repos/project:ro
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import socket; s=socket.socket(); s.settimeout(3); s.connect(('localhost',3000)); s.close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  janusgraph-data:
+  mcp-workspace:

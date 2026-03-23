@@ -41,8 +41,10 @@ Changelog  = "https://github.com/bitkaio/codesteward-mcp/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # Re-export language extras so users can do: uv add codesteward-mcp[graph-all]
-graph     = ["codesteward-graph[graph]"]
-graph-all = ["codesteward-graph[graph-all]"]
+graph      = ["codesteward-graph[graph]"]
+graph-all  = ["codesteward-graph[graph-all]"]
+# JanusGraph backend (alternative to Neo4j)
+janusgraph = ["codesteward-graph[janusgraph]"]
 
 [tool.uv.sources]
 codesteward-graph = { workspace = true }
