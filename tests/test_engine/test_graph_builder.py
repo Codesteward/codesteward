@@ -724,6 +724,64 @@ class TestGraphBuilder:
         # 2 .ts files + 1 .js file = 3 total
         assert summary["files_parsed"] == 3
 
+    # -- .codestewardignore tests --------------------------------------------
+    # These tests call _collect_files() directly to isolate ignore-file logic
+    # from the tree-sitter parser availability.
+
+    def test_codestewardignore_excludes_exact_path(self, repo_dir: Path) -> None:
+        """An exact path in .codestewardignore removes that file from collection."""
+        (repo_dir / ".codestewardignore").write_text("src/auth.ts\n")
+        builder = GraphBuilder()
+        collected = builder._collect_files(repo_dir, "typescript")
+        names = {p.name for p in collected}
+        assert "auth.ts" not in names
+        assert "router.ts" in names
+        assert "util.js" in names
+
+    def test_codestewardignore_excludes_directory(self, repo_dir: Path) -> None:
+        """A trailing-slash pattern excludes all files inside that directory."""
+        (repo_dir / ".codestewardignore").write_text("src/\n")
+        builder = GraphBuilder()
+        collected = builder._collect_files(repo_dir, "typescript")
+        assert collected == []
+
+    def test_codestewardignore_glob_pattern(self, repo_dir: Path) -> None:
+        """A glob pattern in .codestewardignore skips all matching files."""
+        (repo_dir / "src" / "index.generated.ts").write_text("export {};")
+        (repo_dir / ".codestewardignore").write_text("**/*.generated.ts\n")
+        builder = GraphBuilder()
+        collected = builder._collect_files(repo_dir, "typescript")
+        names = {p.name for p in collected}
+        assert "index.generated.ts" not in names
+        # Original 3 source files are still collected
+        assert {"auth.ts", "router.ts", "util.js"}.issubset(names)
+
+    def test_no_codestewardignore_is_noop(self, repo_dir: Path) -> None:
+        """Absence of .codestewardignore does not affect file collection."""
+        assert not (repo_dir / ".codestewardignore").exists()
+        builder = GraphBuilder()
+        collected = builder._collect_files(repo_dir, "typescript")
+        assert len(collected) == 3
+
+    def test_codestewardignore_read_error_is_noop(
+        self, repo_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unreadable .codestewardignore logs a warning and collects all files."""
+        (repo_dir / ".codestewardignore").write_text("src/auth.ts\n")
+
+        original_read_text = Path.read_text
+
+        def raise_on_ignore(self: Path, **kwargs: object) -> str:
+            if self.name == ".codestewardignore":
+                raise OSError("permission denied")
+            return original_read_text(self, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", raise_on_ignore)
+        builder = GraphBuilder()
+        collected = builder._collect_files(repo_dir, "typescript")
+        # Ignore file had no effect; all 3 source files still collected
+        assert len(collected) == 3
+
 
 # ===========================================================================
 # C# parser tests

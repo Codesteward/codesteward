@@ -133,6 +133,7 @@ version = "0.3.0"
 source = { editable = "packages/codesteward-graph" }
 dependencies = [
     { name = "neo4j" },
+    { name = "pathspec" },
     { name = "pyyaml" },
     { name = "structlog" },
 ]
@@ -205,6 +206,7 @@ requires-dist = [
     { name = "codesteward-graph", extras = ["graph-rust"], marker = "extra == 'graph-all'" },
     { name = "codesteward-graph", extras = ["graph-scala"], marker = "extra == 'graph-all'" },
     { name = "neo4j", specifier = ">=5.0" },
+    { name = "pathspec", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "structlog", specifier = ">=24.0" },
     { name = "tree-sitter", marker = "extra == 'graph'", specifier = ">=0.24" },

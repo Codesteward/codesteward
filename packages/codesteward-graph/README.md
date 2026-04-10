@@ -46,6 +46,27 @@ async def main():
 asyncio.run(main())
 ```
 
+## Ignoring files and directories
+
+By default, the graph builder skips common build artifacts and cache directories
+(`node_modules`, `dist`, `.venv`, `target`, etc.).
+
+For project-specific exclusions, place a `.codestewardignore` file in the root of
+the repository being analyzed. It uses the same gitignore pattern syntax:
+
+```gitignore
+# Exclude generated files
+**/*.generated.ts
+
+# Exclude an entire directory
+internal/
+
+# Exclude specific paths
+src/fixtures/large-dataset.py
+```
+
+The file is optional — if absent, only the built-in blocklist applies.
+
 ## License
 
 BSD 3-Clause — Copyright (c) 2026, bitkaio LLC

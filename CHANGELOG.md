@@ -11,6 +11,18 @@ Both packages share a version number and are always released together.
 
 ## [Unreleased]
 
+### Added — codesteward-graph
+
+- `.codestewardignore` support: users can place a `.codestewardignore` file in the root of the
+  repository being analyzed to exclude files and directories from graph construction using
+  gitignore-style patterns (`**/*.generated.ts`, `internal/`, `src/fixtures/`). The file is
+  optional — behavior is unchanged when it is absent. Powered by `pathspec` (new direct dependency).
+- Extended the hardcoded `_IGNORED_DIRS` blocklist with additional build artifacts, framework
+  caches, and vendored-dependency directories: `out`, `.output`, `.svelte-kit`, `.solid`, `.turbo`,
+  `.parcel-cache`, `.vitepress`, `.docusaurus`, `storybook-static`, `htmlcov`, `.nyc_output`,
+  `site-packages`, `.ruff_cache`, `.hypothesis`, `.hg`, `.svn`, `target`, `bin`, `obj`, `vendor`,
+  `.gradle`, `.cache`, `tmp`, `.tmp`; added `.dist-info` to `_IGNORED_DIR_SUFFIXES`.
+
 ---
 
 ## [0.3.0] — 2026-03-20

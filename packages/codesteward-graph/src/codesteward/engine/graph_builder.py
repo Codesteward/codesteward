@@ -22,6 +22,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pathspec
 import structlog
 from codesteward.engine.parsers import (  # noqa: F401
     all_source_extensions,
@@ -48,8 +49,32 @@ log = structlog.get_logger()
 # ---------------------------------------------------------------------------
 
 _IGNORED_DIRS = frozenset(
-    ["node_modules", "dist", "build", ".next", ".nuxt", "coverage", "__pycache__", ".git"]
+    [
+        # JS/TS build outputs and framework caches
+        "node_modules", "dist", "build", "out", ".next", ".nuxt", ".output",
+        ".svelte-kit", ".solid", ".turbo", ".parcel-cache", ".vitepress",
+        ".docusaurus", "storybook-static",
+        # Test/coverage artifacts
+        "coverage", "htmlcov", ".nyc_output",
+        # Python runtime and tool caches
+        "__pycache__", ".venv", "venv", "site-packages",
+        ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".eggs",
+        ".hypothesis",
+        # Version control
+        ".git", ".hg", ".svn",
+        # Compiled output (Rust, Java, .NET)
+        "target", "bin", "obj",
+        # Vendored dependencies
+        "vendor",
+        # Misc tool caches
+        ".gradle", ".cache", "tmp", ".tmp",
+    ]
 )
+
+_IGNORED_DIR_SUFFIXES = (".egg-info", ".dist-info")
+
+# Name of the per-project ignore file that users place in their repo root
+_CODESTEWARD_IGNORE_FILE = ".codestewardignore"
 
 
 # ===========================================================================
@@ -582,6 +607,31 @@ class GraphBuilder:
 
     # -- Private helpers -----------------------------------------------------
 
+    def _load_ignore_spec(self, root: Path) -> pathspec.PathSpec:
+        """Load ignore patterns from .codestewardignore in the project root.
+
+        Reads the .codestewardignore file (if present) from the root of the
+        repository being analyzed and returns a compiled PathSpec using
+        gitignore-style pattern matching.
+
+        Args:
+            root: Root directory of the repository being analyzed.
+
+        Returns:
+            A PathSpec that matches repo-relative paths to be excluded.
+            Returns an empty (no-op) PathSpec if the file does not exist.
+        """
+        ignore_file = root / _CODESTEWARD_IGNORE_FILE
+        if not ignore_file.is_file():
+            return pathspec.PathSpec.from_lines("gitignore", [])
+        try:
+            lines = ignore_file.read_text(encoding="utf-8").splitlines()
+            log.debug("codestewardignore_loaded", path=str(ignore_file), patterns=len(lines))
+            return pathspec.PathSpec.from_lines("gitignore", lines)
+        except OSError as exc:
+            log.warning("codestewardignore_read_failed", path=str(ignore_file), error=str(exc))
+            return pathspec.PathSpec.from_lines("gitignore", [])
+
     def _collect_files(self, root: Path, language: str) -> list[Path]:
         """Walk the repository and collect all parseable source files.
 
@@ -593,12 +643,20 @@ class GraphBuilder:
             Sorted list of Path objects for parseable files.
         """
         all_exts = all_source_extensions()
+        ignore_spec = self._load_ignore_spec(root)
         files: list[Path] = []
         for path in root.rglob("*"):
             if not path.is_file():
                 continue
-            # Skip ignored directories
-            if any(part in _IGNORED_DIRS for part in path.parts):
+            # Skip hardcoded ignored directories
+            if any(
+                part in _IGNORED_DIRS or part.endswith(_IGNORED_DIR_SUFFIXES)
+                for part in path.parts
+            ):
+                continue
+            # Skip files matched by .codestewardignore
+            rel = path.relative_to(root)
+            if ignore_spec.match_file(str(rel)):
                 continue
             if path.suffix in all_exts:
                 files.append(path)
