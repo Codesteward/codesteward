@@ -21,7 +21,7 @@ Both packages share a version number and are always released together.
   caches, and vendored-dependency directories: `out`, `.output`, `.svelte-kit`, `.solid`, `.turbo`,
   `.parcel-cache`, `.vitepress`, `.docusaurus`, `storybook-static`, `htmlcov`, `.nyc_output`,
   `site-packages`, `.ruff_cache`, `.hypothesis`, `.hg`, `.svn`, `target`, `bin`, `obj`, `vendor`,
-  `.gradle`, `.cache`, `tmp`, `.tmp`; added `.dist-info` to `_IGNORED_DIR_SUFFIXES`.
+  `.gradle`, `.cache`; added `.dist-info` to `_IGNORED_DIR_SUFFIXES`.
 
 ---
 

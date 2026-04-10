@@ -67,7 +67,7 @@ _IGNORED_DIRS = frozenset(
         # Vendored dependencies
         "vendor",
         # Misc tool caches
-        ".gradle", ".cache", "tmp", ".tmp",
+        ".gradle", ".cache",
     ]
 )
 
