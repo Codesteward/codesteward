@@ -129,7 +129,7 @@ wheels = [
 
 [[package]]
 name = "codesteward-graph"
-version = "0.2.2"
+version = "0.3.0"
 source = { editable = "packages/codesteward-graph" }
 dependencies = [
     { name = "neo4j" },
@@ -233,7 +233,7 @@ provides-extras = ["graph", "graph-csharp", "graph-kotlin", "graph-scala", "grap
 
 [[package]]
 name = "codesteward-mcp"
-version = "0.2.2"
+version = "0.3.0"
 source = { editable = "packages/codesteward-mcp" }
 dependencies = [
     { name = "codesteward-graph" },
