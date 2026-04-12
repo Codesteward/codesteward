@@ -13,6 +13,43 @@ Both packages share a version number and are always released together.
 
 ---
 
+## [0.4.1] — 2026-04-12
+
+### Fixed — codesteward-graph
+
+- **GraphQLite backend: SQLite threading error** — `graphqlite.connect()` now passes
+  `check_same_thread=False` so that `asyncio.to_thread()` can execute queries in worker
+  threads without raising `sqlite3.ProgrammingError`
+- **GraphQLite backend: node properties not persisted** — `write_nodes` replaced
+  `SET node += n` (map-merge syntax unsupported by GraphQLite) with explicit
+  `ON CREATE SET` / `ON MATCH SET` for each field
+- **GraphQLite backend: edges not persisted** — `write_edges` rewritten to work around
+  two GraphQLite Cypher-to-SQL translation bugs: (1) UNWIND variable references in MATCH
+  property patterns match all nodes instead of filtering, and (2) `$param` references in
+  relationship properties are silently discarded. Edges are now written individually with
+  Cypher literal values; target nodes are batch-MERGEd in a separate step
+- **GraphQLite backend: `count_nodes` always returned 0** — replaced `MATCH` inline
+  property filter with a `WHERE` clause using literal values, avoiding the parameter
+  binding issue
+- **GraphQLite backend: `write_augment_edge` not persisting edge properties** — same
+  workaround as `write_edges`: target node MERGE separated from edge CREATE, relationship
+  properties written as literals
+
+### Known issues — GraphQLite backend
+
+These are upstream bugs in the `graphqlite` package (≤ 0.4.3) that remain unresolved:
+
+- Target node properties (`to_name`, `to_file`, `to_node_type`) return NULL in
+  referential query results — the `(src)-[r]->(tgt)` pattern match finds edges but
+  `tgt.*` properties are inaccessible
+- `dependency` named query fails with `SQL prepare failed: no such column` — the
+  `RETURN DISTINCT` + `DEPENDS_ON` edge type triggers a Cypher-to-SQL translation error
+- Node count mismatch between `graph_rebuild` reported total and `count_nodes` result —
+  external reference nodes created during edge writing inflate the DB count beyond the
+  parser-reported total
+
+---
+
 ## [0.4.0] — 2026-04-12
 
 ### Added — codesteward-graph
@@ -229,7 +266,8 @@ Both packages share a version number and are always released together.
   Claude Desktop (`.mcp.json`, `.cursorrules`, `GEMINI.md`, `.windsurfrules`,
   `copilot-instructions.md`, `CLAUDE.md`)
 
-[Unreleased]: https://github.com/bitkaio/codesteward/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/bitkaio/codesteward/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/bitkaio/codesteward/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/bitkaio/codesteward/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bitkaio/codesteward/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/bitkaio/codesteward/compare/v0.2.1...v0.2.2
