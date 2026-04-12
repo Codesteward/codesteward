@@ -1,18 +1,22 @@
 """Codesteward MCP server configuration.
 
 Loaded from environment variables and/or a YAML config file.  All settings
-have sensible defaults so the server works out of the box without any config
-(graph backend optional — parse-only stub mode when not configured).
+have sensible defaults so the server works out of the box without any config.
+
+When no graph backend is explicitly configured, the server auto-detects:
+- ``NEO4J_PASSWORD`` set → Neo4j
+- ``JANUSGRAPH_URL`` set to a non-default value → JanusGraph
+- Otherwise → GraphQLite (embedded SQLite, persistent, no server needed)
 """
 
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import structlog
 import yaml
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 log = structlog.get_logger()
@@ -34,9 +38,13 @@ class McpConfig(BaseSettings):
 
     # ── Graph backend ─────────────────────────────────────────────────────
     graph_backend: str = Field(
-        "neo4j",
+        "auto",
         alias="GRAPH_BACKEND",
-        description="Graph database backend: 'neo4j', 'janusgraph', or 'graphqlite'",
+        description=(
+            "Graph database backend: 'neo4j', 'janusgraph', 'graphqlite', "
+            "or 'auto' (default — resolves to graphqlite unless Neo4j or "
+            "JanusGraph credentials are detected)."
+        ),
     )
 
     # ── Neo4j (optional) ─────────────────────────────────────────────────────
@@ -84,6 +92,31 @@ class McpConfig(BaseSettings):
     log_level: str = Field("INFO", description="Log level: DEBUG / INFO / WARNING / ERROR")
 
     model_config = {"populate_by_name": True, "env_prefix": ""}
+
+    @model_validator(mode="after")
+    def _resolve_auto_backend(self) -> Self:
+        """Resolve ``graph_backend="auto"`` to a concrete backend.
+
+        Detection order:
+        1. ``NEO4J_PASSWORD`` is non-empty → ``neo4j``
+        2. ``JANUSGRAPH_URL`` differs from the default → ``janusgraph``
+        3. Otherwise → ``graphqlite`` (embedded, no server needed)
+        """
+        if self.graph_backend != "auto":
+            return self
+        if self.neo4j_password:
+            self.graph_backend = "neo4j"
+            log.info("graph_backend_auto", resolved="neo4j",
+                     reason="NEO4J_PASSWORD is set")
+        elif self.janusgraph_url != "ws://localhost:8182/gremlin":
+            self.graph_backend = "janusgraph"
+            log.info("graph_backend_auto", resolved="janusgraph",
+                     reason="JANUSGRAPH_URL is non-default")
+        else:
+            self.graph_backend = "graphqlite"
+            log.info("graph_backend_auto", resolved="graphqlite",
+                     reason="no Neo4j/JanusGraph credentials detected")
+        return self
 
     @property
     def neo4j_available(self) -> bool:

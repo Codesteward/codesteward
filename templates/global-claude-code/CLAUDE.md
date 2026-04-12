@@ -33,7 +33,7 @@ Read `last_build` in the response:
 graph_rebuild(repo_path="<repo_path>", repo_id="<repo_id>")
 ```
 
-This parses every source file in the repository and writes the structural graph to the configured backend (Neo4j or JanusGraph).
+This parses every source file in the repository and writes the structural graph to the configured backend.
 Report back: node count, edge count, languages detected.
 
 ## Step 4 — Answer structural questions via the graph

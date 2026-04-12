@@ -27,25 +27,28 @@ tool and drop them into the root of the repository you want to analyse.
 The server runs as a persistent process. All tools connect to `http://localhost:3000/sse`.
 Neo4j is included in the Docker setup for persistent graph storage.
 
-**Stdio (uvx — zero install, no Docker)**
+**Stdio (uvx — zero install, no Docker, recommended for local dev)**
 The MCP client starts the server as a subprocess on demand.
-No Docker, no Neo4j, no background process — the graph is re-built each session (stub mode).
-Install once with `uv` and add this to any client config:
+No Docker, no background process. Uses GraphQLite by default — an embedded
+SQLite graph that persists to `~/.codesteward/graph.db` across sessions.
 
 ```json
 {
   "mcpServers": {
     "codesteward-graph": {
       "command": "uvx",
-      "args": ["codesteward-mcp[graph-all]", "--transport", "stdio"]
+      "args": [
+        "--from", "codesteward-mcp[graph-all,graphqlite]",
+        "codesteward-mcp", "--transport", "stdio"
+      ]
     }
   }
 }
 ```
 
-Use HTTP+Docker when you want persistent graph storage across sessions and full
-Neo4j query support.  Use stdio+uvx when you just want structural parsing without
-managing any infrastructure.
+Use stdio+uvx for local development (persistent graph, zero infrastructure).
+Use HTTP+Docker when you need Neo4j/JanusGraph for raw Cypher/Gremlin queries
+or team-shared graph instances.
 
 ---
 
@@ -125,6 +128,35 @@ Reload the Cursor window (`Ctrl+Shift+P` → *Reload Window*).
   }
 }
 ```
+
+---
+
+### Cline
+
+Cline stores MCP server configs in VS Code's globalStorage directory at
+`settings/cline_mcp_settings.json`:
+
+| Platform | Path |
+| -------- | ---- |
+| macOS | `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` |
+| Windows | `%APPDATA%\Code\User\globalStorage\saoudrizwan.claude-dev\settings\cline_mcp_settings.json` |
+| Linux | `~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` |
+
+```json
+{
+  "mcpServers": {
+    "codesteward-graph": {
+      "url": "http://localhost:3000/sse"
+    }
+  }
+}
+```
+
+Changes are hot-reloaded — no restart needed.
+
+Cline can also install Codesteward from its built-in **MCP Marketplace**.
+Search for "codesteward" and click Install — Cline's AI agent will read
+the `llms-install.md` file and configure everything automatically.
 
 ---
 
@@ -245,32 +277,33 @@ Restart Claude Desktop after saving.
 
 ---
 
-### Stdio transport — uvx (zero install, any tool)
+### Stdio transport — uvx (recommended for local dev)
 
-The simplest option: no Docker, no Neo4j, no pre-install.
-`uvx` downloads and caches the package on first run.
+The simplest option: no Docker, no database server, no pre-install.
+`uvx` downloads and caches the package on first run. GraphQLite provides
+a persistent graph at `~/.codesteward/graph.db` — no infrastructure needed.
 
 ```json
 {
   "mcpServers": {
     "codesteward-graph": {
       "command": "uvx",
-      "args": ["codesteward-mcp[graph-all]", "--transport", "stdio"]
+      "args": [
+        "--from", "codesteward-mcp[graph-all,graphqlite]",
+        "codesteward-mcp", "--transport", "stdio"
+      ]
     }
   }
 }
 ```
 
 **Requires:** [uv](https://docs.astral.sh/uv/) installed on the system.
-Works on macOS, Linux, and Windows.  The graph is re-built each session (no
-Neo4j persistence), which is fine for most structural analysis tasks.
-
-For a persistent graph across sessions, switch to the HTTP+Docker setup.
+Works on macOS, Linux, and Windows.
 
 **Manual install alternative** (if `uvx` is not available):
 
 ```bash
-uv pip install "codesteward-mcp[graph-all]"
+uv pip install "codesteward-mcp[graph-all,graphqlite]"
 # then use "command": "codesteward-mcp" in the config above
 ```
 
@@ -384,6 +417,7 @@ root and that the MCP server config is in the right location for your tool.
 | `templates/vscode/mcp.json` | `.vscode/mcp.json` | VS Code / GitHub Copilot |
 | `templates/CLAUDE.md` | `CLAUDE.md` | Claude Code instructions |
 | `templates/.cursorrules` | `.cursorrules` | Cursor instructions |
+| `templates/.clinerules` | `.clinerules` | Cline instructions |
 | `templates/GEMINI.md` | `GEMINI.md` | Gemini CLI instructions |
 | `templates/.windsurfrules` | `.windsurfrules` | Windsurf instructions |
 | `templates/copilot-instructions.md` | `.github/copilot-instructions.md` | GitHub Copilot instructions |

@@ -24,6 +24,7 @@ class TestToolGraphRebuild:
     async def test_stub_mode_no_neo4j(self, cfg: McpConfig, tmp_path: Path) -> None:
         """Full rebuild in stub mode (no Neo4j) returns YAML summary."""
         cfg = McpConfig(  # type: ignore[call-arg]
+            graph_backend="neo4j",
             neo4j_password="",
             workspace_base=str(tmp_path),
             default_tenant_id="t1",
@@ -505,6 +506,7 @@ class TestToolGraphStatus:
     async def test_stub_mode_no_neo4j(self, cfg: McpConfig, tmp_path: Path) -> None:
         """Returns status with backend_connected=False when no backend."""
         cfg = McpConfig(  # type: ignore[call-arg]
+            graph_backend="neo4j",
             neo4j_password="",
             workspace_base=str(tmp_path),
             default_tenant_id="t1",
@@ -521,6 +523,7 @@ class TestToolGraphStatus:
     async def test_reads_workspace_metadata(self, cfg: McpConfig, tmp_path: Path) -> None:
         """Reads last_build / node count from workspace graph_build.yaml."""
         cfg = McpConfig(  # type: ignore[call-arg]
+            graph_backend="neo4j",
             neo4j_password="",
             workspace_base=str(tmp_path),
             default_tenant_id="t1",

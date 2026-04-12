@@ -42,157 +42,69 @@ Rather than scanning files repeatedly, the agent queries a pre-built graph — c
 
 ## Quick Start
 
-### Global setup — recommended for local development
+### Automatic setup (recommended)
 
 One-time setup. Works across every repository on your machine without any per-project config.
-Supports **Claude Code** and **OpenAI Codex CLI**.
-
-**Prerequisites:** [uv](https://docs.astral.sh/uv/) · A graph backend: Neo4j 5+, JanusGraph 1.0+, or GraphQLite (no server needed) · *(optional)* `codesteward-taint` on `PATH`
-
-#### Claude Code
-
-**1. Register the MCP server globally in `~/.claude/settings.json`**
-
-Merge this into your existing file (or create it):
-
-```json
-{
-  "mcpServers": {
-    "codesteward": {
-      "command": "uvx",
-      "args": ["codesteward-mcp[graph-all]", "--transport", "stdio"],
-      "env": {
-        "NEO4J_URI": "bolt://localhost:7687",
-        "NEO4J_USER": "neo4j",
-        "NEO4J_PASSWORD": "your-neo4j-password"
-      }
-    }
-  }
-}
-```
-
-Claude Code spawns the MCP server as a subprocess — no Docker, no volume mounts, no separate process to manage. `uvx` downloads and caches the package on first run. Neo4j credentials are passed as env vars; omit them to run in stub mode (no persistence).
-
-**JanusGraph alternative** — replace the `env` block above with:
-
-```json
-      "env": {
-        "GRAPH_BACKEND": "janusgraph",
-        "JANUSGRAPH_URL": "ws://localhost:8182/gremlin"
-      }
-```
-
-Add `janusgraph` to the extras: `"codesteward-mcp[graph-all,janusgraph]"`.
-
-**GraphQLite alternative (embedded — no server needed)** — the simplest option for local dev. Replace the `env` block with:
-
-```json
-      "env": {
-        "GRAPH_BACKEND": "graphqlite"
-      }
-```
-
-Add `graphqlite` to the extras: `"codesteward-mcp[graph-all,graphqlite]"`. The graph persists to `~/.codesteward/graph.db` by default; set `GRAPHQLITE_DB_PATH` to override. No Docker, no database server — just `uvx` and go.
-
-**2. Add the global instruction file at `~/.claude/CLAUDE.md`**
 
 ```bash
-cp templates/global-claude-code/CLAUDE.md ~/.claude/CLAUDE.md
+uvx --from "codesteward-mcp[graph-all,graphqlite]" codesteward-mcp setup
 ```
 
-This file is loaded into every Claude Code session automatically. It tells Claude to derive `repo_id` from the current directory, check whether the graph is fresh, rebuild if needed, and prefer graph queries over file reads for structural questions.
+This auto-detects your AI tools (Claude Code, Cursor, Cline, Codex CLI, Gemini CLI), registers the MCP server globally, and merges workflow instructions into your existing config files — nothing is overwritten.
 
-**3. *(Optional)* Add the `/codesteward` skill**
+Uses **GraphQLite** by default: an embedded SQLite graph that persists to `~/.codesteward/graph.db`. No Docker, no database server, no background processes.
 
-```bash
-mkdir -p ~/.claude/skills
-cp templates/global-claude-code/codesteward-skill.md ~/.claude/skills/codesteward.md
-```
+To remove everything: `uvx --from "codesteward-mcp[graph-all,graphqlite]" codesteward-mcp setup --uninstall`
 
-Type `/codesteward` in any session for an explicit guided workflow (rebuild → query → taint scan). The graph-first preference from `~/.claude/CLAUDE.md` applies automatically without invoking the skill.
-
-#### OpenAI Codex CLI
-
-**1. Register the MCP server globally in `~/.codex/config.yaml`**
-
-Merge this into your existing file (or create it):
-
-```yaml
-mcp_servers:
-  codesteward:
-    command: uvx
-    args:
-      - "codesteward-mcp[graph-all]"
-      - "--transport"
-      - "stdio"
-    env:
-      NEO4J_URI: "bolt://localhost:7687"
-      NEO4J_USER: "neo4j"
-      NEO4J_PASSWORD: "your-neo4j-password"
-```
-
-For JanusGraph, replace the `env` block with `GRAPH_BACKEND: "janusgraph"` and `JANUSGRAPH_URL: "ws://localhost:8182/gremlin"`, and add the `janusgraph` extra to the args. For GraphQLite (no server), use `GRAPH_BACKEND: "graphqlite"` and add the `graphqlite` extra.
-
-**2. Add the global instruction file at `~/AGENTS.md`**
-
-```bash
-cp templates/global-codex/AGENTS.md ~/AGENTS.md
-```
-
-Codex reads `AGENTS.md` from `~/AGENTS.md` (global), the repo root, and the current directory in that order. The global file gives Codex the same graph-first workflow instructions as Claude Code.
-
-#### Shared: enable taint analysis (optional)
-
-Place the [`codesteward-taint`](https://github.com/bitkaio/codesteward-taint/releases) binary anywhere on your `PATH`:
-
-```bash
-# macOS (Apple Silicon)
-curl -L https://github.com/bitkaio/codesteward-taint/releases/latest/download/codesteward-taint-darwin-arm64 \
-     -o /usr/local/bin/codesteward-taint
-chmod +x /usr/local/bin/codesteward-taint
-```
-
-The MCP server detects the binary at startup and registers `taint_analysis` automatically — for both clients.
+**Prerequisites:** [uv](https://docs.astral.sh/uv/) · *(optional)* [`codesteward-taint`](https://github.com/bitkaio/codesteward-taint/releases) on `PATH`
 
 #### Usage — open any repo and start asking
 
 ```bash
-cd /repos/serving-api
-claude   # or: codex
+cd /path/to/your/project
+claude   # or: cursor, cline, codex, gemini
 ```
 
 ```text
 # The agent will automatically:
-graph_status(repo_id="serving-api")
-graph_rebuild(repo_path="/repos/serving-api", repo_id="serving-api")   # if stale
-codebase_graph_query(query_type="referential", query="authenticate", repo_id="serving-api")
+graph_status(repo_id="my-project")
+graph_rebuild(repo_path="/path/to/your/project", repo_id="my-project")   # if stale
+codebase_graph_query(query_type="referential", query="authenticate", repo_id="my-project")
 ```
 
-No `.mcp.json`, no per-project `CLAUDE.md` / `AGENTS.md`, no repeated configuration.
+No `.mcp.json`, no per-project config, no repeated setup.
+
+For manual per-tool setup, Docker deployments, and alternative backends (Neo4j, JanusGraph), see the **[setup guides](docs/setup/)**.
 
 ---
 
-### Zero-install — stdio via uvx with GraphQLite (persistent, no server)
+### Manual setup — GraphQLite (local dev, no server)
 
-No Docker, no database server, no pre-install. Add this to your MCP client config (Claude Code, Cursor, Windsurf, etc.):
+If you prefer to configure manually, add this to your MCP client config:
 
 ```json
 {
   "mcpServers": {
     "codesteward-graph": {
       "command": "uvx",
-      "args": ["codesteward-mcp[graph-all,graphqlite]", "--transport", "stdio"],
-      "env": {
-        "GRAPH_BACKEND": "graphqlite"
-      }
+      "args": [
+        "--from", "codesteward-mcp[graph-all,graphqlite]",
+        "codesteward-mcp", "--transport", "stdio"
+      ]
     }
   }
 }
 ```
 
-Requires [uv](https://docs.astral.sh/uv/). `uvx` downloads and caches the package on first run. The graph persists to `~/.codesteward/graph.db` across sessions — no database server needed.
+| Tool | Config file |
+| ---- | ----------- |
+| Claude Code | `~/.claude/settings.json` (under `mcpServers`) |
+| Cursor | `~/.cursor/mcp.json` |
+| Cline | `cline_mcp_settings.json` in VS Code globalStorage |
+| Codex CLI | `~/.codex/config.yaml` (under `mcp_servers`) |
+| Gemini CLI | `~/.gemini/settings.json` (under `mcpServers`) |
 
-To run without any persistence (stub mode), omit `graphqlite` from the extras and the `env` block entirely.
+Requires [uv](https://docs.astral.sh/uv/). `uvx` downloads and caches the package on first run. The graph persists to `~/.codesteward/graph.db` across sessions.
 
 ### Docker + Neo4j — persistent graph
 
@@ -235,35 +147,35 @@ docker run -p 3000:3000 \
   ghcr.io/bitkaio/codesteward-mcp:latest
 ```
 
-For full setup instructions covering Claude Code, Cursor, Windsurf, Gemini CLI, VS Code / GitHub Copilot, Continue.dev, and Claude Desktop, see **[AGENT_SETUP.md](AGENT_SETUP.md)**.
+For full setup instructions covering all AI tools, see the **[setup guides](docs/setup/)**.
 
 ## Installation
 
 ```bash
-# Core languages (TypeScript, JavaScript, Python, Java)
-uv pip install "codesteward-mcp[graph]"
+# All 14 languages + GraphQLite (recommended for local dev)
+uv pip install "codesteward-mcp[graph-all,graphqlite]"
 
-# All 14 languages
-uv pip install "codesteward-mcp[graph-all]"
+# Core languages only (TypeScript, JavaScript, Python, Java) + GraphQLite
+uv pip install "codesteward-mcp[graph,graphqlite]"
 
 # Individual language extras
-uv pip install "codesteward-mcp[graph-go]"       # Go
-uv pip install "codesteward-mcp[graph-rust]"     # Rust
-uv pip install "codesteward-mcp[graph-csharp]"   # C#
-uv pip install "codesteward-mcp[graph-kotlin]"   # Kotlin
-uv pip install "codesteward-mcp[graph-scala]"    # Scala
-uv pip install "codesteward-mcp[graph-c]"        # C
-uv pip install "codesteward-mcp[graph-cpp]"      # C++
-uv pip install "codesteward-mcp[graph-php]"      # PHP
+uv pip install "codesteward-mcp[graph-go,graphqlite]"       # Go
+uv pip install "codesteward-mcp[graph-rust,graphqlite]"     # Rust
+uv pip install "codesteward-mcp[graph-csharp,graphqlite]"   # C#
+uv pip install "codesteward-mcp[graph-kotlin,graphqlite]"   # Kotlin
+uv pip install "codesteward-mcp[graph-scala,graphqlite]"    # Scala
+uv pip install "codesteward-mcp[graph-c,graphqlite]"        # C
+uv pip install "codesteward-mcp[graph-cpp,graphqlite]"      # C++
+uv pip install "codesteward-mcp[graph-php,graphqlite]"      # PHP
 
-# JanusGraph backend (alternative to Neo4j)
+# Neo4j backend (alternative — requires a running Neo4j 5+ server)
+uv pip install "codesteward-mcp[graph-all]"
+
+# JanusGraph backend (alternative — requires a running JanusGraph 1.0+ server)
 uv pip install "codesteward-mcp[graph-all,janusgraph]"
-
-# GraphQLite backend (embedded SQLite — no server needed)
-uv pip install "codesteward-mcp[graph-all,graphqlite]"
 ```
 
-Requires Python 3.12+. A graph backend (Neo4j 5+, JanusGraph 1.0+, or GraphQLite) is optional — the server runs in stub mode without one. GraphQLite is recommended for local development as it requires no external services.
+Requires Python 3.12+. GraphQLite is the default backend for local development — an embedded SQLite graph database that requires no external services. The graph persists to `~/.codesteward/graph.db` across sessions.
 
 ## Configuration
 
@@ -275,10 +187,10 @@ Priority: **CLI flags > env vars > YAML file > defaults**.
 | Transport | `TRANSPORT` | `sse` | `sse`, `http`, or `stdio` |
 | Host | `HOST` | `0.0.0.0` | HTTP bind host |
 | Port | `PORT` | `3000` | HTTP bind port |
-| Graph backend | `GRAPH_BACKEND` | `neo4j` | `neo4j`, `janusgraph`, or `graphqlite` |
+| Graph backend | `GRAPH_BACKEND` | `auto` | `auto`, `neo4j`, `janusgraph`, or `graphqlite`. Auto-detects: Neo4j if password set, JanusGraph if URL changed, otherwise GraphQLite |
 | Neo4j URI | `NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection URI |
 | Neo4j user | `NEO4J_USER` | `neo4j` | Neo4j username |
-| Neo4j password | `NEO4J_PASSWORD` | *(empty)* | Leave empty for stub mode |
+| Neo4j password | `NEO4J_PASSWORD` | *(empty)* | Set to enable Neo4j backend |
 | JanusGraph URL | `JANUSGRAPH_URL` | `ws://localhost:8182/gremlin` | Gremlin Server WebSocket URL |
 | GraphQLite DB path | `GRAPHQLITE_DB_PATH` | `~/.codesteward/graph.db` | SQLite database file path |
 | Default tenant | `DEFAULT_TENANT_ID` | `local` | Tenant namespace |

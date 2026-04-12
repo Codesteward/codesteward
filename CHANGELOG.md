@@ -45,9 +45,23 @@ Both packages share a version number and are always released together.
   (re-exported from `codesteward-graph`).
 - Global setup templates: Claude Code (`templates/global-claude-code/`) and OpenAI Codex
   (`templates/global-codex/`) with CLAUDE.md, skill file, settings snippet, and AGENTS.md.
+- **`codesteward-mcp setup` subcommand** — one-time global setup that auto-detects installed
+  AI tools (Claude Code, Cursor, Cline, Codex CLI, Gemini CLI), registers the MCP server in
+  each tool's global config, and merges workflow instructions into CLAUDE.md / AGENTS.md /
+  GEMINI.md. Idempotent — safe to re-run. `--uninstall` reverses all changes cleanly.
+  `--backend` flag accepts `graphqlite` (default), `neo4j`, or `janusgraph`.
+- **Cline support**: `.clinerules` template, Cline detection in `setup` command (cross-platform
+  globalStorage path resolution), and Cline section in AGENT_SETUP.md with marketplace install
+  instructions via `llms-install.md`.
+- `docs/setup/` — per-tool setup guides (Claude Code, Cursor & Cline, Codex CLI, Gemini CLI,
+  Windsurf / VS Code / Claude Desktop / Continue.dev, Docker + Neo4j / JanusGraph). Referenced
+  from README.md Quick Start.
 
 ### Changed — codesteward-mcp
 
+- **`GRAPH_BACKEND` default changed from `neo4j` to `auto`** — auto-detects the appropriate
+  backend at startup: Neo4j if `NEO4J_PASSWORD` is set, JanusGraph if `JANUSGRAPH_URL` is
+  non-default, otherwise GraphQLite. Existing deployments with explicit env vars are unaffected.
 - Tool response fields renamed: `neo4j_connected` → `backend_connected`; new
   `graph_backend` field in `graph_rebuild` and `graph_status` responses.
 - `_make_async_driver()` replaced by `_make_backend()` — returns a `GraphBackend` instance
@@ -57,6 +71,14 @@ Both packages share a version number and are always released together.
 - Cypher query templates moved from inline constants in `tools/graph.py` into each backend's
   `query_named()` implementation.
 - Server instructions updated to describe all three backends and the `gremlin` query type.
+- README.md Quick Start rewritten: leads with `uvx codesteward-mcp setup` for zero-config
+  global setup; manual setup simplified with GraphQLite as default.
+- `llms-install.md` rewritten for GraphQLite default and Cline compatibility.
+- All `uvx` args in templates and docs fixed to use the `--from` pattern
+  (`uvx --from "codesteward-mcp[graph-all,graphqlite]" codesteward-mcp`) — the previous
+  pattern failed on macOS where `uvx` cannot parse extras as a command name.
+- Global setup templates (`templates/global-claude-code/`, `templates/global-codex/`) updated
+  to use GraphQLite as default backend.
 
 ---
 

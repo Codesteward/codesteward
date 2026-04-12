@@ -389,6 +389,27 @@ def _parse_args() -> argparse.Namespace:
         prog="codesteward-mcp",
         description="Codesteward MCP Graph Server",
     )
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    # ── setup subcommand ────────────────────────────────────────────────
+    setup_parser = subparsers.add_parser(
+        "setup",
+        help="Auto-detect AI tools and register Codesteward globally",
+    )
+    setup_parser.add_argument(
+        "--uninstall",
+        action="store_true",
+        help="Remove all Codesteward config from detected tools",
+    )
+    setup_parser.add_argument(
+        "--backend",
+        choices=["graphqlite", "neo4j", "janusgraph"],
+        default="graphqlite",
+        help="Graph backend (default: graphqlite — embedded, no server needed)",
+    )
+
+    # ── server flags (default command) ──────────────────────────────────
     parser.add_argument(
         "--transport",
         choices=["sse", "http", "stdio"],
@@ -418,6 +439,17 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     """CLI entry point — called by ``codesteward-mcp`` console script."""
     args = _parse_args()
+
+    # Handle the setup subcommand
+    if args.command == "setup":
+        from codesteward.mcp.setup import run_setup, run_uninstall
+
+        if args.uninstall:
+            run_uninstall()
+        else:
+            run_setup(backend=args.backend)
+        return
+
     mcp, cfg = build_mcp_server(config_file=args.config)
 
     # Resolve transport: CLI flag > env var > config field > default

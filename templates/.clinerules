@@ -1,0 +1,50 @@
+# Codesteward Graph — Code Intelligence
+
+This project has the Codesteward MCP graph server connected.
+It has already parsed this codebase into a structural graph.
+
+## Prefer graph tools over file reads for structural questions
+
+For questions about code structure, relationships, and dependencies, use the
+graph tools first. They answer cross-file, cross-language questions in a single
+call that would otherwise require reading and grepping many files.
+
+Use graph tools for:
+- Finding functions, classes, or methods by name → codebase_graph_query (lexical)
+- Finding what calls a function, or what a function calls → codebase_graph_query (referential)
+- Checking whether a route is protected by auth middleware → codebase_graph_query (referential, filter on GUARDED_BY/PROTECTED_BY)
+- Listing external package dependencies → codebase_graph_query (dependency)
+- Tracing data flow → codebase_graph_query (semantic)
+
+Use file reads when you need the actual source code of a specific function
+or file after identifying it via the graph.
+
+## Workflow
+
+Before your first structural query in a session, check if the graph is ready:
+
+  graph_status()
+
+If last_build is null or the graph looks stale after recent changes:
+
+  graph_rebuild()
+
+No arguments needed — the server already knows the repo path.
+
+Then query:
+
+  codebase_graph_query(query_type="referential", query="authenticate")
+
+## query_type reference
+
+- lexical     → find functions/classes/methods by name or file
+- referential → find call/import/extends/auth-guard relationships
+- semantic    → trace data-flow relationships
+- dependency  → list external package dependencies
+- cypher      → custom Cypher query for anything not covered above
+
+## Recording inferred relationships
+
+If you identify a relationship through reasoning that the parser could not detect
+(e.g. a dynamic call or runtime-resolved dependency), record it with graph_augment.
+Use node_id values from query results as source_id and target_id.

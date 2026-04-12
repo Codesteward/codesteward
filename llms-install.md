@@ -1,25 +1,24 @@
 # codesteward-mcp
 
-> Codesteward MCP server — parses a source repository into a structural code graph and exposes it as queryable tools. Answers questions like "what calls function X?", "is route Y protected by auth?", "what are the external dependencies of file Z?". Works in stub mode without Neo4j (no persistence) or with Neo4j for full graph persistence.
+> Codesteward MCP server — parses a source repository into a structural code graph and exposes it as queryable tools. Answers questions like "what calls function X?", "is route Y protected by auth?", "what are the external dependencies of file Z?". Uses GraphQLite (embedded SQLite) for persistent graph storage — no external database needed.
 
 I want you to install codesteward-mcp for me. Execute all the steps below autonomously.
 
 ## OBJECTIVE
 
-Install the codesteward-mcp MCP server and add it to the user's Cline MCP configuration so that Cline can query the structural code graph of any repository.
+Install the codesteward-mcp MCP server and add it to the user's MCP configuration so that the AI agent can query the structural code graph of any repository.
 
 ## DONE WHEN
 
 - [ ] `uvx` is available (or `codesteward-mcp` is installed via `uv pip install`)
-- [ ] The `codesteward-graph` MCP server entry appears in the active MCP server list in Cline
-- [ ] Cline can call `graph_status` successfully
+- [ ] The `codesteward-graph` MCP server entry appears in the active MCP server list
+- [ ] The agent can call `graph_status` successfully
 
 ## TODO
 
 - [ ] Check that `uv` is installed
-- [ ] Decide on stub mode (no Neo4j) vs full mode (with Neo4j)
 - [ ] Ask the user for the path to the repository they want to analyse
-- [ ] Add the MCP server entry to `cline_mcp_settings.json`
+- [ ] Add the MCP server entry to the appropriate config file
 - [ ] Verify the server starts by calling `graph_status`
 
 ## Steps
@@ -32,31 +31,33 @@ Ensure `uv` is installed:
 uv --version
 ```
 
-If not installed, direct the user to https://docs.astral.sh/uv/getting-started/installation/ or run:
+If not installed, direct the user to <https://docs.astral.sh/uv/getting-started/installation/> or run:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### 2. Ask the user two questions
+### 2. Ask the user one question
 
 Ask the user:
 
 1. **Repository path** — the absolute path on their machine to the repository they want to analyse (e.g. `/Users/alice/projects/my-app`). This becomes `DEFAULT_REPO_PATH`.
-2. **Neo4j** — do they have Neo4j running and want to persist the graph, or do they want stub mode (parse-only, no persistence)?
 
-If they want Neo4j, also ask for `NEO4J_URI` (default `bolt://localhost:7687`), `NEO4J_USER` (default `neo4j`), and `NEO4J_PASSWORD`.
+### 3. Add to MCP config
 
-### 3. Add to Cline MCP config
+Add this entry to the MCP settings file. GraphQLite is the default backend — an embedded SQLite graph database that persists to `~/.codesteward/graph.db`. No external database server needed.
 
-**Stub mode (no Neo4j — recommended for first use):**
+**For Cline** (`cline_mcp_settings.json`):
 
 ```json
 {
   "mcpServers": {
     "codesteward-graph": {
       "command": "uvx",
-      "args": ["codesteward-mcp[graph-all]", "--transport", "stdio"],
+      "args": [
+        "--from", "codesteward-mcp[graph-all,graphqlite]",
+        "codesteward-mcp", "--transport", "stdio"
+      ],
       "env": {
         "DEFAULT_REPO_PATH": "<absolute-path-to-repo>",
         "DEFAULT_REPO_ID": "<short-repo-name>"
@@ -66,20 +67,40 @@ If they want Neo4j, also ask for `NEO4J_URI` (default `bolt://localhost:7687`), 
 }
 ```
 
-**With Neo4j persistence:**
+**For Claude Code** (`~/.claude/settings.json`):
 
 ```json
 {
   "mcpServers": {
     "codesteward-graph": {
       "command": "uvx",
-      "args": ["codesteward-mcp[graph-all]", "--transport", "stdio"],
+      "args": [
+        "--from", "codesteward-mcp[graph-all,graphqlite]",
+        "codesteward-mcp", "--transport", "stdio"
+      ],
       "env": {
         "DEFAULT_REPO_PATH": "<absolute-path-to-repo>",
-        "DEFAULT_REPO_ID": "<short-repo-name>",
-        "NEO4J_URI": "bolt://localhost:7687",
-        "NEO4J_USER": "neo4j",
-        "NEO4J_PASSWORD": "<password>"
+        "DEFAULT_REPO_ID": "<short-repo-name>"
+      }
+    }
+  }
+}
+```
+
+**For Cursor** (`~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "codesteward-graph": {
+      "command": "uvx",
+      "args": [
+        "--from", "codesteward-mcp[graph-all,graphqlite]",
+        "codesteward-mcp", "--transport", "stdio"
+      ],
+      "env": {
+        "DEFAULT_REPO_PATH": "<absolute-path-to-repo>",
+        "DEFAULT_REPO_ID": "<short-repo-name>"
       }
     }
   }
@@ -92,7 +113,7 @@ Replace `<absolute-path-to-repo>` with the path from step 2 and `<short-repo-nam
 
 ### 4. Verify
 
-After saving the config, ask Cline to call `graph_status`. You should see a YAML response with `neo4j_connected` and `last_build` fields. If `last_build` is null, call `graph_rebuild` to parse the repository — this may take 10–60 seconds depending on repo size.
+After saving the config, call `graph_status`. You should see a YAML response with `backend_connected` and `last_build` fields. If `last_build` is null, call `graph_rebuild` to parse the repository — this may take 10–60 seconds depending on repo size.
 
 ## Available tools
 
@@ -101,8 +122,8 @@ After saving the config, ask Cline to call `graph_status`. You should see a YAML
 | `graph_rebuild` | Parse the repository and build the structural graph |
 | `codebase_graph_query` | Query the graph — `lexical`, `referential`, `semantic`, `dependency`, or raw `cypher` |
 | `graph_augment` | Add agent-inferred relationships (confidence < 1.0) to the graph |
-| `graph_status` | Check graph state: node/edge counts, last build time, Neo4j connectivity |
+| `graph_status` | Check graph state: node/edge counts, last build time, backend connectivity |
 
 ## EXECUTE NOW
 
-Start with step 1. Work through each step autonomously, pausing only to ask the user the two questions in step 2.
+Start with step 1. Work through each step autonomously, pausing only to ask the user the question in step 2.

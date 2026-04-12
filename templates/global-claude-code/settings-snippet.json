@@ -1,12 +1,16 @@
 {
   "mcpServers": {
-    "codesteward": {
+    "codesteward-graph": {
       "command": "uvx",
-      "args": ["codesteward-mcp[graph-all]", "--transport", "stdio"],
+      "args": [
+        "--from",
+        "codesteward-mcp[graph-all,graphqlite]",
+        "codesteward-mcp",
+        "--transport",
+        "stdio"
+      ],
       "env": {
-        "NEO4J_URI": "bolt://localhost:7687",
-        "NEO4J_USER": "neo4j",
-        "NEO4J_PASSWORD": "your-neo4j-password"
+        "GRAPH_BACKEND": "graphqlite"
       }
     }
   }

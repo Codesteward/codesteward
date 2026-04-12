@@ -12,22 +12,31 @@ See the [full documentation and setup guide](https://github.com/bitkaio/codestew
   "mcpServers": {
     "codesteward-graph": {
       "command": "uvx",
-      "args": ["codesteward-mcp[graph-all]", "--transport", "stdio"]
+      "args": [
+        "--from", "codesteward-mcp[graph-all,graphqlite]",
+        "codesteward-mcp", "--transport", "stdio"
+      ]
     }
   }
 }
 ```
 
+GraphQLite is the default backend — an embedded SQLite graph database, no server
+needed. The graph persists to `~/.codesteward/graph.db` across sessions.
+
 ## Install
 
 ```bash
-# Core languages (TypeScript, JavaScript, Python, Java)
-uv pip install "codesteward-mcp[graph]"
+# Core languages (TypeScript, JavaScript, Python, Java) + GraphQLite
+uv pip install "codesteward-mcp[graph,graphqlite]"
 
-# All 14 languages
+# All 14 languages + GraphQLite
+uv pip install "codesteward-mcp[graph-all,graphqlite]"
+
+# Neo4j backend (alternative — requires a running Neo4j server)
 uv pip install "codesteward-mcp[graph-all]"
 
-# JanusGraph backend (alternative to Neo4j)
+# JanusGraph backend (alternative — requires a running JanusGraph server)
 uv pip install "codesteward-mcp[graph-all,janusgraph]"
 ```
 
