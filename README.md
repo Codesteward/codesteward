@@ -7,7 +7,7 @@
   <a href="https://pypi.org/project/codesteward-graph/"><img src="https://img.shields.io/pypi/v/codesteward-graph?color=00b4d8&label=codesteward-graph" alt="PyPI codesteward-graph"></a>
   <a href="https://github.com/bitkaio/codesteward/releases"><img src="https://img.shields.io/github/v/release/bitkaio/codesteward?color=1a1a2e&label=release" alt="GitHub Release"></a>
   <a href="https://pypi.org/project/codesteward-mcp/"><img src="https://img.shields.io/pypi/pyversions/codesteward-mcp" alt="Python Versions"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-BSD%203--Clause-blue" alt="License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
 </p>
 
 <p align="center">
@@ -287,4 +287,4 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history or browse [GitHub Releases
 
 ## License
 
-BSD 3-Clause License — Copyright (c) 2026, bitkaio LLC
+Apache License 2.0 — Copyright (c) 2026, bitkaio LLC

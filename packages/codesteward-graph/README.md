@@ -52,4 +52,4 @@ asyncio.run(main())
 
 ## License
 
-BSD 3-Clause — Copyright (c) 2026, bitkaio LLC
+Apache License 2.0 — Copyright (c) 2026, bitkaio LLC

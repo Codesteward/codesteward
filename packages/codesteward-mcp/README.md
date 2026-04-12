@@ -51,4 +51,4 @@ uv pip install "codesteward-mcp[graph-all,janusgraph]"
 
 ## License
 
-BSD 3-Clause License — Copyright (c) 2026, bitkaio LLC
+Apache License 2.0 — Copyright (c) 2026, bitkaio LLC

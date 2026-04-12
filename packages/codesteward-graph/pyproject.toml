@@ -4,7 +4,7 @@ version = "0.3.0"
 description = "Multi-language structural code graph builder — 13 tree-sitter parsers + Neo4j writer"
 readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "BSD-3-Clause"}
+license = {text = "Apache-2.0"}
 authors = [
     {name = "bitkaio LLC"},
 ]
@@ -12,7 +12,7 @@ keywords = ["code-graph", "tree-sitter", "ast", "static-analysis", "neo4j", "cod
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: BSD License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
