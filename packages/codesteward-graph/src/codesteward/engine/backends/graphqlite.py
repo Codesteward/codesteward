@@ -69,6 +69,11 @@ _CYPHER_TEMPLATES: dict[str, str] = {
 }
 
 
+def _cypher_escape(value: str) -> str:
+    """Escape a string for safe inclusion in a Cypher literal."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 class GraphQLiteBackend(GraphBackend):
     """Embedded SQLite graph backend using GraphQLite's Cypher engine.
 
@@ -90,7 +95,7 @@ class GraphQLiteBackend(GraphBackend):
 
             if resolved != ":memory:":
                 Path(resolved).parent.mkdir(parents=True, exist_ok=True)
-            self._conn = graphqlite.connect(resolved)
+            self._conn = graphqlite.connect(resolved, check_same_thread=False)
             log.info("graphqlite_connected", db_path=resolved)
         except Exception as exc:
             log.error("graphqlite_connection_failed", db_path=resolved, error=str(exc))
@@ -111,10 +116,25 @@ class GraphQLiteBackend(GraphBackend):
         conn = self._conn
 
         def _write() -> int:
+            # GraphQLite doesn't persist properties used in MERGE patterns
+            # or support SET node += map.  Use ON CREATE SET with explicit
+            # field assignments instead.
             cypher = """
             UNWIND $nodes AS n
             MERGE (node:LexicalNode {node_id: n.node_id})
-            SET node += n
+            ON CREATE SET node.node_id = n.node_id,
+                node.node_type = n.node_type, node.name = n.name,
+                node.file = n.file, node.line_start = n.line_start,
+                node.line_end = n.line_end, node.language = n.language,
+                node.tenant_id = n.tenant_id, node.repo_id = n.repo_id,
+                node.exported = n.exported, node.is_async = n.is_async,
+                node.metadata = n.metadata
+            ON MATCH SET node.node_type = n.node_type, node.name = n.name,
+                node.file = n.file, node.line_start = n.line_start,
+                node.line_end = n.line_end, node.language = n.language,
+                node.tenant_id = n.tenant_id, node.repo_id = n.repo_id,
+                node.exported = n.exported, node.is_async = n.is_async,
+                node.metadata = n.metadata
             """
             conn.cypher(cypher, {"nodes": nodes})
             return len(nodes)
@@ -129,16 +149,48 @@ class GraphQLiteBackend(GraphBackend):
         def _write() -> int:
             total = 0
             for rel_type, typed_edges in edges_by_type.items():
-                cypher = f"""
-                UNWIND $edges AS e
-                MATCH (src:LexicalNode {{node_id: e.source_id}})
-                MERGE (tgt:LexicalNode {{node_id: e.target_id}})
-                  ON CREATE SET tgt.name = e.target_name, tgt.node_type = 'external',
-                                tgt.tenant_id = e.tenant_id, tgt.repo_id = e.repo_id
-                MERGE (src)-[r:{rel_type} {{edge_id: e.edge_id}}]->(tgt)
-                SET r.file = e.file, r.line = e.line
-                """
-                conn.cypher(cypher, {"edges": typed_edges})
+                # GraphQLite bugs: (1) UNWIND variable refs in MATCH
+                # property patterns don't filter, (2) $param refs in
+                # relationship properties aren't persisted.  Work around
+                # both by writing edges individually with literal values.
+
+                # Step 1: batch-MERGE any target nodes that don't exist
+                # yet (external references).  UNWIND + ON CREATE SET
+                # works for node properties.
+                targets = [
+                    {
+                        "node_id": e["target_id"],
+                        "name": e.get("target_name", ""),
+                        "tenant_id": e.get("tenant_id", ""),
+                        "repo_id": e.get("repo_id", ""),
+                    }
+                    for e in typed_edges
+                ]
+                conn.cypher(
+                    """
+                    UNWIND $targets AS t
+                    MERGE (node:LexicalNode {node_id: t.node_id})
+                    ON CREATE SET node.node_id = t.node_id,
+                        node.name = t.name, node.node_type = 'external',
+                        node.tenant_id = t.tenant_id,
+                        node.repo_id = t.repo_id
+                    """,
+                    {"targets": targets},
+                )
+
+                # Step 2: create edges one at a time using literal values
+                for e in typed_edges:
+                    src = _cypher_escape(e["source_id"])
+                    tgt = _cypher_escape(e["target_id"])
+                    eid = _cypher_escape(e["edge_id"])
+                    f = _cypher_escape(e.get("file", ""))
+                    ln = int(e.get("line") or 0)
+                    conn.cypher(
+                        f'MATCH (s:LexicalNode {{node_id: "{src}"}}) '
+                        f'MATCH (t:LexicalNode {{node_id: "{tgt}"}}) '
+                        f'CREATE (s)-[:{rel_type} {{edge_id: "{eid}", '
+                        f'file: "{f}", line: {ln}}}]->(t)'
+                    )
                 total += len(typed_edges)
             return total
 
@@ -219,12 +271,16 @@ class GraphQLiteBackend(GraphBackend):
         try:
 
             def _count() -> int | None:
+                # Use literal values because $param in MATCH property
+                # patterns doesn't filter correctly in GraphQLite.
+                tid = _cypher_escape(tenant_id)
+                rid = _cypher_escape(repo_id)
                 result = conn.cypher(
-                    """
-                    MATCH (n:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
+                    f"""
+                    MATCH (n:LexicalNode)
+                    WHERE n.tenant_id = "{tid}" AND n.repo_id = "{rid}"
                     RETURN count(n) AS node_count
                     """,
-                    {"tenant_id": tenant_id, "repo_id": repo_id},
                 )
                 rows = result.to_list()
                 return rows[0]["node_count"] if rows else None
@@ -256,32 +312,40 @@ class GraphQLiteBackend(GraphBackend):
         rel_type = edge_type.upper()
 
         def _write() -> None:
-            cypher = f"""
-            MATCH (src:LexicalNode {{node_id: $source_id}})
-            MERGE (tgt:LexicalNode {{node_id: $target_id}})
-              ON CREATE SET tgt.name = $target_name, tgt.node_type = 'external',
-                            tgt.tenant_id = $tenant_id, tgt.repo_id = $repo_id,
-                            tgt.confidence = $confidence, tgt.source = $source
-            MERGE (src)-[r:{rel_type} {{edge_id: $edge_id}}]->(tgt)
-            SET r.file = $file, r.line = $line,
-                r.confidence = $confidence, r.source = $source,
-                r.rationale = $rationale
-            """
+            # MERGE target node (uses $param ON CREATE SET — works)
             conn.cypher(
-                cypher,
+                """
+                MERGE (tgt:LexicalNode {node_id: $target_id})
+                ON CREATE SET tgt.node_id = $target_id,
+                    tgt.name = $target_name, tgt.node_type = 'external',
+                    tgt.tenant_id = $tenant_id, tgt.repo_id = $repo_id,
+                    tgt.confidence = $confidence, tgt.source = $source
+                """,
                 {
-                    "source_id": source_id,
                     "target_id": target_id,
                     "target_name": target_name,
                     "tenant_id": tenant_id,
                     "repo_id": repo_id,
-                    "edge_id": edge_id,
-                    "file": file,
-                    "line": line,
                     "confidence": confidence,
                     "source": source,
-                    "rationale": rationale,
                 },
+            )
+            # Create edge with literal values (params don't persist
+            # on relationship properties in GraphQLite)
+            s = _cypher_escape(source_id)
+            t = _cypher_escape(target_id)
+            eid = _cypher_escape(edge_id)
+            f = _cypher_escape(file)
+            ln = int(line or 0)
+            src_esc = _cypher_escape(source)
+            rat = _cypher_escape(rationale)
+            conn.cypher(
+                f'MATCH (src:LexicalNode {{node_id: "{s}"}}) '
+                f'MATCH (tgt:LexicalNode {{node_id: "{t}"}}) '
+                f'CREATE (src)-[:{rel_type} {{edge_id: "{eid}", '
+                f'file: "{f}", line: {ln}, '
+                f'confidence: {confidence}, source: "{src_esc}", '
+                f'rationale: "{rat}"}}]->(tgt)'
             )
 
         await asyncio.to_thread(_write)
