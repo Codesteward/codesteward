@@ -11,6 +11,10 @@ Both packages share a version number and are always released together.
 
 ## [Unreleased]
 
+---
+
+## [0.4.0] — 2026-04-12
+
 ### Added — codesteward-graph
 
 - **Graph backend abstraction layer** (`engine/backends/`): new `GraphBackend` ABC with a
@@ -79,6 +83,7 @@ Both packages share a version number and are always released together.
   pattern failed on macOS where `uvx` cannot parse extras as a command name.
 - Global setup templates (`templates/global-claude-code/`, `templates/global-codex/`) updated
   to use GraphQLite as default backend.
+- License changed from BSD 3-Clause to Apache 2.0.
 
 ---
 
@@ -224,7 +229,8 @@ Both packages share a version number and are always released together.
   Claude Desktop (`.mcp.json`, `.cursorrules`, `GEMINI.md`, `.windsurfrules`,
   `copilot-instructions.md`, `CLAUDE.md`)
 
-[Unreleased]: https://github.com/bitkaio/codesteward/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/bitkaio/codesteward/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/bitkaio/codesteward/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bitkaio/codesteward/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/bitkaio/codesteward/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/bitkaio/codesteward/compare/v0.2.0...v0.2.1
