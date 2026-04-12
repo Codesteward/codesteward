@@ -4,12 +4,13 @@ Four tools are exposed:
 
 ``graph_rebuild``
     Parse a repository (or a set of changed files) and write the structural
-    graph to Neo4j.  Works in stub mode (parse-only, no Neo4j) when Neo4j
-    credentials are not configured.
+    graph to the configured backend (Neo4j or JanusGraph).  Works in stub
+    mode (parse-only) when no backend is configured.
 
 ``codebase_graph_query``
     Query the graph via named templates (lexical / referential / semantic /
-    dependency) or raw Cypher passthrough.  Returns YAML.
+    dependency) or raw query passthrough (Cypher for Neo4j, Gremlin for
+    JanusGraph).  Returns YAML.
 
 ``graph_augment``
     Add agent-inferred relationships (confidence < 1.0) to the graph.
@@ -17,7 +18,7 @@ Four tools are exposed:
 
 ``graph_status``
     Return metadata about the current graph: node/edge counts, last build
-    timestamp, Neo4j connectivity.
+    timestamp, backend connectivity.
 """
 
 
@@ -27,60 +28,12 @@ from typing import Any
 
 import structlog
 import yaml
+from codesteward.engine.backends import get_backend
+from codesteward.engine.backends.base import GraphBackend
 from codesteward.engine.graph_builder import GraphBuilder
 from codesteward.mcp.config import McpConfig
 
 log = structlog.get_logger()
-
-# ---------------------------------------------------------------------------
-# Cypher templates for named query types
-# ---------------------------------------------------------------------------
-
-_CYPHER_TEMPLATES: dict[str, str] = {
-    "lexical": """
-        MATCH (n:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
-        WHERE ($filter = '' OR n.name CONTAINS $filter OR n.file CONTAINS $filter)
-        RETURN n.node_type AS type, n.name AS name, n.file AS file,
-               n.line_start AS line_start, n.line_end AS line_end,
-               n.language AS language, n.is_async AS is_async
-        ORDER BY n.file, n.line_start
-        LIMIT $limit
-    """,
-    "referential": """
-        MATCH (src:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
-              -[r:CALLS|IMPORTS|EXTENDS|GUARDED_BY|PROTECTED_BY]->(tgt)
-        WHERE ($filter = '' OR src.name CONTAINS $filter OR src.file CONTAINS $filter)
-        RETURN src.name AS from_name, src.file AS from_file,
-               type(r) AS edge_type,
-               tgt.name AS to_name, tgt.file AS to_file,
-               tgt.node_type AS to_node_type,
-               r.line AS line
-        ORDER BY src.file, r.line
-        LIMIT $limit
-    """,
-    "semantic": """
-        MATCH (src:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
-              -[r:TAINT_FLOW]->(tgt:LexicalNode)
-        WHERE ($filter = '' OR src.name CONTAINS $filter OR src.file CONTAINS $filter)
-          AND NOT r.sanitized
-        RETURN src.name AS source_name, src.file AS source_file,
-               tgt.name AS sink_name,   tgt.file AS sink_file,
-               r.cwe AS cwe, r.hops AS hops,
-               r.level AS level, r.framework AS framework
-        ORDER BY r.hops ASC, src.file ASC
-        LIMIT $limit
-    """,
-    "dependency": """
-        MATCH (src:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id,
-                                node_type: 'file'})
-              -[r:DEPENDS_ON]->(pkg:LexicalNode)
-        WHERE ($filter = '' OR pkg.name CONTAINS $filter)
-        RETURN DISTINCT pkg.name AS package, pkg.node_type AS type,
-               src.file AS referenced_from
-        ORDER BY pkg.name
-        LIMIT $limit
-    """,
-}
 
 _ALLOWED_EDGE_TYPES = frozenset({
     "calls", "guarded_by", "protected_by", "taint_flow",
@@ -90,20 +43,38 @@ _ALLOWED_EDGE_TYPES = frozenset({
 
 
 # ---------------------------------------------------------------------------
-# Neo4j driver helpers
+# Backend factory
 # ---------------------------------------------------------------------------
 
-def _make_async_driver(cfg: McpConfig) -> Any | None:
-    """Create an async Neo4j driver from config, or None if not configured."""
+def _make_backend(cfg: McpConfig) -> GraphBackend | None:
+    """Create a graph backend from config, or None if not configured."""
+    if cfg.graph_backend == "janusgraph":
+        try:
+            backend = get_backend("janusgraph", url=cfg.janusgraph_url)
+            if not backend.is_connected():
+                log.warning("janusgraph_not_connected", url=cfg.janusgraph_url)
+                return None
+            return backend
+        except Exception as exc:
+            log.error("janusgraph_backend_init_failed", error=str(exc))
+            return None
+
+    # Default: Neo4j
     if not cfg.neo4j_available:
         return None
     try:
-        import neo4j
-        return neo4j.AsyncGraphDatabase.driver(
-            cfg.neo4j_uri, auth=(cfg.neo4j_user, cfg.neo4j_password)
+        backend = get_backend(
+            "neo4j",
+            uri=cfg.neo4j_uri,
+            user=cfg.neo4j_user,
+            password=cfg.neo4j_password,
         )
+        if not backend.is_connected():
+            log.warning("neo4j_not_connected", uri=cfg.neo4j_uri)
+            return None
+        return backend
     except Exception as exc:
-        log.error("neo4j_driver_init_failed", error=str(exc))
+        log.error("neo4j_backend_init_failed", error=str(exc))
         return None
 
 
@@ -122,14 +93,14 @@ async def tool_graph_rebuild(
 
     Args:
         repo_path: Absolute path to the cloned repository on disk.
-        tenant_id: Tenant namespace for Neo4j isolation.
+        tenant_id: Tenant namespace for graph isolation.
         repo_id: Repository identifier — must be stable across rebuilds.
         changed_files: Repo-relative paths to re-parse for incremental mode.
             Pass ``None`` for a full rebuild.
         cfg: Server configuration.
 
     Returns:
-        YAML summary with node/edge counts, duration, and Neo4j status.
+        YAML summary with node/edge counts, duration, and backend status.
     """
     mode = "incremental" if changed_files is not None else "full"
     log.info(
@@ -140,11 +111,11 @@ async def tool_graph_rebuild(
         mode=mode,
     )
 
-    driver = _make_async_driver(cfg)
+    backend = _make_backend(cfg)
     t0 = time.monotonic()
 
     try:
-        builder = GraphBuilder(neo4j_driver=driver)
+        builder = GraphBuilder(backend=backend)
         summary = await builder.build_graph(
             repo_path=repo_path,
             tenant_id=tenant_id,
@@ -159,12 +130,14 @@ async def tool_graph_rebuild(
             default_flow_style=False,
         ))
     finally:
-        if driver is not None:
-            await driver.close()
+        if backend is not None:
+            await backend.close()
 
     summary["mode"] = mode
     summary["duration_ms"] = round((time.monotonic() - t0) * 1000)
-    summary["neo4j_connected"] = driver is not None
+    summary["neo4j_connected"] = backend is not None and cfg.graph_backend == "neo4j"
+    summary["graph_backend"] = cfg.graph_backend
+    summary["backend_connected"] = backend is not None
 
     # Persist lightweight metadata to workspace if base dir exists
     workspace = Path(cfg.workspace_base) / tenant_id / repo_id
@@ -199,22 +172,27 @@ async def tool_codebase_graph_query(
 
     Args:
         query_type: One of ``lexical``, ``referential``, ``semantic``,
-            ``dependency``, or ``cypher`` (raw passthrough).
-        query: Filter substring or raw Cypher statement.
+            ``dependency``, or the backend's raw query language
+            (``cypher`` for Neo4j, ``gremlin`` for JanusGraph).
+        query: Filter substring or raw query statement.
         tenant_id: Tenant namespace.
         repo_id: Repository identifier.
         limit: Maximum rows to return.
         cfg: Server configuration.
 
     Returns:
-        YAML-formatted results with a ``stub`` key when Neo4j is unavailable.
+        YAML-formatted results with a ``stub`` key when no backend is available.
     """
-    driver = _make_async_driver(cfg)
+    backend = _make_backend(cfg)
+    raw_lang = backend.raw_query_language if backend else "cypher"
 
-    if driver is None:
+    if backend is None:
         return str(yaml.safe_dump({
             "stub": True,
-            "reason": "Neo4j not configured — set NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD",
+            "reason": (
+                "Graph backend not configured — set NEO4J_PASSWORD (for Neo4j) "
+                "or GRAPH_BACKEND=janusgraph (for JanusGraph)"
+            ),
             "query_type": query_type,
             "filter": query,
             "tenant_id": tenant_id,
@@ -223,30 +201,40 @@ async def tool_codebase_graph_query(
             "results": [],
         }, default_flow_style=False))
 
-    # Build Cypher + params
-    if query_type == "cypher":
-        cypher = query
-        params: dict[str, Any] = {
-            "tenant_id": tenant_id, "repo_id": repo_id, "limit": limit
-        }
-    else:
-        template = _CYPHER_TEMPLATES.get(query_type)
-        if template is None:
-            await driver.close()
-            return str(yaml.safe_dump({
-                "error": f"unknown query_type '{query_type}'",
-                "valid_types": list(_CYPHER_TEMPLATES) + ["cypher"],
-            }, default_flow_style=False))
-        cypher = template
-        params = {
-            "tenant_id": tenant_id, "repo_id": repo_id,
-            "filter": query, "limit": limit,
-        }
-
     try:
-        async with driver.session() as session:
-            result = await session.run(cypher, **params)
-            records = [dict(record) for record in await result.data()]
+        # Raw query passthrough (cypher or gremlin)
+        if query_type in ("cypher", "gremlin"):
+            if query_type != raw_lang:
+                await backend.close()
+                return str(yaml.safe_dump({
+                    "error": (
+                        f"Raw query language mismatch: got '{query_type}' but "
+                        f"active backend uses '{raw_lang}'"
+                    ),
+                    "active_backend": backend.backend_name,
+                    "expected_query_type": raw_lang,
+                }, default_flow_style=False))
+
+            params: dict[str, Any] = {
+                "tenant_id": tenant_id, "repo_id": repo_id, "limit": limit
+            }
+            records = await backend.query_raw(query, params)
+        else:
+            # Named query template
+            try:
+                records = await backend.query_named(
+                    query_type=query_type,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                    filter_str=query,
+                    limit=limit,
+                )
+            except ValueError as exc:
+                await backend.close()
+                return str(yaml.safe_dump({
+                    "error": str(exc),
+                    "valid_types": ["lexical", "referential", "semantic", "dependency", raw_lang],
+                }, default_flow_style=False))
 
         output: dict[str, Any] = {
             "query_type": query_type,
@@ -265,7 +253,7 @@ async def tool_codebase_graph_query(
             default_flow_style=False,
         ))
     finally:
-        await driver.close()
+        await backend.close()
 
 
 async def tool_graph_augment(
@@ -291,7 +279,7 @@ async def tool_graph_augment(
     """
     from codesteward.engine.graph_builder import GraphEdge
 
-    driver = _make_async_driver(cfg)
+    backend = _make_backend(cfg)
     source_tag = f"agent:{agent_id}"
     written: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -336,37 +324,24 @@ async def tool_graph_augment(
             source=source_tag,
         )
 
-        if driver is not None:
+        if backend is not None:
             try:
-                rel_type = edge_type.upper()
-                cypher = f"""
-                MATCH (src:LexicalNode {{node_id: $source_id}})
-                MERGE (tgt:LexicalNode {{node_id: $target_id}})
-                  ON CREATE SET tgt.name = $target_name, tgt.node_type = 'external',
-                                tgt.tenant_id = $tenant_id, tgt.repo_id = $repo_id,
-                                tgt.confidence = $confidence, tgt.source = $source
-                MERGE (src)-[r:{rel_type} {{edge_id: $edge_id}}]->(tgt)
-                SET r.file = $file, r.line = $line,
-                    r.confidence = $confidence, r.source = $source,
-                    r.rationale = $rationale
-                """
-                async with driver.session() as session:
-                    await session.run(
-                        cypher,
-                        source_id=edge.source_id,
-                        target_id=edge.target_id,
-                        target_name=edge.target_name,
-                        tenant_id=edge.tenant_id,
-                        repo_id=edge.repo_id,
-                        edge_id=edge.edge_id,
-                        file=edge.file or "",
-                        line=edge.line,
-                        confidence=edge.confidence,
-                        source=edge.source,
-                        rationale=rationale,
-                    )
+                await backend.write_augment_edge(
+                    edge_type=edge_type,
+                    source_id=edge.source_id,
+                    target_id=edge.target_id,
+                    target_name=edge.target_name,
+                    tenant_id=edge.tenant_id,
+                    repo_id=edge.repo_id,
+                    edge_id=edge.edge_id,
+                    file=edge.file or "",
+                    line=edge.line,
+                    confidence=edge.confidence,
+                    source=edge.source,
+                    rationale=rationale,
+                )
             except Exception as exc:
-                skipped.append({"item": item, "reason": f"neo4j write failed: {exc}"})
+                skipped.append({"item": item, "reason": f"backend write failed: {exc}"})
                 continue
 
         written.append({
@@ -377,8 +352,8 @@ async def tool_graph_augment(
             "confidence": confidence,
         })
 
-    if driver is not None:
-        await driver.close()
+    if backend is not None:
+        await backend.close()
 
     return str(yaml.safe_dump({
         "status": "ok" if not skipped else "partial",
@@ -387,7 +362,9 @@ async def tool_graph_augment(
         "skipped": len(skipped),
         "edges": written,
         "skip_details": skipped,
-        "neo4j_connected": driver is not None,
+        "neo4j_connected": backend is not None and cfg.graph_backend == "neo4j",
+        "graph_backend": cfg.graph_backend,
+        "backend_connected": backend is not None,
     }, default_flow_style=False, sort_keys=True))
 
 
@@ -398,7 +375,7 @@ async def tool_graph_status(
 ) -> str:
     """Return metadata about the current graph state.
 
-    Checks Neo4j connectivity, reads workspace build metadata, and returns
+    Checks backend connectivity, reads workspace build metadata, and returns
     node/edge counts plus last build timestamp.
 
     Args:
@@ -407,12 +384,14 @@ async def tool_graph_status(
         cfg: Server configuration.
 
     Returns:
-        YAML dict with ``neo4j_connected``, ``last_build``, ``nodes``, ``edges``.
+        YAML dict with ``backend_connected``, ``last_build``, ``nodes``, ``edges``.
     """
     status: dict[str, Any] = {
         "tenant_id": tenant_id,
         "repo_id": repo_id,
+        "graph_backend": cfg.graph_backend,
         "neo4j_connected": False,
+        "backend_connected": False,
         "last_build": None,
         "nodes": None,
         "edges": None,
@@ -429,26 +408,19 @@ async def tool_graph_status(
         except Exception:
             pass
 
-    # Check Neo4j connectivity
-    driver = _make_async_driver(cfg)
-    if driver is not None:
+    # Check backend connectivity
+    backend = _make_backend(cfg)
+    if backend is not None:
         try:
-            async with driver.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (n:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
-                    RETURN count(n) AS node_count
-                    """,
-                    tenant_id=tenant_id,
-                    repo_id=repo_id,
-                )
-                record = await result.single()
-                if record:
-                    status["nodes"] = {"total": record["node_count"]}
-            status["neo4j_connected"] = True
+            node_count = await backend.count_nodes(tenant_id, repo_id)
+            if node_count is not None:
+                status["nodes"] = {"total": node_count}
+            status["backend_connected"] = True
+            if cfg.graph_backend == "neo4j":
+                status["neo4j_connected"] = True
         except Exception as exc:
-            status["neo4j_error"] = str(exc)
+            status["backend_error"] = str(exc)
         finally:
-            await driver.close()
+            await backend.close()
 
     return str(yaml.safe_dump(status, default_flow_style=False, sort_keys=True))

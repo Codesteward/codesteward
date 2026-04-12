@@ -49,6 +49,8 @@ graph-c      = ["tree-sitter>=0.21", "tree-sitter-c>=0.21"]
 graph-cpp    = ["tree-sitter>=0.21", "tree-sitter-cpp>=0.21"]
 graph-rust   = ["tree-sitter>=0.21", "tree-sitter-rust>=0.21"]
 graph-php    = ["tree-sitter>=0.21", "tree-sitter-php>=0.21"]
+# JanusGraph backend via Gremlin (Apache TinkerPop)
+janusgraph   = ["gremlinpython>=3.7"]
 # All 14 languages at once
 graph-all = [
     "codesteward-graph[graph]",

@@ -26,6 +26,9 @@ uv pip install "codesteward-mcp[graph]"
 
 # All 14 languages
 uv pip install "codesteward-mcp[graph-all]"
+
+# JanusGraph backend (alternative to Neo4j)
+uv pip install "codesteward-mcp[graph-all,janusgraph]"
 ```
 
 ## Tools
@@ -33,7 +36,7 @@ uv pip install "codesteward-mcp[graph-all]"
 | Tool | Description |
 | ---- | ----------- |
 | `graph_rebuild` | Parse a repository into the structural graph |
-| `codebase_graph_query` | Query the graph (`lexical`, `referential`, `semantic`, `dependency`, raw Cypher) |
+| `codebase_graph_query` | Query the graph (`lexical`, `referential`, `semantic`, `dependency`, raw Cypher/Gremlin) |
 | `graph_augment` | Add agent-inferred relationships to the graph |
 | `graph_status` | Return graph metadata (node/edge counts, last build time) |
 

@@ -31,3 +31,20 @@ def cfg_with_neo4j() -> McpConfig:
         default_tenant_id="test-tenant",
         default_repo_id="test-repo",
     )
+
+
+@pytest.fixture
+def cfg_with_janusgraph() -> McpConfig:
+    """McpConfig with JanusGraph as graph backend.
+
+    Note: does not actually connect — tests using this fixture must mock
+    the JanusGraph backend.
+    """
+    return McpConfig(
+        graph_backend="janusgraph",
+        janusgraph_url="ws://localhost:8182/gremlin",
+        neo4j_password="",
+        workspace_base="/tmp/codesteward-test-workspace",
+        default_tenant_id="test-tenant",
+        default_repo_id="test-repo",
+    )

@@ -33,7 +33,7 @@ Read `last_build` in the response:
 graph_rebuild(repo_path="<repo_path>", repo_id="<repo_id>")
 ```
 
-This parses every source file in the repository and writes the structural graph to Neo4j.
+This parses every source file in the repository and writes the structural graph to the configured backend (Neo4j or JanusGraph).
 Report back: node count, edge count, languages detected.
 
 ## Step 4 — Answer structural questions via the graph
@@ -62,7 +62,8 @@ after identifying it via the graph.
 | `referential` | Find call/import/extends/auth-guard relationships                                |
 | `semantic`    | Read taint-flow findings (run `taint_analysis` first; returns empty until then)  |
 | `dependency`  | List external package dependencies                                               |
-| `cypher`      | Write a custom Cypher query for anything not covered above                       |
+| `cypher`      | Raw Cypher query (Neo4j backend)                                                 |
+| `gremlin`     | Raw Gremlin query (JanusGraph backend)                                           |
 
 ## Important: empty results do not mean no symbols
 
