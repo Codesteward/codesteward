@@ -1,7 +1,7 @@
 """Graph database backend abstraction.
 
-Provides a unified interface for graph storage backends (Neo4j, JanusGraph)
-so that the rest of the codebase is backend-agnostic.
+Provides a unified interface for graph storage backends (Neo4j, JanusGraph,
+GraphQLite) so that the rest of the codebase is backend-agnostic.
 """
 
 from codesteward.engine.backends.base import GraphBackend
@@ -14,7 +14,7 @@ def get_backend(backend_type: str, **kwargs) -> GraphBackend:
     """Factory for graph backends.
 
     Args:
-        backend_type: One of ``"neo4j"`` or ``"janusgraph"``.
+        backend_type: One of ``"neo4j"``, ``"janusgraph"``, or ``"graphqlite"``.
         **kwargs: Backend-specific connection parameters.
 
     Returns:
@@ -28,8 +28,16 @@ def get_backend(backend_type: str, **kwargs) -> GraphBackend:
             return Neo4jBackend(**kwargs)
         case "janusgraph":
             from codesteward.engine.backends.janusgraph import JanusGraphBackend
+
             return JanusGraphBackend(**kwargs)
+        case "graphqlite":
+            from codesteward.engine.backends.graphqlite import GraphQLiteBackend
+
+            return GraphQLiteBackend(**kwargs)
         case _:
             raise ValueError(
-                f"Unknown graph backend {backend_type!r}; valid: 'neo4j', 'janusgraph'"
+                f"Unknown graph backend {backend_type!r}; "
+                f"valid: 'neo4j', 'janusgraph', 'graphqlite'"
             )
+
+    raise AssertionError("unreachable")  # pragma: no cover

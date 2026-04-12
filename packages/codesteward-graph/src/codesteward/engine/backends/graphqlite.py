@@ -1,6 +1,16 @@
-"""Neo4j graph backend implementation."""
+"""GraphQLite (SQLite-based) graph backend implementation.
 
+Lightweight embedded graph database using the ``graphqlite`` package — a
+SQLite extension that supports Cypher queries.  Requires no external server,
+no Docker, and no configuration beyond a filesystem path.
+
+Designed for local development and single-user ``uvx`` deployments where
+Neo4j or JanusGraph would be overkill.
+"""
+
+import asyncio
 import json
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -9,7 +19,7 @@ from codesteward.engine.backends.base import GraphBackend
 log = structlog.get_logger()
 
 # ---------------------------------------------------------------------------
-# Cypher templates for named query types
+# Cypher templates — reused from the Neo4j backend with zero modifications
 # ---------------------------------------------------------------------------
 
 _CYPHER_TEMPLATES: dict[str, str] = {
@@ -59,50 +69,63 @@ _CYPHER_TEMPLATES: dict[str, str] = {
 }
 
 
-class Neo4jBackend(GraphBackend):
-    """Neo4j graph backend using the official async driver.
+class GraphQLiteBackend(GraphBackend):
+    """Embedded SQLite graph backend using GraphQLite's Cypher engine.
+
+    The database is stored as a single ``.db`` file on disk, or ``:memory:``
+    for ephemeral use (tests).  All Cypher queries execute synchronously
+    inside SQLite and are wrapped with ``asyncio.to_thread`` to satisfy
+    the async ``GraphBackend`` interface.
 
     Args:
-        uri: Neo4j bolt URI.
-        user: Neo4j username.
-        password: Neo4j password.
+        db_path: Path to the SQLite database file.  Defaults to
+            ``~/.codesteward/graph.db``.  Use ``:memory:`` for tests.
     """
 
-    def __init__(self, uri: str = "", user: str = "", password: str = "") -> None:
-        self._driver: Any | None = None
-        if password:
-            try:
-                import neo4j
-                self._driver = neo4j.AsyncGraphDatabase.driver(
-                    uri, auth=(user, password)
-                )
-            except Exception as exc:
-                log.error("neo4j_driver_init_failed", error=str(exc))
+    def __init__(self, db_path: str = "") -> None:
+        self._conn: Any | None = None
+        resolved = db_path or str(Path.home() / ".codesteward" / "graph.db")
+        try:
+            import graphqlite
+
+            if resolved != ":memory:":
+                Path(resolved).parent.mkdir(parents=True, exist_ok=True)
+            self._conn = graphqlite.connect(resolved)
+            log.info("graphqlite_connected", db_path=resolved)
+        except Exception as exc:
+            log.error("graphqlite_connection_failed", db_path=resolved, error=str(exc))
 
     def is_connected(self) -> bool:
-        return self._driver is not None
+        return self._conn is not None
 
     async def close(self) -> None:
-        if self._driver is not None:
-            await self._driver.close()
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+    # ── Write operations ─────────────────────────────────────────────────
 
     async def write_nodes(self, nodes: list[dict[str, Any]]) -> int:
-        if not self._driver or not nodes:
+        if not self._conn or not nodes:
             return 0
-        cypher = """
-        UNWIND $nodes AS n
-        MERGE (node:LexicalNode {node_id: n.node_id})
-        SET node += n
-        """
-        async with self._driver.session() as session:
-            await session.run(cypher, nodes=nodes)
-        return len(nodes)
+
+        def _write() -> int:
+            cypher = """
+            UNWIND $nodes AS n
+            MERGE (node:LexicalNode {node_id: n.node_id})
+            SET node += n
+            """
+            self._conn.cypher(cypher, {"nodes": nodes})
+            return len(nodes)
+
+        return await asyncio.to_thread(_write)
 
     async def write_edges(self, edges_by_type: dict[str, list[dict[str, Any]]]) -> int:
-        if not self._driver or not edges_by_type:
+        if not self._conn or not edges_by_type:
             return 0
-        total = 0
-        async with self._driver.session() as session:
+
+        def _write() -> int:
+            total = 0
             for rel_type, typed_edges in edges_by_type.items():
                 cypher = f"""
                 UNWIND $edges AS e
@@ -113,19 +136,31 @@ class Neo4jBackend(GraphBackend):
                 MERGE (src)-[r:{rel_type} {{edge_id: e.edge_id}}]->(tgt)
                 SET r.file = e.file, r.line = e.line
                 """
-                await session.run(cypher, edges=typed_edges)
+                self._conn.cypher(cypher, {"edges": typed_edges})
                 total += len(typed_edges)
-        return total
+            return total
 
-    async def delete_file_nodes(self, tenant_id: str, repo_id: str, file_path: str) -> None:
-        if not self._driver:
+        return await asyncio.to_thread(_write)
+
+    async def delete_file_nodes(
+        self, tenant_id: str, repo_id: str, file_path: str
+    ) -> None:
+        if not self._conn:
             return
-        cypher = """
-        MATCH (n:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id, file: $file})
-        DETACH DELETE n
-        """
-        async with self._driver.session() as session:
-            await session.run(cypher, tenant_id=tenant_id, repo_id=repo_id, file=file_path)
+
+        def _delete() -> None:
+            self._conn.cypher(
+                """
+                MATCH (n:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id,
+                                      file: $file})
+                DETACH DELETE n
+                """,
+                {"tenant_id": tenant_id, "repo_id": repo_id, "file": file_path},
+            )
+
+        await asyncio.to_thread(_delete)
+
+    # ── Query operations ─────────────────────────────────────────────────
 
     async def query_named(
         self,
@@ -141,46 +176,58 @@ class Neo4jBackend(GraphBackend):
                 f"unknown query_type '{query_type}'; "
                 f"valid: {list(_CYPHER_TEMPLATES) + [self.raw_query_language]}"
             )
-        if not self._driver:
+        if not self._conn:
             return []
-        async with self._driver.session() as session:
-            result = await session.run(
+
+        def _query() -> list[dict[str, Any]]:
+            result = self._conn.cypher(
                 template,
-                tenant_id=tenant_id,
-                repo_id=repo_id,
-                filter=filter_str,
-                limit=limit,
+                {
+                    "tenant_id": tenant_id,
+                    "repo_id": repo_id,
+                    "filter": filter_str,
+                    "limit": limit,
+                },
             )
-            return [dict(record) for record in await result.data()]
+            return result.to_list()
+
+        return await asyncio.to_thread(_query)
 
     async def query_raw(
         self,
         query: str,
         params: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        if not self._driver:
+        if not self._conn:
             return []
-        async with self._driver.session() as session:
-            result = await session.run(query, **params)
-            return [dict(record) for record in await result.data()]
+
+        def _query() -> list[dict[str, Any]]:
+            result = self._conn.cypher(query, params if params else None)
+            return result.to_list()
+
+        return await asyncio.to_thread(_query)
 
     async def count_nodes(self, tenant_id: str, repo_id: str) -> int | None:
-        if not self._driver:
+        if not self._conn:
             return None
         try:
-            async with self._driver.session() as session:
-                result = await session.run(
+
+            def _count() -> int | None:
+                result = self._conn.cypher(
                     """
                     MATCH (n:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
                     RETURN count(n) AS node_count
                     """,
-                    tenant_id=tenant_id,
-                    repo_id=repo_id,
+                    {"tenant_id": tenant_id, "repo_id": repo_id},
                 )
-                record = await result.single()
-                return record["node_count"] if record else None
+                rows = result.to_list()
+                return rows[0]["node_count"] if rows else None
+
+            return await asyncio.to_thread(_count)
         except Exception:
             return None
+
+    # ── Augment (agent-inferred edges) ───────────────────────────────────
 
     async def write_augment_edge(
         self,
@@ -197,47 +244,52 @@ class Neo4jBackend(GraphBackend):
         source: str,
         rationale: str,
     ) -> None:
-        if not self._driver:
+        if not self._conn:
             return
         rel_type = edge_type.upper()
-        cypher = f"""
-        MATCH (src:LexicalNode {{node_id: $source_id}})
-        MERGE (tgt:LexicalNode {{node_id: $target_id}})
-          ON CREATE SET tgt.name = $target_name, tgt.node_type = 'external',
-                        tgt.tenant_id = $tenant_id, tgt.repo_id = $repo_id,
-                        tgt.confidence = $confidence, tgt.source = $source
-        MERGE (src)-[r:{rel_type} {{edge_id: $edge_id}}]->(tgt)
-        SET r.file = $file, r.line = $line,
-            r.confidence = $confidence, r.source = $source,
-            r.rationale = $rationale
-        """
-        async with self._driver.session() as session:
-            await session.run(
+
+        def _write() -> None:
+            cypher = f"""
+            MATCH (src:LexicalNode {{node_id: $source_id}})
+            MERGE (tgt:LexicalNode {{node_id: $target_id}})
+              ON CREATE SET tgt.name = $target_name, tgt.node_type = 'external',
+                            tgt.tenant_id = $tenant_id, tgt.repo_id = $repo_id,
+                            tgt.confidence = $confidence, tgt.source = $source
+            MERGE (src)-[r:{rel_type} {{edge_id: $edge_id}}]->(tgt)
+            SET r.file = $file, r.line = $line,
+                r.confidence = $confidence, r.source = $source,
+                r.rationale = $rationale
+            """
+            self._conn.cypher(
                 cypher,
-                source_id=source_id,
-                target_id=target_id,
-                target_name=target_name,
-                tenant_id=tenant_id,
-                repo_id=repo_id,
-                edge_id=edge_id,
-                file=file,
-                line=line,
-                confidence=confidence,
-                source=source,
-                rationale=rationale,
+                {
+                    "source_id": source_id,
+                    "target_id": target_id,
+                    "target_name": target_name,
+                    "tenant_id": tenant_id,
+                    "repo_id": repo_id,
+                    "edge_id": edge_id,
+                    "file": file,
+                    "line": line,
+                    "confidence": confidence,
+                    "source": source,
+                    "rationale": rationale,
+                },
             )
+
+        await asyncio.to_thread(_write)
 
     @property
     def backend_name(self) -> str:
-        return "neo4j"
+        return "graphqlite"
 
     @property
     def raw_query_language(self) -> str:
         return "cypher"
 
 
-def serialize_node_props(node) -> dict[str, Any]:
-    """Convert a LexicalNode to a dict suitable for Neo4j MERGE.
+def serialize_node_props(node: Any) -> dict[str, Any]:
+    """Convert a LexicalNode to a dict suitable for GraphQLite MERGE.
 
     Args:
         node: A LexicalNode instance.
@@ -261,8 +313,8 @@ def serialize_node_props(node) -> dict[str, Any]:
     }
 
 
-def serialize_edge_props(edge) -> dict[str, Any]:
-    """Convert a GraphEdge to a dict suitable for Neo4j MERGE.
+def serialize_edge_props(edge: Any) -> dict[str, Any]:
+    """Convert a GraphEdge to a dict suitable for GraphQLite MERGE.
 
     Args:
         edge: A GraphEdge instance.

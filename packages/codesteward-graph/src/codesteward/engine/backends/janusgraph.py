@@ -9,10 +9,10 @@ JanusGraph property graph mapping:
   - Properties   → vertex/edge properties matching the Neo4j schema
 """
 
+import contextlib
 from typing import Any
 
 import structlog
-
 from codesteward.engine.backends.base import GraphBackend
 
 log = structlog.get_logger()
@@ -48,10 +48,8 @@ class JanusGraphBackend(GraphBackend):
 
     async def close(self) -> None:
         if self._connection is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._connection.close()
-            except Exception:
-                pass
 
     # ── Write operations ─────────────────────────────────────────────────
 
@@ -60,7 +58,6 @@ class JanusGraphBackend(GraphBackend):
             return 0
 
         from gremlin_python.process.graph_traversal import __
-        from gremlin_python.process.traversal import T
 
         g = self._g
         for node in nodes:
@@ -149,6 +146,8 @@ class JanusGraphBackend(GraphBackend):
                     f"unknown query_type '{query_type}'; "
                     f"valid: lexical, referential, semantic, dependency, {self.raw_query_language}"
                 )
+
+        return []  # unreachable — all cases return or raise
 
     def _query_lexical(
         self, tenant_id: str, repo_id: str, filter_str: str, limit: int

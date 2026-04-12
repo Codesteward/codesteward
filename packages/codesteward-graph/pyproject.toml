@@ -51,6 +51,8 @@ graph-rust   = ["tree-sitter>=0.21", "tree-sitter-rust>=0.21"]
 graph-php    = ["tree-sitter>=0.21", "tree-sitter-php>=0.21"]
 # JanusGraph backend via Gremlin (Apache TinkerPop)
 janusgraph   = ["gremlinpython>=3.7"]
+# GraphQLite backend (embedded SQLite graph — local dev)
+graphqlite   = ["graphqlite>=0.4"]
 # All 14 languages at once
 graph-all = [
     "codesteward-graph[graph]",

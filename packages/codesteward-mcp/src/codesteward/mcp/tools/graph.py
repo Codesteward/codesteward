@@ -59,6 +59,17 @@ def _make_backend(cfg: McpConfig) -> GraphBackend | None:
             log.error("janusgraph_backend_init_failed", error=str(exc))
             return None
 
+    if cfg.graph_backend == "graphqlite":
+        try:
+            backend = get_backend("graphqlite", db_path=cfg.graphqlite_db_path)
+            if not backend.is_connected():
+                log.warning("graphqlite_not_connected")
+                return None
+            return backend
+        except Exception as exc:
+            log.error("graphqlite_backend_init_failed", error=str(exc))
+            return None
+
     # Default: Neo4j
     if not cfg.neo4j_available:
         return None
@@ -190,8 +201,9 @@ async def tool_codebase_graph_query(
         return str(yaml.safe_dump({
             "stub": True,
             "reason": (
-                "Graph backend not configured — set NEO4J_PASSWORD (for Neo4j) "
-                "or GRAPH_BACKEND=janusgraph (for JanusGraph)"
+                "Graph backend not configured — set NEO4J_PASSWORD (for Neo4j), "
+                "GRAPH_BACKEND=janusgraph (for JanusGraph), or "
+                "GRAPH_BACKEND=graphqlite (for embedded SQLite graph)"
             ),
             "query_type": query_type,
             "filter": query,

@@ -36,7 +36,7 @@ class McpConfig(BaseSettings):
     graph_backend: str = Field(
         "neo4j",
         alias="GRAPH_BACKEND",
-        description="Graph database backend: 'neo4j' or 'janusgraph'",
+        description="Graph database backend: 'neo4j', 'janusgraph', or 'graphqlite'",
     )
 
     # ── Neo4j (optional) ─────────────────────────────────────────────────────
@@ -49,6 +49,17 @@ class McpConfig(BaseSettings):
         "ws://localhost:8182/gremlin",
         alias="JANUSGRAPH_URL",
         description="Gremlin Server WebSocket URL for JanusGraph",
+    )
+
+    # ── GraphQLite (embedded SQLite graph — local dev) ────────────────────────
+    graphqlite_db_path: str = Field(
+        "",
+        alias="GRAPHQLITE_DB_PATH",
+        description=(
+            "Path to the GraphQLite SQLite database file.  Defaults to "
+            "~/.codesteward/graph.db when GRAPH_BACKEND=graphqlite and this "
+            "is left empty."
+        ),
     )
 
     # ── Default tenant / repo for single-user local deployments ──────────────
@@ -85,10 +96,17 @@ class McpConfig(BaseSettings):
         return self.graph_backend == "janusgraph"
 
     @property
+    def graphqlite_available(self) -> bool:
+        """True when GraphQLite is the selected backend."""
+        return self.graph_backend == "graphqlite"
+
+    @property
     def graph_available(self) -> bool:
         """True when any graph backend is configured and usable."""
         if self.graph_backend == "janusgraph":
             return True  # JanusGraph has no mandatory auth
+        if self.graph_backend == "graphqlite":
+            return True  # Embedded — always available
         return self.neo4j_available
 
 

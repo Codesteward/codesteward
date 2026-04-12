@@ -113,9 +113,12 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
             "codebase_graph_query will return non-empty results.  An empty result "
             "from a query does not mean the code has no symbols — it may mean the "
             "graph has not been built yet.\n\n"
-            "BACKENDS: The server supports Neo4j (default) and JanusGraph "
-            "(set GRAPH_BACKEND=janusgraph). Named query templates work identically "
-            "on both. Raw query passthrough uses the backend's native language."
+            "BACKENDS: The server supports Neo4j (default), JanusGraph "
+            "(set GRAPH_BACKEND=janusgraph), and GraphQLite for local dev "
+            "(set GRAPH_BACKEND=graphqlite — embedded SQLite, no server needed). "
+            "Named query templates work identically on all backends. Raw query "
+            "passthrough uses Cypher for Neo4j and GraphQLite, or Gremlin for "
+            "JanusGraph."
         ),
     )
 

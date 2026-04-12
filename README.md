@@ -12,7 +12,7 @@
 
 <p align="center">
   <strong>Structural code graph server for AI agents.</strong><br>
-  Parse any repository into a queryable graph (Neo4j or JanusGraph) via tree-sitter AST — and expose it as an MCP tool interface your AI agent can call directly.
+  Parse any repository into a queryable graph via tree-sitter AST — and expose it as an MCP tool interface your AI agent can call directly. Supports Neo4j, JanusGraph, or GraphQLite (embedded SQLite — zero setup for local dev).
 </p>
 
 ---
@@ -34,7 +34,7 @@ Rather than scanning files repeatedly, the agent queries a pre-built graph — c
 
 | Tool | Description |
 | ---- | ----------- |
-| `graph_rebuild` | Parse a repository and write the structural graph to Neo4j or JanusGraph (or run in stub mode without a graph backend) |
+| `graph_rebuild` | Parse a repository and write the structural graph to the configured backend (Neo4j, JanusGraph, or GraphQLite) or run in stub mode |
 | `codebase_graph_query` | Query via named templates (`lexical`, `referential`, `semantic`, `dependency`) or raw passthrough (`cypher` / `gremlin`) |
 | `graph_augment` | Add agent-inferred relationships (confidence < 1.0) back into the graph |
 | `graph_status` | Return metadata: node/edge counts, last build time, Neo4j connectivity |
@@ -47,7 +47,7 @@ Rather than scanning files repeatedly, the agent queries a pre-built graph — c
 One-time setup. Works across every repository on your machine without any per-project config.
 Supports **Claude Code** and **OpenAI Codex CLI**.
 
-**Prerequisites:** [uv](https://docs.astral.sh/uv/) · Neo4j 5+ or JanusGraph 1.0+ running locally · *(optional)* `codesteward-taint` on `PATH`
+**Prerequisites:** [uv](https://docs.astral.sh/uv/) · A graph backend: Neo4j 5+, JanusGraph 1.0+, or GraphQLite (no server needed) · *(optional)* `codesteward-taint` on `PATH`
 
 #### Claude Code
 
@@ -83,6 +83,16 @@ Claude Code spawns the MCP server as a subprocess — no Docker, no volume mount
 ```
 
 Add `janusgraph` to the extras: `"codesteward-mcp[graph-all,janusgraph]"`.
+
+**GraphQLite alternative (embedded — no server needed)** — the simplest option for local dev. Replace the `env` block with:
+
+```json
+      "env": {
+        "GRAPH_BACKEND": "graphqlite"
+      }
+```
+
+Add `graphqlite` to the extras: `"codesteward-mcp[graph-all,graphqlite]"`. The graph persists to `~/.codesteward/graph.db` by default; set `GRAPHQLITE_DB_PATH` to override. No Docker, no database server — just `uvx` and go.
 
 **2. Add the global instruction file at `~/.claude/CLAUDE.md`**
 
@@ -121,7 +131,7 @@ mcp_servers:
       NEO4J_PASSWORD: "your-neo4j-password"
 ```
 
-For JanusGraph, replace the `env` block with `GRAPH_BACKEND: "janusgraph"` and `JANUSGRAPH_URL: "ws://localhost:8182/gremlin"`, and add the `janusgraph` extra to the args.
+For JanusGraph, replace the `env` block with `GRAPH_BACKEND: "janusgraph"` and `JANUSGRAPH_URL: "ws://localhost:8182/gremlin"`, and add the `janusgraph` extra to the args. For GraphQLite (no server), use `GRAPH_BACKEND: "graphqlite"` and add the `graphqlite` extra.
 
 **2. Add the global instruction file at `~/AGENTS.md`**
 
@@ -162,22 +172,27 @@ No `.mcp.json`, no per-project `CLAUDE.md` / `AGENTS.md`, no repeated configurat
 
 ---
 
-### Zero-install — stdio via uvx (stub mode, no persistence)
+### Zero-install — stdio via uvx with GraphQLite (persistent, no server)
 
-No Docker, no Neo4j, no pre-install. Add this to your MCP client config (Claude Code, Cursor, Windsurf, etc.):
+No Docker, no database server, no pre-install. Add this to your MCP client config (Claude Code, Cursor, Windsurf, etc.):
 
 ```json
 {
   "mcpServers": {
     "codesteward-graph": {
       "command": "uvx",
-      "args": ["codesteward-mcp[graph-all]", "--transport", "stdio"]
+      "args": ["codesteward-mcp[graph-all,graphqlite]", "--transport", "stdio"],
+      "env": {
+        "GRAPH_BACKEND": "graphqlite"
+      }
     }
   }
 }
 ```
 
-Requires [uv](https://docs.astral.sh/uv/). `uvx` downloads and caches the package on first run. The graph is rebuilt each session (no Neo4j persistence).
+Requires [uv](https://docs.astral.sh/uv/). `uvx` downloads and caches the package on first run. The graph persists to `~/.codesteward/graph.db` across sessions — no database server needed.
+
+To run without any persistence (stub mode), omit `graphqlite` from the extras and the `env` block entirely.
 
 ### Docker + Neo4j — persistent graph
 
@@ -243,9 +258,12 @@ uv pip install "codesteward-mcp[graph-php]"      # PHP
 
 # JanusGraph backend (alternative to Neo4j)
 uv pip install "codesteward-mcp[graph-all,janusgraph]"
+
+# GraphQLite backend (embedded SQLite — no server needed)
+uv pip install "codesteward-mcp[graph-all,graphqlite]"
 ```
 
-Requires Python 3.12+. Neo4j 5+ or JanusGraph 1.0+ is optional — the server runs in stub mode without a graph backend.
+Requires Python 3.12+. A graph backend (Neo4j 5+, JanusGraph 1.0+, or GraphQLite) is optional — the server runs in stub mode without one. GraphQLite is recommended for local development as it requires no external services.
 
 ## Configuration
 
@@ -257,11 +275,12 @@ Priority: **CLI flags > env vars > YAML file > defaults**.
 | Transport | `TRANSPORT` | `sse` | `sse`, `http`, or `stdio` |
 | Host | `HOST` | `0.0.0.0` | HTTP bind host |
 | Port | `PORT` | `3000` | HTTP bind port |
-| Graph backend | `GRAPH_BACKEND` | `neo4j` | `neo4j` or `janusgraph` |
+| Graph backend | `GRAPH_BACKEND` | `neo4j` | `neo4j`, `janusgraph`, or `graphqlite` |
 | Neo4j URI | `NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection URI |
 | Neo4j user | `NEO4J_USER` | `neo4j` | Neo4j username |
 | Neo4j password | `NEO4J_PASSWORD` | *(empty)* | Leave empty for stub mode |
 | JanusGraph URL | `JANUSGRAPH_URL` | `ws://localhost:8182/gremlin` | Gremlin Server WebSocket URL |
+| GraphQLite DB path | `GRAPHQLITE_DB_PATH` | `~/.codesteward/graph.db` | SQLite database file path |
 | Default tenant | `DEFAULT_TENANT_ID` | `local` | Tenant namespace |
 | Default repo | `DEFAULT_REPO_ID` | *(empty)* | Repo ID |
 | Default repo path | `DEFAULT_REPO_PATH` | `/repos/project` | Server-side path for `graph_rebuild` |

@@ -45,6 +45,8 @@ graph      = ["codesteward-graph[graph]"]
 graph-all  = ["codesteward-graph[graph-all]"]
 # JanusGraph backend (alternative to Neo4j)
 janusgraph = ["codesteward-graph[janusgraph]"]
+# GraphQLite backend (embedded SQLite graph — local dev, no server needed)
+graphqlite = ["codesteward-graph[graphqlite]"]
 
 [tool.uv.sources]
 codesteward-graph = { workspace = true }
