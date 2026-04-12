@@ -11,6 +11,53 @@ Both packages share a version number and are always released together.
 
 ## [Unreleased]
 
+### Added — codesteward-graph
+
+- **Graph backend abstraction layer** (`engine/backends/`): new `GraphBackend` ABC with a
+  unified async interface for node/edge writes, named queries, and raw query passthrough.
+  All tool functions are now backend-agnostic.
+- **JanusGraph backend** (`backends/janusgraph.py`): Apache 2.0 licensed alternative to Neo4j.
+  Connects via Gremlin (Apache TinkerPop `gremlinpython>=3.7`). Named query templates
+  (`lexical`, `referential`, `semantic`, `dependency`) reimplemented in Gremlin. Raw query
+  passthrough uses Gremlin instead of Cypher.
+- **GraphQLite backend** (`backends/graphqlite.py`): embedded SQLite-based graph database
+  (`graphqlite>=0.4`) — no server needed, ideal for local dev via `uvx`. Speaks Cypher
+  (same templates as Neo4j). Database defaults to `~/.codesteward/graph.db`; override with
+  `GRAPHQLITE_DB_PATH`.
+- Neo4j backend extracted into `backends/neo4j.py` (same Cypher queries, now behind the
+  `GraphBackend` interface).
+- `get_backend()` factory in `backends/__init__.py` dispatches by `GRAPH_BACKEND` value.
+- New optional dependency extras: `janusgraph` (gremlinpython) and `graphqlite` (graphqlite).
+
+### Added — codesteward-mcp
+
+- `GRAPH_BACKEND` environment variable to select the graph backend: `neo4j` (default),
+  `janusgraph`, or `graphqlite`.
+- `JANUSGRAPH_URL` environment variable for the Gremlin Server WebSocket URL.
+- `GRAPHQLITE_DB_PATH` environment variable for the SQLite database file path.
+- `gremlin` raw query type in `codebase_graph_query` for JanusGraph raw Gremlin passthrough.
+  Cypher/Gremlin mismatch is rejected with a clear error.
+- `docker-compose.janusgraph.yml` — drop-in JanusGraph stack (BerkeleyDB JE + Lucene,
+  single-node, no external Cassandra/HBase required).
+- `docker-compose.neo4j.yml` — renamed from the previous `docker-compose.yml` for clarity.
+- Docker image now installs the `janusgraph` extra by default.
+- New optional dependency extras on `codesteward-mcp`: `janusgraph` and `graphqlite`
+  (re-exported from `codesteward-graph`).
+- Global setup templates: Claude Code (`templates/global-claude-code/`) and OpenAI Codex
+  (`templates/global-codex/`) with CLAUDE.md, skill file, settings snippet, and AGENTS.md.
+
+### Changed — codesteward-mcp
+
+- Tool response fields renamed: `neo4j_connected` → `backend_connected`; new
+  `graph_backend` field in `graph_rebuild` and `graph_status` responses.
+- `_make_async_driver()` replaced by `_make_backend()` — returns a `GraphBackend` instance
+  (or `None` for stub mode) instead of a raw Neo4j driver.
+- `GraphBuilder` now accepts a `backend` parameter (the `GraphBackend` instance) instead of
+  `neo4j_driver`.
+- Cypher query templates moved from inline constants in `tools/graph.py` into each backend's
+  `query_named()` implementation.
+- Server instructions updated to describe all three backends and the `gremlin` query type.
+
 ---
 
 ## [0.3.0] — 2026-03-20
