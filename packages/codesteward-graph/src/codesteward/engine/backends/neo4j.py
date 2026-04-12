@@ -236,7 +236,7 @@ class Neo4jBackend(GraphBackend):
         return "cypher"
 
 
-def serialize_node_props(node) -> dict[str, Any]:
+def serialize_node_props(node: Any) -> dict[str, Any]:
     """Convert a LexicalNode to a dict suitable for Neo4j MERGE.
 
     Args:
@@ -261,7 +261,7 @@ def serialize_node_props(node) -> dict[str, Any]:
     }
 
 
-def serialize_edge_props(edge) -> dict[str, Any]:
+def serialize_edge_props(edge: Any) -> dict[str, Any]:
     """Convert a GraphEdge to a dict suitable for Neo4j MERGE.
 
     Args:

@@ -38,6 +38,9 @@ ignore = ["E501"]
 python_version = "3.12"
 strict = true
 ignore_missing_imports = true
+mypy_path = "packages/codesteward-graph/src:packages/codesteward-mcp/src"
+namespace_packages = true
+explicit_package_bases = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

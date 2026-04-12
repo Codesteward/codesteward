@@ -4,13 +4,15 @@ Provides a unified interface for graph storage backends (Neo4j, JanusGraph,
 GraphQLite) so that the rest of the codebase is backend-agnostic.
 """
 
+from typing import Any
+
 from codesteward.engine.backends.base import GraphBackend
 from codesteward.engine.backends.neo4j import Neo4jBackend
 
 __all__ = ["GraphBackend", "Neo4jBackend", "get_backend"]
 
 
-def get_backend(backend_type: str, **kwargs) -> GraphBackend:
+def get_backend(backend_type: str, **kwargs: Any) -> GraphBackend:
     """Factory for graph backends.
 
     Args:

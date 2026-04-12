@@ -2,6 +2,7 @@
 
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,7 +23,7 @@ from codesteward.mcp.tools.graph import (
 class TestToolGraphRebuild:
     async def test_stub_mode_no_neo4j(self, cfg: McpConfig, tmp_path: Path) -> None:
         """Full rebuild in stub mode (no Neo4j) returns YAML summary."""
-        cfg = McpConfig(
+        cfg = McpConfig(  # type: ignore[call-arg]
             neo4j_password="",
             workspace_base=str(tmp_path),
             default_tenant_id="t1",
@@ -60,14 +61,14 @@ class TestToolGraphRebuild:
 
     async def test_incremental_mode(self, cfg: McpConfig, tmp_path: Path) -> None:
         """changed_files triggers incremental mode."""
-        cfg = McpConfig(
+        cfg = McpConfig(  # type: ignore[call-arg]
             neo4j_password="",
             workspace_base=str(tmp_path),
             default_tenant_id="t1",
             default_repo_id="r1",
         )
 
-        mock_summary: dict = {"files_parsed": 1, "nodes": {"total": 2}, "edges": {"total": 1}}
+        mock_summary: dict[str, Any] = {"files_parsed": 1, "nodes": {"total": 2}, "edges": {"total": 1}}
 
         with patch("codesteward.mcp.tools.graph.GraphBuilder") as MockBuilder:
             instance = MockBuilder.return_value
@@ -86,7 +87,7 @@ class TestToolGraphRebuild:
 
     async def test_error_returns_yaml_error(self, cfg: McpConfig, tmp_path: Path) -> None:
         """When GraphBuilder raises, the tool returns a YAML error dict."""
-        cfg = McpConfig(
+        cfg = McpConfig(  # type: ignore[call-arg]
             neo4j_password="",
             workspace_base=str(tmp_path),
             default_tenant_id="t1",
@@ -115,7 +116,7 @@ class TestToolGraphRebuild:
 # ---------------------------------------------------------------------------
 
 
-def _mock_neo4j_backend(records=None):
+def _mock_neo4j_backend(records: list[dict[str, Any]] | None = None) -> MagicMock:
     """Create a mock Neo4j backend for testing."""
     backend = MagicMock()
     backend.is_connected.return_value = True
@@ -128,7 +129,7 @@ def _mock_neo4j_backend(records=None):
     return backend
 
 
-def _mock_janusgraph_backend(records=None):
+def _mock_janusgraph_backend(records: list[dict[str, Any]] | None = None) -> MagicMock:
     """Create a mock JanusGraph backend for testing."""
     backend = MagicMock()
     backend.is_connected.return_value = True
@@ -503,7 +504,7 @@ class TestToolGraphAugment:
 class TestToolGraphStatus:
     async def test_stub_mode_no_neo4j(self, cfg: McpConfig, tmp_path: Path) -> None:
         """Returns status with backend_connected=False when no backend."""
-        cfg = McpConfig(
+        cfg = McpConfig(  # type: ignore[call-arg]
             neo4j_password="",
             workspace_base=str(tmp_path),
             default_tenant_id="t1",
@@ -519,7 +520,7 @@ class TestToolGraphStatus:
 
     async def test_reads_workspace_metadata(self, cfg: McpConfig, tmp_path: Path) -> None:
         """Reads last_build / node count from workspace graph_build.yaml."""
-        cfg = McpConfig(
+        cfg = McpConfig(  # type: ignore[call-arg]
             neo4j_password="",
             workspace_base=str(tmp_path),
             default_tenant_id="t1",

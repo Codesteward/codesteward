@@ -108,6 +108,7 @@ class GraphQLiteBackend(GraphBackend):
     async def write_nodes(self, nodes: list[dict[str, Any]]) -> int:
         if not self._conn or not nodes:
             return 0
+        conn = self._conn
 
         def _write() -> int:
             cypher = """
@@ -115,7 +116,7 @@ class GraphQLiteBackend(GraphBackend):
             MERGE (node:LexicalNode {node_id: n.node_id})
             SET node += n
             """
-            self._conn.cypher(cypher, {"nodes": nodes})
+            conn.cypher(cypher, {"nodes": nodes})
             return len(nodes)
 
         return await asyncio.to_thread(_write)
@@ -123,6 +124,7 @@ class GraphQLiteBackend(GraphBackend):
     async def write_edges(self, edges_by_type: dict[str, list[dict[str, Any]]]) -> int:
         if not self._conn or not edges_by_type:
             return 0
+        conn = self._conn
 
         def _write() -> int:
             total = 0
@@ -136,7 +138,7 @@ class GraphQLiteBackend(GraphBackend):
                 MERGE (src)-[r:{rel_type} {{edge_id: e.edge_id}}]->(tgt)
                 SET r.file = e.file, r.line = e.line
                 """
-                self._conn.cypher(cypher, {"edges": typed_edges})
+                conn.cypher(cypher, {"edges": typed_edges})
                 total += len(typed_edges)
             return total
 
@@ -147,9 +149,10 @@ class GraphQLiteBackend(GraphBackend):
     ) -> None:
         if not self._conn:
             return
+        conn = self._conn
 
         def _delete() -> None:
-            self._conn.cypher(
+            conn.cypher(
                 """
                 MATCH (n:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id,
                                       file: $file})
@@ -178,9 +181,10 @@ class GraphQLiteBackend(GraphBackend):
             )
         if not self._conn:
             return []
+        conn = self._conn
 
         def _query() -> list[dict[str, Any]]:
-            result = self._conn.cypher(
+            result = conn.cypher(
                 template,
                 {
                     "tenant_id": tenant_id,
@@ -189,7 +193,7 @@ class GraphQLiteBackend(GraphBackend):
                     "limit": limit,
                 },
             )
-            return result.to_list()
+            return result.to_list()  # type: ignore[no-any-return]
 
         return await asyncio.to_thread(_query)
 
@@ -200,20 +204,22 @@ class GraphQLiteBackend(GraphBackend):
     ) -> list[dict[str, Any]]:
         if not self._conn:
             return []
+        conn = self._conn
 
         def _query() -> list[dict[str, Any]]:
-            result = self._conn.cypher(query, params if params else None)
-            return result.to_list()
+            result = conn.cypher(query, params if params else None)
+            return result.to_list()  # type: ignore[no-any-return]
 
         return await asyncio.to_thread(_query)
 
     async def count_nodes(self, tenant_id: str, repo_id: str) -> int | None:
         if not self._conn:
             return None
+        conn = self._conn
         try:
 
             def _count() -> int | None:
-                result = self._conn.cypher(
+                result = conn.cypher(
                     """
                     MATCH (n:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
                     RETURN count(n) AS node_count
@@ -246,6 +252,7 @@ class GraphQLiteBackend(GraphBackend):
     ) -> None:
         if not self._conn:
             return
+        conn = self._conn
         rel_type = edge_type.upper()
 
         def _write() -> None:
@@ -260,7 +267,7 @@ class GraphQLiteBackend(GraphBackend):
                 r.confidence = $confidence, r.source = $source,
                 r.rationale = $rationale
             """
-            self._conn.cypher(
+            conn.cypher(
                 cypher,
                 {
                     "source_id": source_id,

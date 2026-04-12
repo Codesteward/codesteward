@@ -43,6 +43,21 @@ from codesteward.engine.parsers.typescript import TypeScriptParser  # noqa: F401
 
 log = structlog.get_logger()
 
+__all__ = [
+    "GraphBuilder",
+    "GraphWriter",
+    "MultiLanguageParser",
+    "Neo4jWriter",
+    "PackageJsonParser",
+    # Re-exported from parsers for backward compatibility
+    "GraphEdge",
+    "LexicalNode",
+    "ParseResult",
+    "JavaParser",
+    "PythonParser",
+    "TypeScriptParser",
+]
+
 # ---------------------------------------------------------------------------
 # Directories that are never parsed (build artifacts, vendored code, etc.)
 # ---------------------------------------------------------------------------
@@ -479,6 +494,7 @@ class GraphBuilder:
                 ``neo4j_driver`` if both are provided.
         """
         self._pkg_parser = PackageJsonParser()
+        self._writer: GraphWriter | Neo4jWriter
         if backend is not None:
             self._writer = GraphWriter(backend)
         else:

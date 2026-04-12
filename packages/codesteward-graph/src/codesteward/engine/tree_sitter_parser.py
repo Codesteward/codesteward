@@ -17,6 +17,8 @@ Usage (unchanged from before the refactor)::
 from codesteward.engine.parsers._ast_utils import is_available  # noqa: F401
 from codesteward.engine.parsers.base import GraphEdge, LexicalNode, ParseResult  # noqa: F401
 
+__all__ = ["TreeSitterParser", "is_available", "GraphEdge", "LexicalNode", "ParseResult"]
+
 
 class TreeSitterParser:
     """Backward-compat wrapper. Delegates to per-language AST parsers via the registry."""

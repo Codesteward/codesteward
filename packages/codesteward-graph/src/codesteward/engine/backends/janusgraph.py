@@ -155,6 +155,7 @@ class JanusGraphBackend(GraphBackend):
         from gremlin_python.process.graph_traversal import __
         from gremlin_python.process.traversal import TextP
 
+        assert self._g is not None
         g = self._g
         t = g.V().has_label("LexicalNode") \
             .has("tenant_id", tenant_id) \
@@ -167,7 +168,7 @@ class JanusGraphBackend(GraphBackend):
             )
 
         t = t.order().by("file").by("line_start")
-        results = t.limit(limit).project(
+        results: list[dict[str, Any]] = t.limit(limit).project(
             "type", "name", "file", "line_start", "line_end", "language", "is_async"
         ).by(__.values("node_type")) \
             .by(__.values("name")) \
@@ -186,6 +187,7 @@ class JanusGraphBackend(GraphBackend):
         from gremlin_python.process.graph_traversal import __
         from gremlin_python.process.traversal import TextP
 
+        assert self._g is not None
         g = self._g
         edge_labels = ["CALLS", "IMPORTS", "EXTENDS", "GUARDED_BY", "PROTECTED_BY"]
 
@@ -199,7 +201,7 @@ class JanusGraphBackend(GraphBackend):
                 __.has("file", TextP.containing(filter_str)),
             )
 
-        results = t.outE(*edge_labels).as_("e") \
+        results: list[dict[str, Any]] = t.outE(*edge_labels).as_("e") \
             .inV().as_("tgt") \
             .select("e").outV().as_("src") \
             .select("src", "e", "tgt") \
@@ -225,6 +227,7 @@ class JanusGraphBackend(GraphBackend):
         from gremlin_python.process.graph_traversal import __
         from gremlin_python.process.traversal import TextP
 
+        assert self._g is not None
         g = self._g
         t = g.V().has_label("LexicalNode") \
             .has("tenant_id", tenant_id) \
@@ -236,7 +239,7 @@ class JanusGraphBackend(GraphBackend):
                 __.has("file", TextP.containing(filter_str)),
             )
 
-        results = t.outE("TAINT_FLOW") \
+        results: list[dict[str, Any]] = t.outE("TAINT_FLOW") \
             .has("sanitized", False).as_("e") \
             .inV().as_("tgt") \
             .select("e").outV().as_("src") \
@@ -265,6 +268,7 @@ class JanusGraphBackend(GraphBackend):
         from gremlin_python.process.graph_traversal import __
         from gremlin_python.process.traversal import TextP
 
+        assert self._g is not None
         g = self._g
         t = g.V().has_label("LexicalNode") \
             .has("tenant_id", tenant_id) \
@@ -326,7 +330,7 @@ class JanusGraphBackend(GraphBackend):
         if not self._g:
             return None
         try:
-            result = self._g.V().has_label("LexicalNode") \
+            result: int = self._g.V().has_label("LexicalNode") \
                 .has("tenant_id", tenant_id) \
                 .has("repo_id", repo_id) \
                 .count().next()
