@@ -63,7 +63,11 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 _IGNORED_DIRS = frozenset(
-    ["node_modules", "dist", "build", ".next", ".nuxt", "coverage", "__pycache__", ".git"]
+    [
+        "node_modules", "dist", "build", ".next", ".nuxt", "coverage", "__pycache__", ".git",
+        ".venv", "venv", ".env", "env", ".tox", ".nox", ".mypy_cache", ".ruff_cache",
+        ".pytest_cache", "site-packages", ".eggs", "*.egg-info",
+    ]
 )
 
 
@@ -634,6 +638,10 @@ class GraphBuilder:
         else:
             dep_edges = []
 
+        # Cross-file call resolution: rewrite CALLS edges whose target_id
+        # is a bare callee name to point at the actual node_id.
+        self._resolve_call_targets(all_nodes, all_edges)
+
         # Write to Neo4j (no-op if driver is None)
         nodes_written = await self._writer.write_nodes(all_nodes)
         edges_written = await self._writer.write_edges(all_edges)
@@ -705,6 +713,56 @@ class GraphBuilder:
         )
 
     # -- Private helpers -----------------------------------------------------
+
+    @staticmethod
+    def _resolve_call_targets(
+        nodes: list[LexicalNode],
+        edges: list[GraphEdge],
+    ) -> None:
+        """Rewrite CALLS edges whose target_id is a bare callee name.
+
+        After all files are parsed, build a ``fn_name -> node_id`` map from the
+        collected nodes and update any CALLS edge whose ``target_id`` matches a
+        known function or class name.  Unresolved targets are left as-is (they
+        become ``external`` placeholder nodes in the graph backend).
+
+        When a callee name is ambiguous (multiple nodes share the same short
+        name), the edge is left unresolved rather than guessing wrong.
+
+        Args:
+            nodes: All LexicalNode objects collected during the parse phase.
+            edges: All GraphEdge objects — CALLS edges are mutated in place.
+        """
+        # Build name -> node_id map (only functions and classes can be call targets)
+        name_to_id: dict[str, str | None] = {}
+        for node in nodes:
+            if node.node_type not in ("function", "class"):
+                continue
+            if node.name in name_to_id:
+                # Ambiguous — mark as None so we don't guess
+                name_to_id[node.name] = None
+            else:
+                name_to_id[node.name] = node.node_id
+
+        resolved = 0
+        for edge in edges:
+            if edge.edge_type != "calls":
+                continue
+            # target_id is already a proper node_id (starts with a known prefix)
+            if edge.target_id.startswith(("fn:", "cls:", "f:", "var:", "n:")):
+                continue
+            # Try to resolve the bare callee name
+            target_node_id = name_to_id.get(edge.target_id)
+            if target_node_id is not None:
+                edge.target_id = target_node_id
+                # Recompute edge_id since target changed
+                edge.edge_id = GraphEdge.make_id(
+                    edge.source_id, edge.edge_type, edge.target_id
+                )
+                resolved += 1
+
+        if resolved:
+            log.info("call_targets_resolved", resolved=resolved)
 
     def _collect_files(self, root: Path, language: str) -> list[Path]:
         """Walk the repository and collect all parseable source files.

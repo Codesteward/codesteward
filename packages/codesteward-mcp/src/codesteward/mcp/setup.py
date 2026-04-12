@@ -35,8 +35,13 @@ _SERVER_NAME = "codesteward-graph"
 # ── Embedded content ────────────────────────────────────────────────────────
 
 
-def _mcp_server_config(backend: str) -> dict[str, Any]:
-    """Build the MCP server JSON config for the given backend."""
+def _mcp_server_config(backend: str, tool: str = "") -> dict[str, Any]:
+    """Build the MCP server JSON config for the given backend.
+
+    Args:
+        backend: Graph backend name (graphqlite, neo4j, janusgraph).
+        tool: Tool name — Claude Code requires ``"type": "stdio"``.
+    """
     base: dict[str, Any] = {
         "command": "uvx",
         "args": [
@@ -49,6 +54,9 @@ def _mcp_server_config(backend: str) -> dict[str, Any]:
             "stdio",
         ],
     }
+    # Claude Code requires the "type" field in MCP server config
+    if tool == "Claude Code":
+        base["type"] = "stdio"
 
     if backend == "neo4j":
         base["env"] = {
@@ -298,11 +306,12 @@ def _detect_tools() -> dict[str, dict[str, Any]]:
     """
     tools: dict[str, dict[str, Any]] = {}
 
-    # Claude Code
+    # Claude Code — MCP servers live in ~/.claude.json (root-level config),
+    # NOT ~/.claude/settings.json (which is for other settings like model/effort).
     claude_dir = _home() / ".claude"
     if claude_dir.is_dir() or shutil.which("claude"):
         tools["Claude Code"] = {
-            "config_path": claude_dir / "settings.json",
+            "config_path": _home() / ".claude.json",
             "config_key": "mcpServers",
             "instructions_path": claude_dir / "CLAUDE.md",
             "instructions_content": _CLAUDE_MD_SECTION,
@@ -604,10 +613,10 @@ def run_setup(backend: str = "graphqlite") -> None:
 
     print(f"  Detected tools: {', '.join(tools.keys())}\n")
 
-    server_config = _mcp_server_config(backend)
     actions: list[str] = []
 
     for tool_name, meta in tools.items():
+        server_config = _mcp_server_config(backend, tool=tool_name)
         config_path: Path = meta["config_path"]
         config_format = meta.get("config_format", "json")
         config_key: str = meta.get("config_key", "mcpServers")

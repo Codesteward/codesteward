@@ -86,6 +86,7 @@ If you prefer to configure manually, add this to your MCP client config:
 {
   "mcpServers": {
     "codesteward-graph": {
+      "type": "stdio",
       "command": "uvx",
       "args": [
         "--from", "codesteward-mcp[graph-all,graphqlite]",
@@ -96,9 +97,12 @@ If you prefer to configure manually, add this to your MCP client config:
 }
 ```
 
+> **Note:** Claude Code requires `"type": "stdio"` in the server config. Other tools
+> (Cursor, Cline) don't need it.
+
 | Tool | Config file |
 | ---- | ----------- |
-| Claude Code | `~/.claude/settings.json` (under `mcpServers`) |
+| Claude Code | `~/.claude.json` (under `mcpServers`) |
 | Cursor | `~/.cursor/mcp.json` |
 | Cline | `cline_mcp_settings.json` in VS Code globalStorage |
 | Codex CLI | `~/.codex/config.yaml` (under `mcp_servers`) |

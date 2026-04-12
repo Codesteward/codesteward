@@ -32,7 +32,7 @@ The setup command:
 
 | Tool | Config file | Instructions file |
 | ---- | ----------- | ----------------- |
-| Claude Code | `~/.claude/settings.json` | `~/.claude/CLAUDE.md` |
+| Claude Code | `~/.claude.json` | `~/.claude/CLAUDE.md` |
 | Cursor | `~/.cursor/mcp.json` | — |
 | Cline | `cline_mcp_settings.json` (VS Code globalStorage) | — |
 | Gemini CLI | `~/.gemini/settings.json` | — |

@@ -11,6 +11,42 @@ Both packages share a version number and are always released together.
 
 ## [Unreleased]
 
+### Fixed — codesteward-graph
+
+- **`.venv` and Python tool directories not excluded from graph builds** — `_IGNORED_DIRS`
+  now includes `.venv`, `venv`, `.env`, `env`, `.tox`, `.nox`, `.mypy_cache`,
+  `.ruff_cache`, `.pytest_cache`, `site-packages`, and `.eggs`. Previously these
+  directories were parsed, causing recursion errors on large vendored files and polluting
+  the graph with thousands of library symbols.
+- **Cross-file CALLS targets unresolved** — added `_resolve_call_targets()` post-parse pass
+  to `GraphBuilder.build_graph()`. After all files are parsed, a `fn_name → node_id` map
+  is built and CALLS edge `target_id` values are rewritten from bare callee names to proper
+  node IDs. Ambiguous names (multiple definitions) are left unresolved. Typically resolves
+  ~30% of all CALLS edges in a codebase.
+- **GraphQLite: referential query returned NULL target properties** — GraphQLite's
+  relationship traversal `(src)-[r]->(tgt)` does not resolve target node properties.
+  Worked around by storing `target_name` and `target_id` as edge properties during
+  `write_edges`, and reading them from the edge in the referential query template.
+- **GraphQLite: UNWIND ON CREATE SET did not persist target node properties** — replaced
+  batch UNWIND target-node creation with per-node literal MERGE, consistent with the
+  existing per-edge literal approach.
+- **GraphQLite: dependency query SQL error** — `MATCH` with mixed `$param` and literal
+  values in property patterns triggers a GraphQLite SQL translation bug
+  (`no such column: _prop__gql_default_alias_0.value`). Moved `node_type = 'file'`
+  from the MATCH pattern to the WHERE clause.
+
+### Fixed — codesteward-mcp
+
+- **`codesteward-mcp setup` wrote Claude Code MCP config to wrong file** — was writing to
+  `~/.claude/settings.json` but Claude Code reads MCP servers from `~/.claude.json`.
+  Also added the required `"type": "stdio"` field to the server config for Claude Code.
+
+### Changed — Known issues — GraphQLite backend
+
+- The referential query NULL target issue from 0.4.1 is now resolved via edge-stored
+  target metadata.
+- The dependency query SQL error from 0.4.1 is now resolved via WHERE clause workaround.
+
 ---
 
 ## [0.4.1] — 2026-04-12
@@ -37,16 +73,15 @@ Both packages share a version number and are always released together.
 
 ### Known issues — GraphQLite backend
 
-These are upstream bugs in the `graphqlite` package (≤ 0.4.3) that remain unresolved:
+These are upstream bugs in the `graphqlite` package (≤ 0.4.3) that are **worked around**:
 
-- Target node properties (`to_name`, `to_file`, `to_node_type`) return NULL in
-  referential query results — the `(src)-[r]->(tgt)` pattern match finds edges but
-  `tgt.*` properties are inaccessible
-- `dependency` named query fails with `SQL prepare failed: no such column` — the
-  `RETURN DISTINCT` + `DEPENDS_ON` edge type triggers a Cypher-to-SQL translation error
+- ~~Target node properties return NULL in referential query results~~ — **resolved** in
+  [Unreleased] by storing target metadata as edge properties
+- ~~`dependency` named query fails with SQL prepare error~~ — **resolved** in
+  [Unreleased] by moving literal filters from MATCH to WHERE clause
 - Node count mismatch between `graph_rebuild` reported total and `count_nodes` result —
   external reference nodes created during edge writing inflate the DB count beyond the
-  parser-reported total
+  parser-reported total (expected behaviour, not a bug)
 
 ---
 

@@ -32,14 +32,15 @@ _CYPHER_TEMPLATES: dict[str, str] = {
         ORDER BY n.file, n.line_start
         LIMIT $limit
     """,
+    # GraphQLite traversal does not resolve target node properties, so we
+    # read target_name and target_id from edge properties instead.
     "referential": """
         MATCH (src:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
               -[r:CALLS|IMPORTS|EXTENDS|GUARDED_BY|PROTECTED_BY]->(tgt)
         WHERE ($filter = '' OR src.name CONTAINS $filter OR src.file CONTAINS $filter)
         RETURN src.name AS from_name, src.file AS from_file,
                type(r) AS edge_type,
-               tgt.name AS to_name, tgt.file AS to_file,
-               tgt.node_type AS to_node_type,
+               r.target_name AS to_name, r.target_id AS to_id,
                r.line AS line
         ORDER BY src.file, r.line
         LIMIT $limit
@@ -57,10 +58,10 @@ _CYPHER_TEMPLATES: dict[str, str] = {
         LIMIT $limit
     """,
     "dependency": """
-        MATCH (src:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id,
-                                node_type: 'file'})
+        MATCH (src:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
               -[r:DEPENDS_ON]->(pkg:LexicalNode)
-        WHERE ($filter = '' OR pkg.name CONTAINS $filter)
+        WHERE src.node_type = 'file'
+          AND ($filter = '' OR pkg.name CONTAINS $filter)
         RETURN DISTINCT pkg.name AS package, pkg.node_type AS type,
                src.file AS referenced_from
         ORDER BY pkg.name
@@ -154,42 +155,44 @@ class GraphQLiteBackend(GraphBackend):
                 # relationship properties aren't persisted.  Work around
                 # both by writing edges individually with literal values.
 
-                # Step 1: batch-MERGE any target nodes that don't exist
-                # yet (external references).  UNWIND + ON CREATE SET
-                # works for node properties.
-                targets = [
-                    {
-                        "node_id": e["target_id"],
-                        "name": e.get("target_name", ""),
-                        "tenant_id": e.get("tenant_id", ""),
-                        "repo_id": e.get("repo_id", ""),
-                    }
-                    for e in typed_edges
-                ]
-                conn.cypher(
-                    """
-                    UNWIND $targets AS t
-                    MERGE (node:LexicalNode {node_id: t.node_id})
-                    ON CREATE SET node.node_id = t.node_id,
-                        node.name = t.name, node.node_type = 'external',
-                        node.tenant_id = t.tenant_id,
-                        node.repo_id = t.repo_id
-                    """,
-                    {"targets": targets},
-                )
+                # Step 1: MERGE any target nodes that don't exist yet
+                # (external references).  Use per-node literal values
+                # because UNWIND variable refs in ON CREATE SET don't
+                # persist properties in GraphQLite.
+                seen_targets: set[str] = set()
+                for e in typed_edges:
+                    tid = e["target_id"]
+                    if tid in seen_targets:
+                        continue
+                    seen_targets.add(tid)
+                    t_id = _cypher_escape(tid)
+                    t_name = _cypher_escape(e.get("target_name", ""))
+                    t_tenant = _cypher_escape(e.get("tenant_id", ""))
+                    t_repo = _cypher_escape(e.get("repo_id", ""))
+                    conn.cypher(
+                        f'MERGE (node:LexicalNode {{node_id: "{t_id}"}}) '
+                        f'ON CREATE SET node.node_id = "{t_id}", '
+                        f'node.name = "{t_name}", node.node_type = "external", '
+                        f'node.tenant_id = "{t_tenant}", '
+                        f'node.repo_id = "{t_repo}"'
+                    )
 
-                # Step 2: create edges one at a time using literal values
+                # Step 2: create edges one at a time using literal values.
+                # Store target_name on the edge because GraphQLite's traversal
+                # pattern does not resolve target node properties.
                 for e in typed_edges:
                     src = _cypher_escape(e["source_id"])
                     tgt = _cypher_escape(e["target_id"])
                     eid = _cypher_escape(e["edge_id"])
                     f = _cypher_escape(e.get("file", ""))
                     ln = int(e.get("line") or 0)
+                    tname = _cypher_escape(e.get("target_name", ""))
                     conn.cypher(
                         f'MATCH (s:LexicalNode {{node_id: "{src}"}}) '
                         f'MATCH (t:LexicalNode {{node_id: "{tgt}"}}) '
                         f'CREATE (s)-[:{rel_type} {{edge_id: "{eid}", '
-                        f'file: "{f}", line: {ln}}}]->(t)'
+                        f'file: "{f}", line: {ln}, '
+                        f'target_name: "{tname}", target_id: "{tgt}"}}]->(t)'
                     )
                 total += len(typed_edges)
             return total

@@ -2,12 +2,13 @@
 
 ## 1. Register the MCP server globally
 
-Add this to `~/.claude/settings.json` (merge into your existing file):
+Add this to `~/.claude.json` (merge into your existing file):
 
 ```json
 {
   "mcpServers": {
     "codesteward-graph": {
+      "type": "stdio",
       "command": "uvx",
       "args": [
         "--from", "codesteward-mcp[graph-all,graphqlite]",
@@ -17,6 +18,9 @@ Add this to `~/.claude/settings.json` (merge into your existing file):
   }
 }
 ```
+
+> **Important:** Claude Code reads MCP servers from `~/.claude.json`, not
+> `~/.claude/settings.json`. The `"type": "stdio"` field is required.
 
 Claude Code spawns the MCP server as a subprocess — no Docker, no volume
 mounts, no separate process to manage. `uvx` downloads and caches the
@@ -30,6 +34,7 @@ package on first run.
 {
   "mcpServers": {
     "codesteward-graph": {
+      "type": "stdio",
       "command": "uvx",
       "args": [
         "--from", "codesteward-mcp[graph-all]",
@@ -52,6 +57,7 @@ package on first run.
 {
   "mcpServers": {
     "codesteward-graph": {
+      "type": "stdio",
       "command": "uvx",
       "args": [
         "--from", "codesteward-mcp[graph-all,janusgraph]",
