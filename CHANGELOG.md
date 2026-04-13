@@ -9,6 +9,41 @@ Both packages share a version number and are always released together.
 
 ---
 
+## [Unreleased]
+
+### Fixed — codesteward-graph
+
+- **GraphQLite: full rebuild duplicated all edges** — `write_edges` uses `CREATE` (not `MERGE`)
+  for relationship creation, so consecutive full rebuilds doubled the edge count with each run.
+  Added `delete_repo_data(tenant_id, repo_id)` to the `GraphBackend` ABC and all three
+  implementations (Neo4j, JanusGraph, GraphQLite). `GraphBuilder.build_graph()` now clears
+  existing repo data before every full (non-incremental) rebuild.
+- **Cross-file CALLS resolution 0% on codebases with shared method names** —
+  `_resolve_call_targets()` marked all ambiguous names (e.g. `parse`, defined in 13+ parsers)
+  as unresolvable. Added same-file disambiguation: when a callee name is globally ambiguous,
+  resolve to the definition in the caller's own file. This recovers intra-file method calls
+  that were previously left as unresolved external nodes.
+- **GUARDED_BY edges emitted for non-auth Python decorators** — `@property`,
+  `@staticmethod`, `@abstractmethod`, `@dataclass`, `@pytest.fixture`, and ~30 other standard
+  Python decorators were incorrectly producing `guarded_by` edges. Added `_NON_AUTH_DECORATORS`
+  blocklist to the Python parser; only actual auth decorators (`@login_required`,
+  `Depends(...)`, etc.) now emit guard edges.
+- **`build_graph` summary reported `language: typescript` for all codebases** — the `language`
+  parameter defaulted to `"typescript"` and was echoed into the summary unchanged. Added
+  `_detect_dominant_language()` which counts file-node languages and returns the most common
+  one. The summary now reflects the actual codebase language.
+
+### Added — codesteward-graph
+
+- **`PyProjectParser`** — extracts `depends_on` edges from `pyproject.toml` files, supporting
+  PEP 621 `[project.dependencies]`, `[project.optional-dependencies]`, and Poetry
+  `[tool.poetry.dependencies]`. Scans all `pyproject.toml` files in the repo tree (handles
+  uv workspaces and monorepos). Wired into `GraphBuilder.build_graph()` alongside the
+  existing `PackageJsonParser`. The `dependency` query type now returns results for Python
+  projects.
+
+---
+
 ## [0.4.2] — 2026-04-12
 
 ### Fixed — codesteward-graph

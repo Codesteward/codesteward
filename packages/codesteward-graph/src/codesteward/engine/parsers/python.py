@@ -59,6 +59,31 @@ _FASTAPI_INJECTION_TYPES: frozenset[str] = frozenset(
     {"Request", "Response", "BackgroundTasks", "WebSocket", "Session", "AsyncSession"}
 )
 
+# Python decorators that are NOT auth guards.  These are standard language,
+# testing, and framework decorators that should not produce GUARDED_BY edges.
+_NON_AUTH_DECORATORS: frozenset[str] = frozenset(
+    {
+        # Python builtins
+        "property", "staticmethod", "classmethod", "abstractmethod",
+        # dataclasses / attrs
+        "dataclass", "field", "attrs", "define",
+        # typing
+        "overload", "override", "final", "no_type_check",
+        # pydantic
+        "model_validator", "field_validator", "field_serializer",
+        "computed_field", "validate_call", "validator", "root_validator",
+        # pytest
+        "fixture", "mark", "parametrize", "skip", "skipif", "xfail",
+        # async / caching / misc
+        "asyncio", "coroutine", "wraps", "lru_cache", "cache",
+        "cached_property", "contextmanager", "asynccontextmanager",
+        # structlog / logging
+        "bind", "wrap",
+        # FastMCP / Click / Typer CLI decorators
+        "command", "group", "option", "argument", "callback",
+    }
+)
+
 
 def _path_params_from_route(path_text: str) -> set[str]:
     """Extract path parameter names from a FastAPI route pattern string.
@@ -487,7 +512,7 @@ class PythonParser(TreeSitterBase, LanguageParser):
             for child in node.children:
                 if child.type == "decorator":
                     guard_name = self._py_decorator_name(child)
-                    if guard_name:
+                    if guard_name and guard_name not in _NON_AUTH_DECORATORS:
                         _emit(source_id, guard_name, child.start_point[0] + 1)
 
         # Pattern 2: FastAPI Depends() in any function signature

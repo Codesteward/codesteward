@@ -218,6 +218,24 @@ class GraphQLiteBackend(GraphBackend):
 
         await asyncio.to_thread(_delete)
 
+    async def delete_repo_data(self, tenant_id: str, repo_id: str) -> None:
+        if not self._conn:
+            return
+        conn = self._conn
+        tid = _cypher_escape(tenant_id)
+        rid = _cypher_escape(repo_id)
+
+        def _delete() -> None:
+            conn.cypher(
+                f"""
+                MATCH (n:LexicalNode)
+                WHERE n.tenant_id = "{tid}" AND n.repo_id = "{rid}"
+                DETACH DELETE n
+                """,
+            )
+
+        await asyncio.to_thread(_delete)
+
     # ── Query operations ─────────────────────────────────────────────────
 
     async def query_named(

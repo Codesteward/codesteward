@@ -49,6 +49,7 @@ __all__ = [
     "MultiLanguageParser",
     "Neo4jWriter",
     "PackageJsonParser",
+    "PyProjectParser",
     # Re-exported from parsers for backward compatibility
     "GraphEdge",
     "LexicalNode",
@@ -108,6 +109,159 @@ class MultiLanguageParser:
 # ===========================================================================
 # Package.json dependency parser
 # ===========================================================================
+
+
+class PyProjectParser:
+    """Extracts dependency edges from pyproject.toml.
+
+    Parses ``[project.dependencies]``, ``[project.optional-dependencies]``,
+    and legacy ``[tool.poetry.dependencies]`` sections.  Produces
+    ``depends_on`` edges from the repo's pyproject.toml file node to each
+    declared package.
+    """
+
+    def parse(
+        self,
+        repo_path: Path,
+        tenant_id: str,
+        repo_id: str,
+    ) -> list[GraphEdge]:
+        """Extract dependency edges from pyproject.toml files.
+
+        Scans the repo root and immediate sub-packages for pyproject.toml
+        files (handles both single-package and workspace/monorepo layouts).
+
+        Args:
+            repo_path: Root directory of the repository.
+            tenant_id: Tenant namespace.
+            repo_id: Repository identifier.
+
+        Returns:
+            List of depends_on GraphEdges.
+        """
+        toml_files = list(repo_path.rglob("pyproject.toml"))
+        # Filter out files in ignored directories
+        toml_files = [
+            f for f in toml_files
+            if not any(part in _IGNORED_DIRS for part in f.parts)
+        ]
+
+        if not toml_files:
+            return []
+
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            try:
+                import tomli as tomllib  # type: ignore[no-redef]
+            except ModuleNotFoundError:
+                log.warning("pyproject_parse_skipped", reason="no TOML parser available")
+                return []
+
+        edges: list[GraphEdge] = []
+        seen_packages: set[str] = set()
+
+        for toml_file in toml_files:
+            try:
+                data = tomllib.loads(toml_file.read_text(encoding="utf-8"))
+            except Exception as exc:
+                log.warning(
+                    "pyproject_parse_failed", path=str(toml_file), error=str(exc)
+                )
+                continue
+
+            rel_path = str(toml_file.relative_to(repo_path))
+            root_id = LexicalNode.make_id(
+                tenant_id, repo_id, rel_path, rel_path, "file"
+            )
+
+            # PEP 621 [project.dependencies]
+            for dep_str in data.get("project", {}).get("dependencies", []):
+                pkg_name = self._parse_requirement(dep_str)
+                if pkg_name and pkg_name not in seen_packages:
+                    seen_packages.add(pkg_name)
+                    edges.append(
+                        self._make_edge(root_id, pkg_name, dep_str, tenant_id, repo_id)
+                    )
+
+            # PEP 621 [project.optional-dependencies]
+            for group_deps in (
+                data.get("project", {}).get("optional-dependencies", {}).values()
+            ):
+                for dep_str in group_deps:
+                    pkg_name = self._parse_requirement(dep_str)
+                    if pkg_name and pkg_name not in seen_packages:
+                        seen_packages.add(pkg_name)
+                        edges.append(
+                            self._make_edge(
+                                root_id, pkg_name, dep_str, tenant_id, repo_id
+                            )
+                        )
+
+            # Poetry [tool.poetry.dependencies]
+            for section in ("dependencies", "dev-dependencies"):
+                for pkg_name, version in (
+                    data.get("tool", {}).get("poetry", {}).get(section, {}).items()
+                ):
+                    if pkg_name == "python":
+                        continue
+                    if pkg_name not in seen_packages:
+                        seen_packages.add(pkg_name)
+                        ver_str = version if isinstance(version, str) else str(version)
+                        edges.append(
+                            self._make_edge(
+                                root_id, pkg_name, f"{pkg_name}{ver_str}",
+                                tenant_id, repo_id,
+                            )
+                        )
+
+        return edges
+
+    @staticmethod
+    def _parse_requirement(dep_str: str) -> str | None:
+        """Extract the package name from a PEP 508 dependency string.
+
+        Args:
+            dep_str: Dependency string, e.g. ``"requests>=2.28"`` or ``"numpy"``.
+
+        Returns:
+            Normalised package name, or None for invalid strings.
+        """
+        import re
+
+        m = re.match(r"^([A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?)", dep_str.strip())
+        return m.group(1).lower().replace("-", "_") if m else None
+
+    @staticmethod
+    def _make_edge(
+        root_id: str,
+        pkg_name: str,
+        version_str: str,
+        tenant_id: str,
+        repo_id: str,
+    ) -> GraphEdge:
+        """Build a depends_on edge for a Python package.
+
+        Args:
+            root_id: Source file node ID.
+            pkg_name: Normalised package name.
+            version_str: Full version specifier string.
+            tenant_id: Tenant namespace.
+            repo_id: Repository identifier.
+
+        Returns:
+            A ``depends_on`` GraphEdge.
+        """
+        return GraphEdge(
+            edge_id=GraphEdge.make_id(root_id, "depends_on", pkg_name),
+            edge_type="depends_on",
+            source_id=root_id,
+            target_id=pkg_name,
+            target_name=version_str.strip(),
+            file="pyproject.toml",
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+        )
 
 
 class PackageJsonParser:
@@ -448,6 +602,19 @@ class GraphWriter:
             return
         await self._backend.delete_file_nodes(tenant_id, repo_id, file_path)
 
+    async def delete_repo_data(self, tenant_id: str, repo_id: str) -> None:
+        """Delete all nodes and edges for a tenant/repo before full rebuild.
+
+        Prevents duplicate edges in backends that use CREATE instead of MERGE.
+
+        Args:
+            tenant_id: Tenant namespace.
+            repo_id: Repository identifier.
+        """
+        if not self._backend:
+            return
+        await self._backend.delete_repo_data(tenant_id, repo_id)
+
 
 # ===========================================================================
 # GraphBuilder — public interface
@@ -498,6 +665,7 @@ class GraphBuilder:
                 ``neo4j_driver`` if both are provided.
         """
         self._pkg_parser = PackageJsonParser()
+        self._pyproject_parser = PyProjectParser()
         self._writer: GraphWriter | Neo4jWriter
         if backend is not None:
             self._writer = GraphWriter(backend)
@@ -590,6 +758,10 @@ class GraphBuilder:
             incremental_files=len(incremental_files) if incremental_files else None,
         )
 
+        # For full rebuilds, clear existing data to prevent duplicate edges
+        if not is_incremental and isinstance(self._writer, GraphWriter):
+            await self._writer.delete_repo_data(tenant_id, repo_id)
+
         # Determine which files to process
         if is_incremental:
             files_to_parse = [root / f for f in (incremental_files or [])]
@@ -631,9 +803,10 @@ class GraphBuilder:
                 )
                 parse_errors.append(str(file_path))
 
-        # Dependency edges from package.json
+        # Dependency edges from package.json and pyproject.toml
         if not is_incremental:
             dep_edges = self._pkg_parser.parse(root, tenant_id, repo_id)
+            dep_edges.extend(self._pyproject_parser.parse(root, tenant_id, repo_id))
             all_edges.extend(dep_edges)
         else:
             dep_edges = []
@@ -650,12 +823,15 @@ class GraphBuilder:
         node_counts = _count_by(all_nodes, "node_type")
         edge_counts = _count_by(all_edges, "edge_type")
 
+        # Auto-detect dominant language from parsed file nodes
+        detected_language = self._detect_dominant_language(all_nodes) or language
+
         summary = {
             "status": "ok" if not parse_errors else "partial",
             "incremental": is_incremental,
             "tenant_id": tenant_id,
             "repo_id": repo_id,
-            "language": language,
+            "language": detected_language,
             "files_parsed": files_parsed,
             "parse_errors": parse_errors,
             "neo4j_connected": self._writer.is_connected(),
@@ -726,8 +902,10 @@ class GraphBuilder:
         known function or class name.  Unresolved targets are left as-is (they
         become ``external`` placeholder nodes in the graph backend).
 
-        When a callee name is ambiguous (multiple nodes share the same short
-        name), the edge is left unresolved rather than guessing wrong.
+        Resolution strategy (ordered by priority):
+          1. Unique name — only one node has that name across all files.
+          2. Same-file match — the callee name is ambiguous globally but the
+             caller's file contains exactly one definition with that name.
 
         Args:
             nodes: All LexicalNode objects collected during the parse phase.
@@ -735,14 +913,23 @@ class GraphBuilder:
         """
         # Build name -> node_id map (only functions and classes can be call targets)
         name_to_id: dict[str, str | None] = {}
+        # For ambiguous names, keep a file-scoped index: name -> {file -> node_id}
+        name_to_file_ids: dict[str, dict[str, str]] = {}
         for node in nodes:
             if node.node_type not in ("function", "class"):
                 continue
             if node.name in name_to_id:
-                # Ambiguous — mark as None so we don't guess
+                # Ambiguous — mark as None so we don't guess globally
                 name_to_id[node.name] = None
             else:
                 name_to_id[node.name] = node.node_id
+            # Always populate the file-scoped index
+            name_to_file_ids.setdefault(node.name, {})[node.file] = node.node_id
+
+        # Build edge source_id -> file mapping for file-scoped resolution
+        node_id_to_file: dict[str, str] = {
+            node.node_id: node.file for node in nodes
+        }
 
         resolved = 0
         for edge in edges:
@@ -751,15 +938,30 @@ class GraphBuilder:
             # target_id is already a proper node_id (starts with a known prefix)
             if edge.target_id.startswith(("fn:", "cls:", "f:", "var:", "n:")):
                 continue
-            # Try to resolve the bare callee name
-            target_node_id = name_to_id.get(edge.target_id)
+
+            callee_name = edge.target_id
+            target_node_id = name_to_id.get(callee_name)
+
+            # Strategy 1: unique global name
             if target_node_id is not None:
                 edge.target_id = target_node_id
-                # Recompute edge_id since target changed
                 edge.edge_id = GraphEdge.make_id(
                     edge.source_id, edge.edge_type, edge.target_id
                 )
                 resolved += 1
+                continue
+
+            # Strategy 2: same-file disambiguation for ambiguous names
+            if callee_name in name_to_file_ids:
+                caller_file = node_id_to_file.get(edge.source_id)
+                if caller_file:
+                    same_file_id = name_to_file_ids[callee_name].get(caller_file)
+                    if same_file_id is not None:
+                        edge.target_id = same_file_id
+                        edge.edge_id = GraphEdge.make_id(
+                            edge.source_id, edge.edge_type, edge.target_id
+                        )
+                        resolved += 1
 
         if resolved:
             log.info("call_targets_resolved", resolved=resolved)
@@ -785,6 +987,25 @@ class GraphBuilder:
             if path.suffix in all_exts:
                 files.append(path)
         return sorted(files)
+
+    @staticmethod
+    def _detect_dominant_language(nodes: list[LexicalNode]) -> str | None:
+        """Determine the most common language among parsed file nodes.
+
+        Args:
+            nodes: All LexicalNode objects from the parse phase.
+
+        Returns:
+            Language string of the most common language, or None if no
+            file nodes have a language set.
+        """
+        lang_counts: dict[str, int] = {}
+        for node in nodes:
+            if node.node_type == "file" and node.language:
+                lang_counts[node.language] = lang_counts.get(node.language, 0) + 1
+        if not lang_counts:
+            return None
+        return max(lang_counts, key=lang_counts.get)  # type: ignore[arg-type]
 
     def _detect_language(self, file_path: Path) -> str:
         """Map file extension to language string.

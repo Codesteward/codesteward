@@ -59,6 +59,18 @@ class GraphBackend(ABC):
             file_path: Repo-relative path of the file to remove.
         """
 
+    @abstractmethod
+    async def delete_repo_data(self, tenant_id: str, repo_id: str) -> None:
+        """Delete all nodes and edges for an entire tenant/repo.
+
+        Called before a full rebuild to prevent duplicate edges in backends
+        that use CREATE instead of MERGE for edge writes (e.g. GraphQLite).
+
+        Args:
+            tenant_id: Tenant namespace.
+            repo_id: Repository identifier.
+        """
+
     # ── Query operations ─────────────────────────────────────────────────
 
     @abstractmethod

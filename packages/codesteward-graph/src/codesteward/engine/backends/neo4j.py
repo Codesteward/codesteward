@@ -127,6 +127,16 @@ class Neo4jBackend(GraphBackend):
         async with self._driver.session() as session:
             await session.run(cypher, tenant_id=tenant_id, repo_id=repo_id, file=file_path)
 
+    async def delete_repo_data(self, tenant_id: str, repo_id: str) -> None:
+        if not self._driver:
+            return
+        cypher = """
+        MATCH (n:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
+        DETACH DELETE n
+        """
+        async with self._driver.session() as session:
+            await session.run(cypher, tenant_id=tenant_id, repo_id=repo_id)
+
     async def query_named(
         self,
         query_type: str,

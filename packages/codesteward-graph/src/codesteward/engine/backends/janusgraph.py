@@ -119,6 +119,13 @@ class JanusGraphBackend(GraphBackend):
             .has("file", file_path) \
             .drop().iterate()
 
+    async def delete_repo_data(self, tenant_id: str, repo_id: str) -> None:
+        if not self._g:
+            return
+        self._g.V().has("LexicalNode", "tenant_id", tenant_id) \
+            .has("repo_id", repo_id) \
+            .drop().iterate()
+
     # ── Query operations ─────────────────────────────────────────────────
 
     async def query_named(
