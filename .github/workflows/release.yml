@@ -1,21 +1,18 @@
-# Codesteward MCP — Release
+# Codesteward — Release
 #
-# Triggered by version tags (e.g. v0.1.0).  Pipeline:
-#   1. test          — run the full test suite (gate)
-#   2. build         — uv build both PyPI packages (artifacts)
-#   3. publish-pypi  — publish codesteward-graph, wait, publish codesteward-mcp
-#   4. build-docker  — build & push multi-arch image to ghcr.io (runs in parallel with publish-pypi)
-#   5. release       — create GitHub release, attach dist archives + Docker image reference
+# Triggered by version tags (e.g. v0.1.0). Pipeline:
+#   1. test            — run the full test suite (gate)
+#   2. build-packages  — uv build both PyPI packages (artifacts)
+#   3. publish-pypi    — publish codesteward-graph, wait, publish codesteward-mcp
+#   4. container       — build image, Trivy scan (gate), push, cosign sign, SBOM
+#   5. release         — create GitHub release with dist + SBOM + scan report
 #
 # PyPI publishing uses OIDC Trusted Publishing — no API token secret needed.
-# Configure a Trusted Publisher on PyPI for each package:
-#   PyPI → your project → Publishing → Add a new publisher
-#   Publisher: GitHub Actions
-#   Owner: bitkaio  |  Repository: codesteward-mcp  |  Workflow: release.yml  |  Environment: pypi
+# The Docker image is published to ghcr.io via GITHUB_TOKEN and signed with
+# cosign keyless (GitHub OIDC).
 #
-# The Docker image is published to ghcr.io using GITHUB_TOKEN (no extra secret).
-# Make sure the repository's "Packages" permissions allow write access:
-#   Settings → Actions → General → Workflow permissions → Read and write
+# SHA PINNING:
+#   Version tags used below; Renovate pins them to SHA on first run.
 
 name: Release
 
@@ -23,9 +20,12 @@ on:
   push:
     tags: ["v*.*.*"]
 
+permissions:
+  contents: read
+
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}   # bitkaio/codesteward-mcp
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
 
@@ -33,9 +33,18 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -52,9 +61,18 @@ jobs:
     name: Build packages
     runs-on: ubuntu-latest
     needs: test
+    permissions:
+      contents: read
 
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -73,30 +91,32 @@ jobs:
           path: packages/*/dist/
           if-no-files-found: error
 
-  # ── Publish to PyPI ───────────────────────────────────────────────────────────
+  # ── Publish to PyPI (OIDC Trusted Publisher) ─────────────────────────────────
   publish-pypi:
     name: Publish to PyPI
     runs-on: ubuntu-latest
     needs: build-packages
     environment: pypi
     permissions:
-      id-token: write   # required for OIDC Trusted Publisher authentication
+      id-token: write
 
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
       - name: Download dist artifacts
         uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/
 
-      # Publish codesteward-graph first — codesteward-mcp depends on it.
       - name: Publish codesteward-graph
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/codesteward-graph/dist/
 
-      # Give PyPI time to index codesteward-graph before the dependent package
-      # upload triggers a dependency check.
       - name: Wait for PyPI to index codesteward-graph
         run: sleep 15
 
@@ -105,33 +125,37 @@ jobs:
         with:
           packages-dir: dist/codesteward-mcp/dist/
 
-  # ── Build & push Docker image to ghcr.io ─────────────────────────────────────
-  build-docker:
-    name: Build & push Docker image
+  # ── Build, scan, push, sign container image ─────────────────────────────────
+  #
+  # Flow: build amd64 locally → Trivy scan (gates push) → build+push multi-arch
+  # with provenance → cosign keyless sign → generate SBOM → upload release assets.
+  container:
+    name: Container build, scan, sign
     runs-on: ubuntu-latest
     needs: test
     permissions:
       contents: read
       packages: write
+      id-token: write   # cosign keyless signing via OIDC
+      attestations: write
+
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Generate image tags from the git tag:
-      #   ghcr.io/bitkaio/codesteward-mcp:0.1.0
-      #   ghcr.io/bitkaio/codesteward-mcp:0.1
-      #   ghcr.io/bitkaio/codesteward-mcp:0
-      #   ghcr.io/bitkaio/codesteward-mcp:latest
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -143,7 +167,46 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest
 
-      - name: Build and push (graph-all — all 14 languages)
+      # STEP 1 — Build amd64 locally for scanning (cached for the real push)
+      - name: Build image for scan (amd64, local)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.mcp
+          push: false
+          load: true
+          tags: codesteward:scan
+          build-args: INSTALL_EXTRA=graph-all
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin v0.70.0
+          trivy --version
+
+      # STEP 2 — Scan must pass before any publish step runs
+      - name: Trivy scan (gate — HIGH/CRITICAL fails the release)
+        run: |
+          trivy image \
+            --exit-code 1 \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format json \
+            --output trivy-report.json \
+            codesteward:scan
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # STEP 3 — Real multi-arch build+push with SLSA provenance + SBOM attestation
+      - name: Build and push multi-arch
+        id: push
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -153,19 +216,65 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: INSTALL_EXTRA=graph-all
           platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # STEP 4 — cosign keyless signature
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image (keyless via GitHub OIDC)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          images=""
+          for tag in $TAGS; do
+            images+="${tag}@${DIGEST} "
+          done
+          cosign sign --yes ${images}
+
+      # STEP 5 — SBOM for release assets
+      - name: Install syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Generate SBOM from pushed image
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          syft "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}" \
+            -o cyclonedx-json > sbom.cdx.json
+
+      - name: Upload container reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-reports
+          path: |
+            trivy-report.json
+            sbom.cdx.json
+          if-no-files-found: error
 
   # ── Create GitHub release ─────────────────────────────────────────────────────
   release:
     name: Create GitHub release
     runs-on: ubuntu-latest
-    needs: [publish-pypi, build-docker]
+    needs: [publish-pypi, container]
     permissions:
       contents: write
 
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Download dist artifacts
         uses: actions/download-artifact@v4
@@ -173,22 +282,31 @@ jobs:
           name: dist
           path: dist/
 
+      - name: Download container reports
+        uses: actions/download-artifact@v4
+        with:
+          name: container-reports
+          path: container-reports/
+
       - name: Extract changelog for this version
         run: |
-          # Strip leading "v" from tag to match changelog headers (e.g. v0.3.0 → 0.3.0)
           VERSION="${GITHUB_REF_NAME#v}"
-          # Extract the section between this version's header and the next "## [" header
           awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > /tmp/release-notes.md
-          # Append Docker image section
           {
             echo ""
-            echo "## Docker image"
+            echo "## Container image"
             echo ""
             echo '```bash'
-            echo "docker pull ghcr.io/bitkaio/codesteward:${{ github.ref_name }}"
+            echo "docker pull ghcr.io/${{ github.repository }}:${GITHUB_REF_NAME#v}"
             echo '```'
             echo ""
-            echo "Full setup guide: [AGENT_SETUP.md](https://github.com/bitkaio/codesteward/blob/main/AGENT_SETUP.md)"
+            echo "Image is signed with [cosign](https://github.com/sigstore/cosign) keyless via GitHub OIDC."
+            echo "Verify with:"
+            echo '```bash'
+            echo "cosign verify ghcr.io/${{ github.repository }}:${GITHUB_REF_NAME#v} \\"
+            echo "  --certificate-identity-regexp 'https://github.com/${{ github.repository }}/.*' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
           } >> /tmp/release-notes.md
 
       - name: Create release
@@ -200,3 +318,5 @@ jobs:
             dist/codesteward-graph/dist/*.tar.gz
             dist/codesteward-mcp/dist/*.whl
             dist/codesteward-mcp/dist/*.tar.gz
+            container-reports/trivy-report.json
+            container-reports/sbom.cdx.json

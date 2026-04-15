@@ -1,7 +1,17 @@
-# Codesteward MCP — CI
+# Codesteward — CI
 #
 # Runs on every push and pull request (excluding version tags, which go through
-# the release workflow).  Executes the test suite and linters.
+# the release workflow).
+#
+# SHA PINNING:
+#   Actions below use version tags. Renovate is configured in renovate.json with
+#   `pinDigests: true` and will convert each tag to a full commit SHA on its
+#   first run. After that, the SHAs are Renovate-maintained.
+#
+# HARDENING:
+#   Every job starts with step-security/harden-runner (audit mode) and uses
+#   `persist-credentials: false` on checkout. Permissions are set to the minimum
+#   required per job.
 
 name: CI
 
@@ -11,19 +21,31 @@ on:
     tags-ignore: ["v*"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
 
   # ── Tests ────────────────────────────────────────────────────────────────────
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.12", "3.13"]
 
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -46,10 +68,20 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # TODO: remove continue-on-error once ruff+mypy are clean on `main`.
     continue-on-error: true
 
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -63,3 +95,315 @@ jobs:
 
       - name: Mypy
         run: uv run mypy packages/codesteward-graph/src packages/codesteward-mcp/src
+
+  # ── Security: Semgrep + Hadolint ────────────────────────────────────────────
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Semgrep
+        run: python -m pip install --no-cache-dir semgrep
+
+      - name: Run Semgrep
+        run: |
+          semgrep scan \
+            --config p/python \
+            --config p/security-audit \
+            --config p/owasp-top-ten \
+            --config p/docker \
+            --error \
+            --severity ERROR \
+            --metrics=off \
+            --disable-version-check \
+            --timeout 300 \
+            .
+
+      - name: Hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile.mcp
+          failure-threshold: warning
+
+  # ── zizmor: GitHub Actions workflow static analysis ─────────────────────────
+  workflow-security:
+    name: Workflow security (zizmor)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # to upload SARIF
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install zizmor
+        run: python -m pip install --no-cache-dir zizmor
+
+      - name: Run zizmor (SARIF)
+        run: zizmor --format sarif .github/workflows/ > zizmor.sarif
+        continue-on-error: true
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
+
+      - name: Run zizmor (fail on HIGH)
+        run: zizmor --min-severity high .github/workflows/
+
+  # ── Dependency review (PR only) ─────────────────────────────────────────────
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+  # ── Conventional commits (PR only) ──────────────────────────────────────────
+  conventional-commits:
+    name: Conventional commits
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate commit messages
+        uses: webiny/action-conventional-commits@v1.3.0
+
+  # ── License headers (PR only) ───────────────────────────────────────────────
+  license-headers:
+    name: License headers
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # TODO: remove continue-on-error once all source files carry Apache 2.0 headers.
+    continue-on-error: true
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check Apache 2.0 headers
+        uses: apache/skywalking-eyes/header@v0.6.0
+        with:
+          mode: check
+
+  # ── Markdown lint (PR only) ─────────────────────────────────────────────────
+  markdown-lint:
+    name: Markdown lint
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    continue-on-error: true
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: markdownlint
+        uses: DavidAnson/markdownlint-cli2-action@v18
+        with:
+          globs: "**/*.md"
+
+  # ── CodeQL (push to main only) ──────────────────────────────────────────────
+  codeql:
+    name: CodeQL
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          queries: security-extended,security-and-quality
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:python
+
+  # ── Python dependency vulnerability scan (push to main only) ────────────────
+  vulncheck:
+    name: pip-audit
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Export locked requirements
+        run: |
+          uv export --frozen --no-hashes --format requirements-txt --all-packages \
+            --extra graph-all > requirements-locked.txt
+
+      - name: Install pip-audit
+        run: python -m pip install --no-cache-dir pip-audit
+
+      - name: Run pip-audit
+        run: pip-audit -r requirements-locked.txt --disable-pip
+
+  # ── Container build + Trivy scan (push to main only, no push) ───────────────
+  container-scan:
+    name: Container scan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (amd64, local)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.mcp
+          push: false
+          load: true
+          tags: codesteward:scan
+          build-args: INSTALL_EXTRA=graph-all
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin v0.70.0
+          trivy --version
+
+      - name: Trivy scan (fail on HIGH/CRITICAL)
+        run: |
+          trivy image \
+            --exit-code 1 \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format json \
+            --output trivy-report.json \
+            codesteward:scan
+
+      - name: Install syft
+        if: always()
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Generate SBOM
+        if: always()
+        run: syft codesteward:scan -o cyclonedx-json > sbom.cdx.json
+
+      - name: Upload scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-scan-reports
+          path: |
+            trivy-report.json
+            sbom.cdx.json
+          if-no-files-found: error

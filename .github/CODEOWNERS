@@ -1,0 +1,29 @@
+# CODEOWNERS — required reviewers for sensitive paths.
+#
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
+#
+# These paths require explicit review before merge. The repository's branch
+# protection rules must have "Require review from Code Owners" enabled for
+# this to have effect.
+
+# Default owner: anything not matched below
+*                           @Codesteward/maintainers
+
+# CI/CD pipelines — highest blast radius, require security + maintainer review
+/.github/workflows/         @Codesteward/maintainers @Codesteward/security
+/.github/dco.yml            @Codesteward/maintainers @Codesteward/security
+/.github/CODEOWNERS         @Codesteward/maintainers @Codesteward/security
+
+# Supply-chain and security config
+/SECURITY.md                @Codesteward/security
+/renovate.json              @Codesteward/maintainers @Codesteward/security
+/.licenserc.yaml            @Codesteward/maintainers
+
+# Container build
+/Dockerfile*                @Codesteward/maintainers @Codesteward/security
+/docker-compose*.yml        @Codesteward/maintainers
+
+# Release tooling
+/CHANGELOG.md               @Codesteward/maintainers
+/pyproject.toml             @Codesteward/maintainers
+/uv.lock                    @Codesteward/maintainers

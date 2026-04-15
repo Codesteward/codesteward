@@ -1,0 +1,56 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "security:openssf-scorecard",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":timezone(Europe/Berlin)"
+  ],
+  "schedule": ["before 06:00 on monday"],
+  "prConcurrentLimit": 8,
+  "prHourlyLimit": 4,
+  "labels": ["dependencies"],
+  "rangeStrategy": "bump",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 06:00 on monday"]
+  },
+  "vulnerabilityAlerts": {
+    "labels": ["security", "dependencies"],
+    "automerge": false,
+    "schedule": ["at any time"]
+  },
+  "packageRules": [
+    {
+      "description": "Pin all GitHub Actions to a full commit SHA, keep the version as a comment.",
+      "matchManagers": ["github-actions"],
+      "pinDigests": true,
+      "extends": ["helpers:pinGitHubActionDigests"]
+    },
+    {
+      "description": "Group non-major GitHub Actions bumps into one PR",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "github-actions (non-major)"
+    },
+    {
+      "description": "Group Python minor/patch bumps",
+      "matchManagers": ["pep621", "pip_requirements", "poetry"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "python (non-major)"
+    },
+    {
+      "description": "Group Docker base-image minor/patch bumps",
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "docker base images"
+    },
+    {
+      "description": "Raise awareness on major upgrades — never auto-merge",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["dependencies", "major"]
+    }
+  ]
+}
