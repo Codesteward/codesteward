@@ -13,6 +13,20 @@ Both packages share a version number and are always released together.
 
 ---
 
+## [0.5.1] — 2026-04-15
+
+### Fixed — codesteward-mcp
+
+- **stdio transport: server crashed on first tool call** — `structlog.configure()` was
+  called without an explicit `logger_factory`, so structlog defaulted to
+  `PrintLoggerFactory(file=sys.stdout)`. Any `log.warning` / `log.error` on a tool path
+  (e.g. `_make_backend` when a backend was missing) wrote structlog output to stdout,
+  which is the JSON-RPC channel in stdio mode. The MCP client received non-JSON and
+  dropped the connection with `JSON Parse error: Unable to parse JSON string`. Fix:
+  route structlog to `sys.stderr` via `PrintLoggerFactory(file=sys.stderr)`.
+
+---
+
 ## [0.5.0] — 2026-04-15
 
 ### Added — codesteward-graph

@@ -60,6 +60,7 @@ def _configure_logging(level: str) -> None:
         wrapper_class=structlog.make_filtering_bound_logger(
             getattr(logging, level.upper(), logging.INFO)
         ),
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
     )
 
 
