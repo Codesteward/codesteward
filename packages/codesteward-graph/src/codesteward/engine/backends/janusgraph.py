@@ -61,9 +61,14 @@ class JanusGraphBackend(GraphBackend):
 
         g = self._g
         for node in nodes:
-            t = g.V().has("LexicalNode", "node_id", node["node_id"]).fold().coalesce(
-                __.unfold(),
-                __.addV("LexicalNode").property("node_id", node["node_id"]),
+            t = (
+                g.V()
+                .has("LexicalNode", "node_id", node["node_id"])
+                .fold()
+                .coalesce(
+                    __.unfold(),
+                    __.addV("LexicalNode").property("node_id", node["node_id"]),
+                )
             )
             for key, val in node.items():
                 if key != "node_id" and val is not None:
@@ -94,18 +99,17 @@ class JanusGraphBackend(GraphBackend):
                 ).iterate()
 
                 # Upsert edge
-                g.V().has("LexicalNode", "node_id", edge["source_id"]).as_("src") \
-                    .V().has("LexicalNode", "node_id", edge["target_id"]).as_("tgt") \
-                    .coalesce(
-                        __.select("src").outE(rel_type).where(
-                            __.has("edge_id", edge["edge_id"])
-                        ),
-                        __.select("src").addE(rel_type).to(__.select("tgt"))
-                        .property("edge_id", edge["edge_id"]),
-                    ) \
-                    .property("file", edge.get("file", "")) \
-                    .property("line", edge.get("line")) \
-                    .iterate()
+                g.V().has("LexicalNode", "node_id", edge["source_id"]).as_("src").V().has(
+                    "LexicalNode", "node_id", edge["target_id"]
+                ).as_("tgt").coalesce(
+                    __.select("src").outE(rel_type).where(__.has("edge_id", edge["edge_id"])),
+                    __.select("src")
+                    .addE(rel_type)
+                    .to(__.select("tgt"))
+                    .property("edge_id", edge["edge_id"]),
+                ).property("file", edge.get("file", "")).property(
+                    "line", edge.get("line")
+                ).iterate()
 
                 total += 1
 
@@ -114,17 +118,16 @@ class JanusGraphBackend(GraphBackend):
     async def delete_file_nodes(self, tenant_id: str, repo_id: str, file_path: str) -> None:
         if not self._g:
             return
-        self._g.V().has("LexicalNode", "tenant_id", tenant_id) \
-            .has("repo_id", repo_id) \
-            .has("file", file_path) \
-            .drop().iterate()
+        self._g.V().has("LexicalNode", "tenant_id", tenant_id).has("repo_id", repo_id).has(
+            "file", file_path
+        ).drop().iterate()
 
     async def delete_repo_data(self, tenant_id: str, repo_id: str) -> None:
         if not self._g:
             return
-        self._g.V().has("LexicalNode", "tenant_id", tenant_id) \
-            .has("repo_id", repo_id) \
-            .drop().iterate()
+        self._g.V().has("LexicalNode", "tenant_id", tenant_id).has(
+            "repo_id", repo_id
+        ).drop().iterate()
 
     # ── Query operations ─────────────────────────────────────────────────
 
@@ -164,9 +167,7 @@ class JanusGraphBackend(GraphBackend):
 
         assert self._g is not None
         g = self._g
-        t = g.V().has_label("LexicalNode") \
-            .has("tenant_id", tenant_id) \
-            .has("repo_id", repo_id)
+        t = g.V().has_label("LexicalNode").has("tenant_id", tenant_id).has("repo_id", repo_id)
 
         if filter_str:
             t = t.or_(
@@ -175,16 +176,18 @@ class JanusGraphBackend(GraphBackend):
             )
 
         t = t.order().by("file").by("line_start")
-        results: list[dict[str, Any]] = t.limit(limit).project(
-            "type", "name", "file", "line_start", "line_end", "language", "is_async"
-        ).by(__.values("node_type")) \
-            .by(__.values("name")) \
-            .by(__.values("file")) \
-            .by(__.coalesce(__.values("line_start"), __.constant(None))) \
-            .by(__.coalesce(__.values("line_end"), __.constant(None))) \
-            .by(__.coalesce(__.values("language"), __.constant(None))) \
-            .by(__.coalesce(__.values("is_async"), __.constant(False))) \
+        results: list[dict[str, Any]] = (
+            t.limit(limit)
+            .project("type", "name", "file", "line_start", "line_end", "language", "is_async")
+            .by(__.values("node_type"))
+            .by(__.values("name"))
+            .by(__.values("file"))
+            .by(__.coalesce(__.values("line_start"), __.constant(None)))
+            .by(__.coalesce(__.values("line_end"), __.constant(None)))
+            .by(__.coalesce(__.values("language"), __.constant(None)))
+            .by(__.coalesce(__.values("is_async"), __.constant(False)))
             .toList()
+        )
 
         return results
 
@@ -198,33 +201,46 @@ class JanusGraphBackend(GraphBackend):
         g = self._g
         edge_labels = ["CALLS", "IMPORTS", "EXTENDS", "GUARDED_BY", "PROTECTED_BY"]
 
-        t = g.V().has_label("LexicalNode") \
-            .has("tenant_id", tenant_id) \
+        edges = (
+            g.V()
+            .has_label("LexicalNode")
+            .has("tenant_id", tenant_id)
             .has("repo_id", repo_id)
+            .outE(*edge_labels)
+        )
 
         if filter_str:
-            t = t.or_(
-                __.has("name", TextP.containing(filter_str)),
-                __.has("file", TextP.containing(filter_str)),
+            # Match source name/file OR edge target_name so a single filter
+            # covers both outgoing (src.name = X) and incoming (target = X).
+            edges = edges.where(
+                __.or_(
+                    __.outV().has("name", TextP.containing(filter_str)),
+                    __.outV().has("file", TextP.containing(filter_str)),
+                    __.has("target_name", TextP.containing(filter_str)),
+                )
             )
 
-        results: list[dict[str, Any]] = t.outE(*edge_labels).as_("e") \
-            .inV().as_("tgt") \
-            .select("e").outV().as_("src") \
-            .select("src", "e", "tgt") \
+        results: list[dict[str, Any]] = (
+            edges.as_("e")
+            .inV()
+            .as_("tgt")
+            .select("e")
+            .outV()
+            .as_("src")
+            .select("src", "e", "tgt")
             .project(
-                "from_name", "from_file", "edge_type",
-                "to_name", "to_file", "to_node_type", "line"
-            ) \
-            .by(__.select("src").values("name")) \
-            .by(__.select("src").values("file")) \
-            .by(__.select("e").label()) \
-            .by(__.select("tgt").values("name")) \
-            .by(__.select("tgt").coalesce(__.values("file"), __.constant(""))) \
-            .by(__.select("tgt").coalesce(__.values("node_type"), __.constant("external"))) \
-            .by(__.select("e").coalesce(__.values("line"), __.constant(None))) \
-            .limit(limit) \
+                "from_name", "from_file", "edge_type", "to_name", "to_file", "to_node_type", "line"
+            )
+            .by(__.select("src").values("name"))
+            .by(__.select("src").values("file"))
+            .by(__.select("e").label())
+            .by(__.select("tgt").values("name"))
+            .by(__.select("tgt").coalesce(__.values("file"), __.constant("")))
+            .by(__.select("tgt").coalesce(__.values("node_type"), __.constant("external")))
+            .by(__.select("e").coalesce(__.values("line"), __.constant(None)))
+            .limit(limit)
             .toList()
+        )
 
         return results
 
@@ -236,9 +252,7 @@ class JanusGraphBackend(GraphBackend):
 
         assert self._g is not None
         g = self._g
-        t = g.V().has_label("LexicalNode") \
-            .has("tenant_id", tenant_id) \
-            .has("repo_id", repo_id)
+        t = g.V().has_label("LexicalNode").has("tenant_id", tenant_id).has("repo_id", repo_id)
 
         if filter_str:
             t = t.or_(
@@ -246,26 +260,39 @@ class JanusGraphBackend(GraphBackend):
                 __.has("file", TextP.containing(filter_str)),
             )
 
-        results: list[dict[str, Any]] = t.outE("TAINT_FLOW") \
-            .has("sanitized", False).as_("e") \
-            .inV().as_("tgt") \
-            .select("e").outV().as_("src") \
-            .select("src", "e", "tgt") \
+        results: list[dict[str, Any]] = (
+            t.outE("TAINT_FLOW")
+            .has("sanitized", False)
+            .as_("e")
+            .inV()
+            .as_("tgt")
+            .select("e")
+            .outV()
+            .as_("src")
+            .select("src", "e", "tgt")
             .project(
-                "source_name", "source_file", "sink_name", "sink_file",
-                "cwe", "hops", "level", "framework"
-            ) \
-            .by(__.select("src").values("name")) \
-            .by(__.select("src").values("file")) \
-            .by(__.select("tgt").values("name")) \
-            .by(__.select("tgt").values("file")) \
-            .by(__.select("e").coalesce(__.values("cwe"), __.constant(None))) \
-            .by(__.select("e").coalesce(__.values("hops"), __.constant(None))) \
-            .by(__.select("e").coalesce(__.values("level"), __.constant(None))) \
-            .by(__.select("e").coalesce(__.values("framework"), __.constant(None))) \
-            .order().by(__.select("e").values("hops")) \
-            .limit(limit) \
+                "source_name",
+                "source_file",
+                "sink_name",
+                "sink_file",
+                "cwe",
+                "hops",
+                "level",
+                "framework",
+            )
+            .by(__.select("src").values("name"))
+            .by(__.select("src").values("file"))
+            .by(__.select("tgt").values("name"))
+            .by(__.select("tgt").values("file"))
+            .by(__.select("e").coalesce(__.values("cwe"), __.constant(None)))
+            .by(__.select("e").coalesce(__.values("hops"), __.constant(None)))
+            .by(__.select("e").coalesce(__.values("level"), __.constant(None)))
+            .by(__.select("e").coalesce(__.values("framework"), __.constant(None)))
+            .order()
+            .by(__.select("e").values("hops"))
+            .limit(limit)
             .toList()
+        )
 
         return results
 
@@ -277,22 +304,31 @@ class JanusGraphBackend(GraphBackend):
 
         assert self._g is not None
         g = self._g
-        t = g.V().has_label("LexicalNode") \
-            .has("tenant_id", tenant_id) \
-            .has("repo_id", repo_id) \
+        t = (
+            g.V()
+            .has_label("LexicalNode")
+            .has("tenant_id", tenant_id)
+            .has("repo_id", repo_id)
             .has("node_type", "file")
+        )
 
-        results = t.outE("DEPENDS_ON").inV().as_("pkg") \
-            .select("pkg")
+        results = t.outE("DEPENDS_ON").inV().as_("pkg").select("pkg")
 
         if filter_str:
             results = results.has("name", TextP.containing(filter_str))
 
-        results = results.path().by(__.values("file")).by(__.label()).by(
-            __.project("package", "type").by(__.values("name")).by(
-                __.coalesce(__.values("node_type"), __.constant("external"))
+        results = (
+            results.path()
+            .by(__.values("file"))
+            .by(__.label())
+            .by(
+                __.project("package", "type")
+                .by(__.values("name"))
+                .by(__.coalesce(__.values("node_type"), __.constant("external")))
             )
-        ).limit(limit).toList()
+            .limit(limit)
+            .toList()
+        )
 
         # Flatten path results
         rows: list[dict[str, Any]] = []
@@ -300,11 +336,13 @@ class JanusGraphBackend(GraphBackend):
             objects = path.objects if hasattr(path, "objects") else path
             if len(objects) >= 3:
                 pkg_info = objects[2]
-                rows.append({
-                    "package": pkg_info.get("package", ""),
-                    "type": pkg_info.get("type", "external"),
-                    "referenced_from": objects[0],
-                })
+                rows.append(
+                    {
+                        "package": pkg_info.get("package", ""),
+                        "type": pkg_info.get("type", "external"),
+                        "referenced_from": objects[0],
+                    }
+                )
 
         return rows
 
@@ -337,10 +375,14 @@ class JanusGraphBackend(GraphBackend):
         if not self._g:
             return None
         try:
-            result: int = self._g.V().has_label("LexicalNode") \
-                .has("tenant_id", tenant_id) \
-                .has("repo_id", repo_id) \
-                .count().next()
+            result: int = (
+                self._g.V()
+                .has_label("LexicalNode")
+                .has("tenant_id", tenant_id)
+                .has("repo_id", repo_id)
+                .count()
+                .next()
+            )
             return result
         except Exception:
             return None
@@ -382,20 +424,23 @@ class JanusGraphBackend(GraphBackend):
         ).iterate()
 
         # Upsert edge
-        t = g.V().has("LexicalNode", "node_id", source_id).as_("src") \
-            .V().has("LexicalNode", "node_id", target_id).as_("tgt") \
+        t = (
+            g.V()
+            .has("LexicalNode", "node_id", source_id)
+            .as_("src")
+            .V()
+            .has("LexicalNode", "node_id", target_id)
+            .as_("tgt")
             .coalesce(
-                __.select("src").outE(rel_type).where(
-                    __.has("edge_id", edge_id)
-                ),
-                __.select("src").addE(rel_type).to(__.select("tgt"))
-                .property("edge_id", edge_id),
-            ) \
-            .property("file", file) \
-            .property("line", line) \
-            .property("confidence", confidence) \
-            .property("source", source) \
+                __.select("src").outE(rel_type).where(__.has("edge_id", edge_id)),
+                __.select("src").addE(rel_type).to(__.select("tgt")).property("edge_id", edge_id),
+            )
+            .property("file", file)
+            .property("line", line)
+            .property("confidence", confidence)
+            .property("source", source)
             .property("rationale", rationale)
+        )
         t.iterate()
 
     @property

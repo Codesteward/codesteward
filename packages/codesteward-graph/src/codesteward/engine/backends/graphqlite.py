@@ -28,87 +28,78 @@ log = structlog.get_logger()
 _VALID_QUERY_TYPES = ("lexical", "referential", "semantic", "dependency")
 
 
-def _build_lexical_query(
-    tenant_id: str, repo_id: str, filter_str: str, limit: int
-) -> str:
+def _build_lexical_query(tenant_id: str, repo_id: str, filter_str: str, limit: int) -> str:
     tid = _cypher_escape(tenant_id)
     rid = _cypher_escape(repo_id)
     f = _cypher_escape(filter_str)
     filter_clause = ""
     if filter_str:
-        filter_clause = (
-            f'AND (n.name CONTAINS "{f}" OR n.file CONTAINS "{f}")'
-        )
+        filter_clause = f'AND (n.name CONTAINS "{f}" OR n.file CONTAINS "{f}")'
     return (
-        f'MATCH (n:LexicalNode) '
+        f"MATCH (n:LexicalNode) "
         f'WHERE n.tenant_id = "{tid}" AND n.repo_id = "{rid}" '
-        f'{filter_clause} '
-        f'RETURN n.node_type AS type, n.name AS name, n.file AS file, '
-        f'n.line_start AS line_start, n.line_end AS line_end, '
-        f'n.language AS language, n.is_async AS is_async '
-        f'ORDER BY n.file, n.line_start '
-        f'LIMIT {int(limit)}'
+        f"{filter_clause} "
+        f"RETURN n.node_type AS type, n.name AS name, n.file AS file, "
+        f"n.line_start AS line_start, n.line_end AS line_end, "
+        f"n.language AS language, n.is_async AS is_async "
+        f"ORDER BY n.file, n.line_start "
+        f"LIMIT {int(limit)}"
     )
 
 
-def _build_referential_query(
-    tenant_id: str, repo_id: str, filter_str: str, limit: int
-) -> str:
+def _build_referential_query(tenant_id: str, repo_id: str, filter_str: str, limit: int) -> str:
     tid = _cypher_escape(tenant_id)
     rid = _cypher_escape(repo_id)
     f = _cypher_escape(filter_str)
     filter_clause = ""
     if filter_str:
+        # Match both source and target names so a single filter returns
+        # outgoing (src.name = X) and incoming (r.target_name = X) edges.
         filter_clause = (
-            f'AND (src.name CONTAINS "{f}" OR src.file CONTAINS "{f}")'
+            f'AND (src.name CONTAINS "{f}" OR src.file CONTAINS "{f}" '
+            f'OR r.target_name CONTAINS "{f}")'
         )
     return (
-        f'MATCH (src:LexicalNode)'
-        f'-[r:CALLS|IMPORTS|EXTENDS|GUARDED_BY|PROTECTED_BY]->(tgt) '
+        f"MATCH (src:LexicalNode)"
+        f"-[r:CALLS|IMPORTS|EXTENDS|GUARDED_BY|PROTECTED_BY]->(tgt) "
         f'WHERE src.tenant_id = "{tid}" AND src.repo_id = "{rid}" '
-        f'{filter_clause} '
-        f'RETURN src.name AS from_name, src.file AS from_file, '
-        f'type(r) AS edge_type, '
-        f'r.target_name AS to_name, r.target_id AS to_id, '
-        f'r.line AS line '
-        f'ORDER BY src.file, r.line '
-        f'LIMIT {int(limit)}'
+        f"{filter_clause} "
+        f"RETURN src.name AS from_name, src.file AS from_file, "
+        f"type(r) AS edge_type, "
+        f"r.target_name AS to_name, r.target_id AS to_id, "
+        f"r.line AS line "
+        f"ORDER BY src.file, r.line "
+        f"LIMIT {int(limit)}"
     )
 
 
-def _build_semantic_query(
-    tenant_id: str, repo_id: str, filter_str: str, limit: int
-) -> str:
+def _build_semantic_query(tenant_id: str, repo_id: str, filter_str: str, limit: int) -> str:
     tid = _cypher_escape(tenant_id)
     rid = _cypher_escape(repo_id)
     f = _cypher_escape(filter_str)
     filter_clause = ""
     if filter_str:
-        filter_clause = (
-            f'AND (src.name CONTAINS "{f}" OR src.file CONTAINS "{f}")'
-        )
+        filter_clause = f'AND (src.name CONTAINS "{f}" OR src.file CONTAINS "{f}")'
     # Use r.sanitized = 0 instead of NOT r.sanitized — SQLite stores
     # booleans as integers and GraphQLite may not handle NOT <int> correctly.
     # Read sink info from edge properties (target_name / target_id) because
     # GraphQLite traversal does not resolve target node properties.
     return (
-        f'MATCH (src:LexicalNode)'
-        f'-[r:TAINT_FLOW]->(tgt) '
+        f"MATCH (src:LexicalNode)"
+        f"-[r:TAINT_FLOW]->(tgt) "
         f'WHERE src.tenant_id = "{tid}" AND src.repo_id = "{rid}" '
-        f'AND r.sanitized = 0 '
-        f'{filter_clause} '
-        f'RETURN src.name AS source_name, src.file AS source_file, '
-        f'r.target_name AS sink_name, r.target_id AS sink_id, '
-        f'r.cwe AS cwe, r.hops AS hops, '
-        f'r.level AS level, r.framework AS framework '
-        f'ORDER BY r.hops ASC, src.file ASC '
-        f'LIMIT {int(limit)}'
+        f"AND r.sanitized = 0 "
+        f"{filter_clause} "
+        f"RETURN src.name AS source_name, src.file AS source_file, "
+        f"r.target_name AS sink_name, r.target_id AS sink_id, "
+        f"r.cwe AS cwe, r.hops AS hops, "
+        f"r.level AS level, r.framework AS framework "
+        f"ORDER BY r.hops ASC, src.file ASC "
+        f"LIMIT {int(limit)}"
     )
 
 
-def _build_dependency_query(
-    tenant_id: str, repo_id: str, filter_str: str, limit: int
-) -> str:
+def _build_dependency_query(tenant_id: str, repo_id: str, filter_str: str, limit: int) -> str:
     tid = _cypher_escape(tenant_id)
     rid = _cypher_escape(repo_id)
     f = _cypher_escape(filter_str)
@@ -118,15 +109,15 @@ def _build_dependency_query(
     # Read package info from edge properties (target_name / target_id)
     # because GraphQLite traversal does not resolve target node properties.
     return (
-        f'MATCH (src:LexicalNode)'
-        f'-[r:DEPENDS_ON]->(pkg) '
+        f"MATCH (src:LexicalNode)"
+        f"-[r:DEPENDS_ON]->(pkg) "
         f'WHERE src.tenant_id = "{tid}" AND src.repo_id = "{rid}" '
         f'AND src.node_type = "file" '
-        f'{filter_clause} '
-        f'RETURN DISTINCT r.target_name AS package, '
-        f'src.file AS referenced_from '
-        f'ORDER BY r.target_name '
-        f'LIMIT {int(limit)}'
+        f"{filter_clause} "
+        f"RETURN DISTINCT r.target_name AS package, "
+        f"src.file AS referenced_from "
+        f"ORDER BY r.target_name "
+        f"LIMIT {int(limit)}"
     )
 
 
@@ -267,9 +258,7 @@ class GraphQLiteBackend(GraphBackend):
 
         return await asyncio.to_thread(_write)
 
-    async def delete_file_nodes(
-        self, tenant_id: str, repo_id: str, file_path: str
-    ) -> None:
+    async def delete_file_nodes(self, tenant_id: str, repo_id: str, file_path: str) -> None:
         if not self._conn:
             return
         conn = self._conn
@@ -412,7 +401,7 @@ class GraphQLiteBackend(GraphBackend):
                 f'tgt.name = "{t_name}", tgt.node_type = "external", '
                 f'tgt.tenant_id = "{t_tenant}", '
                 f'tgt.repo_id = "{t_repo}", '
-                f'tgt.confidence = {confidence}, '
+                f"tgt.confidence = {confidence}, "
                 f'tgt.source = "{src_esc}"'
             )
             # Delete any existing edge with the same edge_id to avoid
@@ -422,7 +411,7 @@ class GraphQLiteBackend(GraphBackend):
             conn.cypher(
                 f'MATCH (a:LexicalNode {{node_id: "{s}"}})'
                 f'-[r:{rel_type} {{edge_id: "{eid}"}}]->(b) '
-                f'DELETE r'
+                f"DELETE r"
             )
             # Create edge with literal values (params don't persist
             # on relationship properties in GraphQLite)

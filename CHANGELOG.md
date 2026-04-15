@@ -13,6 +13,32 @@ Both packages share a version number and are always released together.
 
 ---
 
+## [0.5.2] — 2026-04-15
+
+### Fixed — codesteward-graph
+
+- **`dependency` query returned empty despite edges being written.**
+  `PyProjectParser` and `PackageJsonParser` emitted `depends_on` edges whose
+  `source_id` pointed at a `pyproject.toml` / `package.json` file node — but
+  that node was never actually written to the graph. On GraphQLite the edge
+  write silently dropped (source MATCH returned nothing); on Neo4j the source
+  had to be merged separately. Both parsers now return a tuple
+  `(source_file_nodes, edges)` and `GraphBuilder` persists the file nodes
+  alongside the edges, giving the `dependency` query a proper source to
+  match against.
+
+### Improved — codesteward-graph
+
+- **`referential` query now returns both outgoing and incoming edges for a
+  filter.** Previously the filter matched only the edge *source* name, so
+  asking for ``referential filter=foo`` returned what `foo` calls but not
+  what calls `foo` — the most common "who depends on this?" question.
+  Templates now also match `r.target_name` (and `tgt.name` on Neo4j), so a
+  single filter surfaces both directions. Direction is always visible in
+  the result rows via `from_name` vs `to_name`.
+
+---
+
 ## [0.5.1] — 2026-04-15
 
 ### Fixed — codesteward-mcp

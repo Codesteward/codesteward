@@ -25,7 +25,11 @@ _CYPHER_TEMPLATES: dict[str, str] = {
     "referential": """
         MATCH (src:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
               -[r:CALLS|IMPORTS|EXTENDS|GUARDED_BY|PROTECTED_BY]->(tgt)
-        WHERE ($filter = '' OR src.name CONTAINS $filter OR src.file CONTAINS $filter)
+        WHERE ($filter = ''
+               OR src.name CONTAINS $filter
+               OR src.file CONTAINS $filter
+               OR tgt.name CONTAINS $filter
+               OR r.target_name CONTAINS $filter)
         RETURN src.name AS from_name, src.file AS from_file,
                type(r) AS edge_type,
                tgt.name AS to_name, tgt.file AS to_file,
@@ -73,9 +77,8 @@ class Neo4jBackend(GraphBackend):
         if password:
             try:
                 import neo4j
-                self._driver = neo4j.AsyncGraphDatabase.driver(
-                    uri, auth=(user, password)
-                )
+
+                self._driver = neo4j.AsyncGraphDatabase.driver(uri, auth=(user, password))
             except Exception as exc:
                 log.error("neo4j_driver_init_failed", error=str(exc))
 

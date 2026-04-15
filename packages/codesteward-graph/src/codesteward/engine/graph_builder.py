@@ -17,7 +17,6 @@ Neo4j integration:
     summary without any database writes.
 """
 
-
 import json
 from pathlib import Path
 from typing import Any
@@ -65,9 +64,26 @@ __all__ = [
 
 _IGNORED_DIRS = frozenset(
     [
-        "node_modules", "dist", "build", ".next", ".nuxt", "coverage", "__pycache__", ".git",
-        ".venv", "venv", ".env", "env", ".tox", ".nox", ".mypy_cache", ".ruff_cache",
-        ".pytest_cache", "site-packages", ".eggs", "*.egg-info",
+        "node_modules",
+        "dist",
+        "build",
+        ".next",
+        ".nuxt",
+        "coverage",
+        "__pycache__",
+        ".git",
+        ".venv",
+        "venv",
+        ".env",
+        "env",
+        ".tox",
+        ".nox",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pytest_cache",
+        "site-packages",
+        ".eggs",
+        "*.egg-info",
     ]
 )
 
@@ -125,8 +141,8 @@ class PyProjectParser:
         repo_path: Path,
         tenant_id: str,
         repo_id: str,
-    ) -> list[GraphEdge]:
-        """Extract dependency edges from pyproject.toml files.
+    ) -> tuple[list[LexicalNode], list[GraphEdge]]:
+        """Extract dependency nodes and edges from pyproject.toml files.
 
         Scans the repo root and immediate sub-packages for pyproject.toml
         files (handles both single-package and workspace/monorepo layouts).
@@ -137,17 +153,15 @@ class PyProjectParser:
             repo_id: Repository identifier.
 
         Returns:
-            List of depends_on GraphEdges.
+            Tuple of (source file LexicalNodes for each pyproject.toml
+            that declares dependencies, depends_on GraphEdges).
         """
         toml_files = list(repo_path.rglob("pyproject.toml"))
         # Filter out files in ignored directories
-        toml_files = [
-            f for f in toml_files
-            if not any(part in _IGNORED_DIRS for part in f.parts)
-        ]
+        toml_files = [f for f in toml_files if not any(part in _IGNORED_DIRS for part in f.parts)]
 
         if not toml_files:
-            return []
+            return [], []
 
         try:
             import tomllib
@@ -156,8 +170,9 @@ class PyProjectParser:
                 import tomli as tomllib  # type: ignore[no-redef]
             except ModuleNotFoundError:
                 log.warning("pyproject_parse_skipped", reason="no TOML parser available")
-                return []
+                return [], []
 
+        nodes: list[LexicalNode] = []
         edges: list[GraphEdge] = []
         seen_packages: set[str] = set()
 
@@ -165,37 +180,28 @@ class PyProjectParser:
             try:
                 data = tomllib.loads(toml_file.read_text(encoding="utf-8"))
             except Exception as exc:
-                log.warning(
-                    "pyproject_parse_failed", path=str(toml_file), error=str(exc)
-                )
+                log.warning("pyproject_parse_failed", path=str(toml_file), error=str(exc))
                 continue
 
             rel_path = str(toml_file.relative_to(repo_path))
-            root_id = LexicalNode.make_id(
-                tenant_id, repo_id, rel_path, rel_path, "file"
-            )
+            root_id = LexicalNode.make_id(tenant_id, repo_id, rel_path, rel_path, "file")
+            edges_before = len(edges)
 
             # PEP 621 [project.dependencies]
             for dep_str in data.get("project", {}).get("dependencies", []):
                 pkg_name = self._parse_requirement(dep_str)
                 if pkg_name and pkg_name not in seen_packages:
                     seen_packages.add(pkg_name)
-                    edges.append(
-                        self._make_edge(root_id, pkg_name, dep_str, tenant_id, repo_id)
-                    )
+                    edges.append(self._make_edge(root_id, pkg_name, dep_str, tenant_id, repo_id))
 
             # PEP 621 [project.optional-dependencies]
-            for group_deps in (
-                data.get("project", {}).get("optional-dependencies", {}).values()
-            ):
+            for group_deps in data.get("project", {}).get("optional-dependencies", {}).values():
                 for dep_str in group_deps:
                     pkg_name = self._parse_requirement(dep_str)
                     if pkg_name and pkg_name not in seen_packages:
                         seen_packages.add(pkg_name)
                         edges.append(
-                            self._make_edge(
-                                root_id, pkg_name, dep_str, tenant_id, repo_id
-                            )
+                            self._make_edge(root_id, pkg_name, dep_str, tenant_id, repo_id)
                         )
 
             # Poetry [tool.poetry.dependencies]
@@ -210,12 +216,32 @@ class PyProjectParser:
                         ver_str = version if isinstance(version, str) else str(version)
                         edges.append(
                             self._make_edge(
-                                root_id, pkg_name, f"{pkg_name}{ver_str}",
-                                tenant_id, repo_id,
+                                root_id,
+                                pkg_name,
+                                f"{pkg_name}{ver_str}",
+                                tenant_id,
+                                repo_id,
                             )
                         )
 
-        return edges
+            # Emit a file node for this pyproject.toml only if it actually
+            # produced dependency edges — otherwise the node would be a
+            # dangling source with no outgoing edges.
+            if len(edges) > edges_before:
+                nodes.append(
+                    LexicalNode(
+                        node_id=root_id,
+                        node_type="file",
+                        name=rel_path,
+                        file=rel_path,
+                        line_start=1,
+                        language="toml",
+                        tenant_id=tenant_id,
+                        repo_id=repo_id,
+                    )
+                )
+
+        return nodes, edges
 
     @staticmethod
     def _parse_requirement(dep_str: str) -> str | None:
@@ -277,8 +303,8 @@ class PackageJsonParser:
         repo_path: Path,
         tenant_id: str,
         repo_id: str,
-    ) -> list[GraphEdge]:
-        """Extract dependency edges.
+    ) -> tuple[list[LexicalNode], list[GraphEdge]]:
+        """Extract dependency nodes and edges.
 
         Args:
             repo_path: Root directory of the repository.
@@ -286,19 +312,21 @@ class PackageJsonParser:
             repo_id: Repository identifier.
 
         Returns:
-            List of depends_on GraphEdges.
+            Tuple of (package.json file node list, depends_on GraphEdges).
+            Node list is empty when package.json does not exist or produces
+            no edges.
         """
         edges: list[GraphEdge] = []
         pkg_file = repo_path / "package.json"
 
         if not pkg_file.exists():
-            return edges
+            return [], edges
 
         try:
             pkg_data = json.loads(pkg_file.read_text())
         except (json.JSONDecodeError, OSError) as exc:
             log.warning("package_json_parse_failed", path=str(pkg_file), error=str(exc))
-            return edges
+            return [], edges
 
         root_id = LexicalNode.make_id(tenant_id, repo_id, "package.json", "package.json", "file")
 
@@ -322,7 +350,22 @@ class PackageJsonParser:
         if lock_file.exists():
             edges.extend(self._parse_lock_file(lock_file, root_id, tenant_id, repo_id))
 
-        return edges
+        if not edges:
+            return [], edges
+
+        nodes = [
+            LexicalNode(
+                node_id=root_id,
+                node_type="file",
+                name="package.json",
+                file="package.json",
+                line_start=1,
+                language="json",
+                tenant_id=tenant_id,
+                repo_id=repo_id,
+            )
+        ]
+        return nodes, edges
 
     def _parse_lock_file(
         self,
@@ -523,6 +566,7 @@ class GraphWriter:
             backend: A ``GraphBackend`` instance, or None for stub mode.
         """
         from codesteward.engine.backends.base import GraphBackend as _GB
+
         self._backend: _GB | None = backend
         if backend is None:
             log.warning("graph_writer_stub_mode", reason="No graph backend provided")
@@ -803,10 +847,15 @@ class GraphBuilder:
                 )
                 parse_errors.append(str(file_path))
 
-        # Dependency edges from package.json and pyproject.toml
+        # Dependency edges from package.json and pyproject.toml.
+        # Each parser returns (source file nodes, depends_on edges) — the
+        # file nodes must be written so the edge MATCH finds a source.
         if not is_incremental:
-            dep_edges = self._pkg_parser.parse(root, tenant_id, repo_id)
-            dep_edges.extend(self._pyproject_parser.parse(root, tenant_id, repo_id))
+            pkg_nodes, pkg_edges = self._pkg_parser.parse(root, tenant_id, repo_id)
+            py_nodes, py_edges = self._pyproject_parser.parse(root, tenant_id, repo_id)
+            all_nodes.extend(pkg_nodes)
+            all_nodes.extend(py_nodes)
+            dep_edges = pkg_edges + py_edges
             all_edges.extend(dep_edges)
         else:
             dep_edges = []
@@ -927,9 +976,7 @@ class GraphBuilder:
             name_to_file_ids.setdefault(node.name, {})[node.file] = node.node_id
 
         # Build edge source_id -> file mapping for file-scoped resolution
-        node_id_to_file: dict[str, str] = {
-            node.node_id: node.file for node in nodes
-        }
+        node_id_to_file: dict[str, str] = {node.node_id: node.file for node in nodes}
 
         resolved = 0
         for edge in edges:
@@ -945,9 +992,7 @@ class GraphBuilder:
             # Strategy 1: unique global name
             if target_node_id is not None:
                 edge.target_id = target_node_id
-                edge.edge_id = GraphEdge.make_id(
-                    edge.source_id, edge.edge_type, edge.target_id
-                )
+                edge.edge_id = GraphEdge.make_id(edge.source_id, edge.edge_type, edge.target_id)
                 resolved += 1
                 continue
 

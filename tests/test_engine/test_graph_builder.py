@@ -4,7 +4,6 @@ All tests run without Neo4j — the builder is used in stub mode (no driver).
 Realistic TypeScript/JavaScript code samples are used as fixtures.
 """
 
-
 import json
 from pathlib import Path
 
@@ -322,7 +321,9 @@ class TestTypeScriptParser:
     def parser(self) -> TypeScriptParser:
         return TypeScriptParser()
 
-    def _parse(self, parser: TypeScriptParser, content: str, file_path: str = "src/test.ts") -> ParseResult:
+    def _parse(
+        self, parser: TypeScriptParser, content: str, file_path: str = "src/test.ts"
+    ) -> ParseResult:
         return parser.parse(
             file_path=file_path,
             content=content,
@@ -501,7 +502,7 @@ class TestPackageJsonParser:
 
     def test_direct_dependencies_extracted(self, parser: PackageJsonParser, pkg_dir: Path) -> None:
         """All prod dependencies in package.json become depends_on edges."""
-        edges = parser.parse(pkg_dir, "tenant", "repo")
+        _, edges = parser.parse(pkg_dir, "tenant", "repo")
         targets = {e.target_id for e in edges}
         assert "express" in targets
         assert "lodash" in targets
@@ -509,7 +510,7 @@ class TestPackageJsonParser:
 
     def test_dev_dependencies_extracted(self, parser: PackageJsonParser, pkg_dir: Path) -> None:
         """devDependencies are also extracted."""
-        edges = parser.parse(pkg_dir, "tenant", "repo")
+        _, edges = parser.parse(pkg_dir, "tenant", "repo")
         targets = {e.target_id for e in edges}
         assert "typescript" in targets
         assert "jest" in targets
@@ -518,31 +519,45 @@ class TestPackageJsonParser:
         self, parser: PackageJsonParser, pkg_dir: Path
     ) -> None:
         """Transitive deps from package-lock.json are included."""
-        edges = parser.parse(pkg_dir, "tenant", "repo")
+        _, edges = parser.parse(pkg_dir, "tenant", "repo")
         targets = {e.target_id for e in edges}
         assert "body-parser" in targets
 
-    def test_all_edges_are_depends_on_type(
-        self, parser: PackageJsonParser, pkg_dir: Path
-    ) -> None:
+    def test_all_edges_are_depends_on_type(self, parser: PackageJsonParser, pkg_dir: Path) -> None:
         """All extracted dependency edges have edge_type 'depends_on'."""
-        edges = parser.parse(pkg_dir, "tenant", "repo")
+        _, edges = parser.parse(pkg_dir, "tenant", "repo")
         assert all(e.edge_type == "depends_on" for e in edges)
 
     def test_missing_package_json_returns_empty(
         self, parser: PackageJsonParser, tmp_path: Path
     ) -> None:
-        """Parsing a directory without package.json returns empty list."""
-        edges = parser.parse(tmp_path, "tenant", "repo")
+        """Parsing a directory without package.json returns empty nodes + edges."""
+        nodes, edges = parser.parse(tmp_path, "tenant", "repo")
+        assert nodes == []
         assert edges == []
 
     def test_version_included_in_target_name(
         self, parser: PackageJsonParser, pkg_dir: Path
     ) -> None:
         """target_name includes the version string for traceability."""
-        edges = parser.parse(pkg_dir, "tenant", "repo")
+        _, edges = parser.parse(pkg_dir, "tenant", "repo")
         express_edge = next(e for e in edges if e.target_id == "express")
         assert "4.18.2" in express_edge.target_name or "^4.18.2" in express_edge.target_name
+
+    def test_emits_source_file_node(self, parser: PackageJsonParser, pkg_dir: Path) -> None:
+        """A file node for package.json is emitted alongside edges.
+
+        Without this node, DEPENDS_ON edges are dangling and the
+        ``dependency`` query returns empty on backends that require both
+        endpoints to exist (GraphQLite).
+        """
+        nodes, edges = parser.parse(pkg_dir, "tenant", "repo")
+        assert edges, "expected at least one depends_on edge"
+        root_ids = {n.node_id for n in nodes if n.node_type == "file"}
+        assert any(e.source_id in root_ids for e in edges), (
+            "package.json file node must be emitted so DEPENDS_ON edges "
+            "have a source node in the graph"
+        )
 
 
 # ===========================================================================
@@ -646,9 +661,7 @@ class TestGraphBuilder:
     async def test_incremental_build_excludes_dep_edges(self, repo_dir: Path) -> None:
         """Incremental builds skip package.json dependency re-extraction."""
         builder = GraphBuilder()
-        full = await builder.build_graph(
-            repo_path=str(repo_dir), tenant_id="test", repo_id="repo"
-        )
+        full = await builder.build_graph(repo_path=str(repo_dir), tenant_id="test", repo_id="repo")
         incremental = await builder.build_graph(
             repo_path=str(repo_dir),
             tenant_id="test",
@@ -734,8 +747,12 @@ class TestCSharpParser:
     """Tests for the regex-based C# parser."""
 
     def _parse(self, content: str, file_path: str = "src/Services/UserService.cs") -> ParseResult:
-        pytest.importorskip("tree_sitter_c_sharp", reason="tree-sitter-c-sharp not installed (install with: uv pip install -e '.[graph-csharp]')")
+        pytest.importorskip(
+            "tree_sitter_c_sharp",
+            reason="tree-sitter-c-sharp not installed (install with: uv pip install -e '.[graph-csharp]')",
+        )
         from codesteward.engine.parsers.csharp import CSharpParser
+
         parser = CSharpParser()
         return parser.parse(file_path, content, "t1", "r1", "csharp")
 
@@ -796,8 +813,12 @@ class TestKotlinParser:
     """Tests for the regex-based Kotlin parser."""
 
     def _parse(self, content: str, file_path: str = "src/PaymentService.kt") -> ParseResult:
-        pytest.importorskip("tree_sitter_kotlin", reason="tree-sitter-kotlin not installed (install with: uv pip install -e '.[graph-kotlin]')")
+        pytest.importorskip(
+            "tree_sitter_kotlin",
+            reason="tree-sitter-kotlin not installed (install with: uv pip install -e '.[graph-kotlin]')",
+        )
         from codesteward.engine.parsers.kotlin import KotlinParser
+
         parser = KotlinParser()
         return parser.parse(file_path, content, "t1", "r1", "kotlin")
 
@@ -853,8 +874,12 @@ class TestScalaParser:
     """Tests for the regex-based Scala parser."""
 
     def _parse(self, content: str, file_path: str = "src/ReportService.scala") -> ParseResult:
-        pytest.importorskip("tree_sitter_scala", reason="tree-sitter-scala not installed (install with: uv pip install -e '.[graph-scala]')")
+        pytest.importorskip(
+            "tree_sitter_scala",
+            reason="tree-sitter-scala not installed (install with: uv pip install -e '.[graph-scala]')",
+        )
         from codesteward.engine.parsers.scala import ScalaParser
+
         parser = ScalaParser()
         return parser.parse(file_path, content, "t1", "r1", "scala")
 
@@ -913,6 +938,7 @@ class TestCobolParser:
 
     def _parse(self, content: str, file_path: str = "src/PAYROLL-CALC.cbl") -> ParseResult:
         from codesteward.engine.parsers.cobol import CobolParser
+
         parser = CobolParser()
         return parser.parse(file_path, content, "t1", "r1", "cobol")
 
@@ -959,8 +985,12 @@ class TestGoParser:
     """Tests for the tree-sitter Go parser."""
 
     def _parse(self, content: str, file_path: str = "payments/service.go") -> ParseResult:
-        pytest.importorskip("tree_sitter_go", reason="tree-sitter-go not installed (install with: uv pip install -e '.[graph-go]')")
+        pytest.importorskip(
+            "tree_sitter_go",
+            reason="tree-sitter-go not installed (install with: uv pip install -e '.[graph-go]')",
+        )
         from codesteward.engine.parsers.go import GoParser
+
         parser = GoParser()
         return parser.parse(file_path, content, "t1", "r1", "go")
 
@@ -1011,8 +1041,12 @@ class TestCParser:
     """Tests for the tree-sitter C parser."""
 
     def _parse(self, content: str, file_path: str = "src/payment.c") -> ParseResult:
-        pytest.importorskip("tree_sitter_c", reason="tree-sitter-c not installed (install with: uv pip install -e '.[graph-c]')")
+        pytest.importorskip(
+            "tree_sitter_c",
+            reason="tree-sitter-c not installed (install with: uv pip install -e '.[graph-c]')",
+        )
         from codesteward.engine.parsers.c import CParser
+
         parser = CParser()
         return parser.parse(file_path, content, "t1", "r1", "c")
 
@@ -1054,8 +1088,12 @@ class TestCppParser:
     """Tests for the tree-sitter C++ parser."""
 
     def _parse(self, content: str, file_path: str = "src/PaymentService.cpp") -> ParseResult:
-        pytest.importorskip("tree_sitter_cpp", reason="tree-sitter-cpp not installed (install with: uv pip install -e '.[graph-cpp]')")
+        pytest.importorskip(
+            "tree_sitter_cpp",
+            reason="tree-sitter-cpp not installed (install with: uv pip install -e '.[graph-cpp]')",
+        )
         from codesteward.engine.parsers.cpp import CppParser
+
         parser = CppParser()
         return parser.parse(file_path, content, "t1", "r1", "cpp")
 
@@ -1102,8 +1140,12 @@ class TestRustParser:
     """Tests for the tree-sitter Rust parser."""
 
     def _parse(self, content: str, file_path: str = "src/payment.rs") -> ParseResult:
-        pytest.importorskip("tree_sitter_rust", reason="tree-sitter-rust not installed (install with: uv pip install -e '.[graph-rust]')")
+        pytest.importorskip(
+            "tree_sitter_rust",
+            reason="tree-sitter-rust not installed (install with: uv pip install -e '.[graph-rust]')",
+        )
         from codesteward.engine.parsers.rust import RustParser
+
         parser = RustParser()
         return parser.parse(file_path, content, "t1", "r1", "rust")
 
@@ -1158,9 +1200,15 @@ class TestRustParser:
 class TestPhpParser:
     """Tests for the tree-sitter PHP parser."""
 
-    def _parse(self, content: str, file_path: str = "app/Services/PaymentService.php") -> ParseResult:
-        pytest.importorskip("tree_sitter_php", reason="tree-sitter-php not installed (install with: uv pip install -e '.[graph-php]')")
+    def _parse(
+        self, content: str, file_path: str = "app/Services/PaymentService.php"
+    ) -> ParseResult:
+        pytest.importorskip(
+            "tree_sitter_php",
+            reason="tree-sitter-php not installed (install with: uv pip install -e '.[graph-php]')",
+        )
         from codesteward.engine.parsers.php import PhpParser
+
         parser = PhpParser()
         return parser.parse(file_path, content, "t1", "r1", "php")
 
