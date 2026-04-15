@@ -11,6 +11,19 @@ Both packages share a version number and are always released together.
 
 ## [Unreleased]
 
+---
+
+## [0.5.0] — 2026-04-15
+
+### Added — codesteward-graph
+
+- **`PyProjectParser`** — extracts `depends_on` edges from `pyproject.toml` files, supporting
+  PEP 621 `[project.dependencies]`, `[project.optional-dependencies]`, and Poetry
+  `[tool.poetry.dependencies]`. Scans all `pyproject.toml` files in the repo tree (handles
+  uv workspaces and monorepos). Wired into `GraphBuilder.build_graph()` alongside the
+  existing `PackageJsonParser`. The `dependency` query type now returns results for Python
+  projects.
+
 ### Fixed — codesteward-graph
 
 - **GraphQLite: `dependency` query returned null package names** — the query template read
@@ -54,14 +67,37 @@ Both packages share a version number and are always released together.
   `_detect_dominant_language()` which counts file-node languages and returns the most common
   one. The summary now reflects the actual codebase language.
 
-### Added — codesteward-graph
+### Security / CI
 
-- **`PyProjectParser`** — extracts `depends_on` edges from `pyproject.toml` files, supporting
-  PEP 621 `[project.dependencies]`, `[project.optional-dependencies]`, and Poetry
-  `[tool.poetry.dependencies]`. Scans all `pyproject.toml` files in the repo tree (handles
-  uv workspaces and monorepos). Wired into `GraphBuilder.build_graph()` alongside the
-  existing `PackageJsonParser`. The `dependency` query type now returns results for Python
-  projects.
+- **CI/CD security hardening** — introduced a comprehensive CI pipeline based on the
+  OpenSSF / SLSA guidance:
+  - Every job now runs behind `step-security/harden-runner` (audit mode) and uses
+    `persist-credentials: false` with scoped permissions.
+  - New checks: Semgrep (p/python, p/security-audit, p/owasp-top-ten, p/docker),
+    Hadolint, zizmor (GitHub Actions static analysis, with ref-pin policy in
+    `.github/zizmor.yml`), CodeQL security-extended (push-to-main), `pip-audit`
+    against `uv export --frozen`, Trivy container scan that gates the release,
+    dependency-review on PRs, conventional commits, license headers
+    (skywalking-eyes, check-only), markdown-lint, OpenSSF Scorecard, and a
+    weekly scheduled scan workflow (CodeQL, pip-audit, Trivy image, gitleaks).
+  - Release workflow now builds `linux/amd64` locally, scans with Trivy (HIGH/CRITICAL
+    gate), pushes multi-arch with SLSA provenance (`provenance: mode=max`) and SBOM,
+    signs with cosign keyless via GitHub OIDC, and attaches `trivy-report.json` +
+    `sbom.cdx.json` to the GitHub Release.
+  - Added `.github/CODEOWNERS`, `.github/dco.yml` (probot/dco), `SECURITY.md`,
+    `.licenserc.yaml`, `renovate.json` (with `pinDigests: true`), and
+    `docs/ci-security-hardening.md`.
+- **Container base patched against Debian openssl CVE-2026-28390** — final stage of
+  `Dockerfile.mcp` now runs `apt-get upgrade -y` on top of `python:3.12-slim` to pick up
+  Debian security updates that lag the upstream image rebuild cadence.
+- **Narrowly-scoped `.trivyignore` for bundled `codesteward-taint` binary** — the upstream
+  `v0.1.0` binary was built with Go 1.22.12 and inherits nine Go stdlib CVEs that cannot be
+  fixed from this repo. Documented each suppression with a TODO to drop once upstream ships
+  a Go ≥ 1.26.2 rebuild. Operators who do not need taint analysis can
+  `--build-arg TAINT_VERSION=none` to remove the binary and skip the suppressions.
+- **Python runtime CVEs resolved** — bumped locked `cryptography` 46.0.5 → 46.0.7
+  (CVE-2026-34073, CVE-2026-39892), `pygments` 2.19.2 → 2.20.0 (CVE-2026-4539), and
+  `pytest` 9.0.2 → 9.0.3 (CVE-2025-71176) via `uv lock --upgrade-package`.
 
 ---
 
