@@ -13,6 +13,27 @@ Both packages share a version number and are always released together.
 
 ### Fixed — codesteward-graph
 
+- **GraphQLite: `dependency` query returned null package names** — the query template read
+  `pkg.name` from the target node via a traversal, but GraphQLite does not resolve target
+  node properties through traversal patterns (the same limitation already worked around in
+  the `referential` query). Rewrote the template to read `target_name` from edge properties.
+  The same fix was applied to the `semantic` query's `sink_name`/`sink_file` fields.
+- **GraphQLite: `delete_file_nodes` did not filter by `$param` in MATCH patterns** —
+  `$param` interpolation into MATCH property patterns is unreliable in GraphQLite. The
+  method was inconsistent with `count_nodes`/`delete_repo_data` which already use literal
+  values via `_cypher_escape`. Rewrote `delete_file_nodes` to match. This was silently
+  breaking incremental rebuilds.
+- **GraphQLite: named query templates used `$param` in MATCH patterns** — tenant/repo/filter
+  isolation was unreliable in `lexical`, `referential`, `semantic`, and `dependency`
+  queries. Rewrote each template as a builder function that constructs Cypher with escaped
+  literal values and moves filters to WHERE clauses.
+- **GraphQLite: `write_augment_edge` created duplicate edges on re-invocation** — it used
+  `CREATE` instead of `MERGE` and did not dedup by `edge_id`. Added a delete-before-create
+  pattern so re-writing an augment edge with the same `edge_id` is idempotent (matches the
+  upsert behavior of Neo4j and JanusGraph).
+- **GraphQLite: `semantic` query used `NOT r.sanitized`** — SQLite stores booleans as
+  integers and `NOT <int>` semantics were not reliable through GraphQLite's Cypher
+  translation. Changed to explicit `r.sanitized = 0`.
 - **GraphQLite: full rebuild duplicated all edges** — `write_edges` uses `CREATE` (not `MERGE`)
   for relationship creation, so consecutive full rebuilds doubled the edge count with each run.
   Added `delete_repo_data(tenant_id, repo_id)` to the `GraphBackend` ABC and all three

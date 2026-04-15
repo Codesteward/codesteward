@@ -19,54 +19,122 @@ from codesteward.engine.backends.base import GraphBackend
 log = structlog.get_logger()
 
 # ---------------------------------------------------------------------------
-# Cypher templates — reused from the Neo4j backend with zero modifications
+# Cypher template builders — use literal values instead of $param because
+# $param in MATCH property patterns does not filter correctly in GraphQLite.
+# Target node properties are read from edge properties because GraphQLite
+# traversal does not resolve target node properties (tgt.* returns null).
 # ---------------------------------------------------------------------------
 
-_CYPHER_TEMPLATES: dict[str, str] = {
-    "lexical": """
-        MATCH (n:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
-        WHERE ($filter = '' OR n.name CONTAINS $filter OR n.file CONTAINS $filter)
-        RETURN n.node_type AS type, n.name AS name, n.file AS file,
-               n.line_start AS line_start, n.line_end AS line_end,
-               n.language AS language, n.is_async AS is_async
-        ORDER BY n.file, n.line_start
-        LIMIT $limit
-    """,
-    # GraphQLite traversal does not resolve target node properties, so we
-    # read target_name and target_id from edge properties instead.
-    "referential": """
-        MATCH (src:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
-              -[r:CALLS|IMPORTS|EXTENDS|GUARDED_BY|PROTECTED_BY]->(tgt)
-        WHERE ($filter = '' OR src.name CONTAINS $filter OR src.file CONTAINS $filter)
-        RETURN src.name AS from_name, src.file AS from_file,
-               type(r) AS edge_type,
-               r.target_name AS to_name, r.target_id AS to_id,
-               r.line AS line
-        ORDER BY src.file, r.line
-        LIMIT $limit
-    """,
-    "semantic": """
-        MATCH (src:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
-              -[r:TAINT_FLOW]->(tgt:LexicalNode)
-        WHERE ($filter = '' OR src.name CONTAINS $filter OR src.file CONTAINS $filter)
-          AND NOT r.sanitized
-        RETURN src.name AS source_name, src.file AS source_file,
-               tgt.name AS sink_name,   tgt.file AS sink_file,
-               r.cwe AS cwe, r.hops AS hops,
-               r.level AS level, r.framework AS framework
-        ORDER BY r.hops ASC, src.file ASC
-        LIMIT $limit
-    """,
-    "dependency": """
-        MATCH (src:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id})
-              -[r:DEPENDS_ON]->(pkg:LexicalNode)
-        WHERE src.node_type = 'file'
-          AND ($filter = '' OR pkg.name CONTAINS $filter)
-        RETURN DISTINCT pkg.name AS package, pkg.node_type AS type,
-               src.file AS referenced_from
-        ORDER BY pkg.name
-        LIMIT $limit
-    """,
+_VALID_QUERY_TYPES = ("lexical", "referential", "semantic", "dependency")
+
+
+def _build_lexical_query(
+    tenant_id: str, repo_id: str, filter_str: str, limit: int
+) -> str:
+    tid = _cypher_escape(tenant_id)
+    rid = _cypher_escape(repo_id)
+    f = _cypher_escape(filter_str)
+    filter_clause = ""
+    if filter_str:
+        filter_clause = (
+            f'AND (n.name CONTAINS "{f}" OR n.file CONTAINS "{f}")'
+        )
+    return (
+        f'MATCH (n:LexicalNode) '
+        f'WHERE n.tenant_id = "{tid}" AND n.repo_id = "{rid}" '
+        f'{filter_clause} '
+        f'RETURN n.node_type AS type, n.name AS name, n.file AS file, '
+        f'n.line_start AS line_start, n.line_end AS line_end, '
+        f'n.language AS language, n.is_async AS is_async '
+        f'ORDER BY n.file, n.line_start '
+        f'LIMIT {int(limit)}'
+    )
+
+
+def _build_referential_query(
+    tenant_id: str, repo_id: str, filter_str: str, limit: int
+) -> str:
+    tid = _cypher_escape(tenant_id)
+    rid = _cypher_escape(repo_id)
+    f = _cypher_escape(filter_str)
+    filter_clause = ""
+    if filter_str:
+        filter_clause = (
+            f'AND (src.name CONTAINS "{f}" OR src.file CONTAINS "{f}")'
+        )
+    return (
+        f'MATCH (src:LexicalNode)'
+        f'-[r:CALLS|IMPORTS|EXTENDS|GUARDED_BY|PROTECTED_BY]->(tgt) '
+        f'WHERE src.tenant_id = "{tid}" AND src.repo_id = "{rid}" '
+        f'{filter_clause} '
+        f'RETURN src.name AS from_name, src.file AS from_file, '
+        f'type(r) AS edge_type, '
+        f'r.target_name AS to_name, r.target_id AS to_id, '
+        f'r.line AS line '
+        f'ORDER BY src.file, r.line '
+        f'LIMIT {int(limit)}'
+    )
+
+
+def _build_semantic_query(
+    tenant_id: str, repo_id: str, filter_str: str, limit: int
+) -> str:
+    tid = _cypher_escape(tenant_id)
+    rid = _cypher_escape(repo_id)
+    f = _cypher_escape(filter_str)
+    filter_clause = ""
+    if filter_str:
+        filter_clause = (
+            f'AND (src.name CONTAINS "{f}" OR src.file CONTAINS "{f}")'
+        )
+    # Use r.sanitized = 0 instead of NOT r.sanitized — SQLite stores
+    # booleans as integers and GraphQLite may not handle NOT <int> correctly.
+    # Read sink info from edge properties (target_name / target_id) because
+    # GraphQLite traversal does not resolve target node properties.
+    return (
+        f'MATCH (src:LexicalNode)'
+        f'-[r:TAINT_FLOW]->(tgt) '
+        f'WHERE src.tenant_id = "{tid}" AND src.repo_id = "{rid}" '
+        f'AND r.sanitized = 0 '
+        f'{filter_clause} '
+        f'RETURN src.name AS source_name, src.file AS source_file, '
+        f'r.target_name AS sink_name, r.target_id AS sink_id, '
+        f'r.cwe AS cwe, r.hops AS hops, '
+        f'r.level AS level, r.framework AS framework '
+        f'ORDER BY r.hops ASC, src.file ASC '
+        f'LIMIT {int(limit)}'
+    )
+
+
+def _build_dependency_query(
+    tenant_id: str, repo_id: str, filter_str: str, limit: int
+) -> str:
+    tid = _cypher_escape(tenant_id)
+    rid = _cypher_escape(repo_id)
+    f = _cypher_escape(filter_str)
+    filter_clause = ""
+    if filter_str:
+        filter_clause = f'AND r.target_name CONTAINS "{f}"'
+    # Read package info from edge properties (target_name / target_id)
+    # because GraphQLite traversal does not resolve target node properties.
+    return (
+        f'MATCH (src:LexicalNode)'
+        f'-[r:DEPENDS_ON]->(pkg) '
+        f'WHERE src.tenant_id = "{tid}" AND src.repo_id = "{rid}" '
+        f'AND src.node_type = "file" '
+        f'{filter_clause} '
+        f'RETURN DISTINCT r.target_name AS package, '
+        f'src.file AS referenced_from '
+        f'ORDER BY r.target_name '
+        f'LIMIT {int(limit)}'
+    )
+
+
+_QUERY_BUILDERS = {
+    "lexical": _build_lexical_query,
+    "referential": _build_referential_query,
+    "semantic": _build_semantic_query,
+    "dependency": _build_dependency_query,
 }
 
 
@@ -205,15 +273,20 @@ class GraphQLiteBackend(GraphBackend):
         if not self._conn:
             return
         conn = self._conn
+        # Use literal values — $param in MATCH property patterns does not
+        # filter correctly in GraphQLite.
+        tid = _cypher_escape(tenant_id)
+        rid = _cypher_escape(repo_id)
+        fp = _cypher_escape(file_path)
 
         def _delete() -> None:
             conn.cypher(
-                """
-                MATCH (n:LexicalNode {tenant_id: $tenant_id, repo_id: $repo_id,
-                                      file: $file})
+                f"""
+                MATCH (n:LexicalNode)
+                WHERE n.tenant_id = "{tid}" AND n.repo_id = "{rid}"
+                  AND n.file = "{fp}"
                 DETACH DELETE n
                 """,
-                {"tenant_id": tenant_id, "repo_id": repo_id, "file": file_path},
             )
 
         await asyncio.to_thread(_delete)
@@ -246,26 +319,19 @@ class GraphQLiteBackend(GraphBackend):
         filter_str: str,
         limit: int,
     ) -> list[dict[str, Any]]:
-        template = _CYPHER_TEMPLATES.get(query_type)
-        if template is None:
+        builder = _QUERY_BUILDERS.get(query_type)
+        if builder is None:
             raise ValueError(
                 f"unknown query_type '{query_type}'; "
-                f"valid: {list(_CYPHER_TEMPLATES) + [self.raw_query_language]}"
+                f"valid: {list(_VALID_QUERY_TYPES) + [self.raw_query_language]}"
             )
         if not self._conn:
             return []
         conn = self._conn
+        cypher = builder(tenant_id, repo_id, filter_str, limit)
 
         def _query() -> list[dict[str, Any]]:
-            result = conn.cypher(
-                template,
-                {
-                    "tenant_id": tenant_id,
-                    "repo_id": repo_id,
-                    "filter": filter_str,
-                    "limit": limit,
-                },
-            )
+            result = conn.cypher(cypher)
             return result.to_list()  # type: ignore[no-any-return]
 
         return await asyncio.to_thread(_query)
@@ -333,38 +399,42 @@ class GraphQLiteBackend(GraphBackend):
         rel_type = edge_type.upper()
 
         def _write() -> None:
-            # MERGE target node (uses $param ON CREATE SET — works)
+            # MERGE target node with literal values (consistent with
+            # the rest of the GraphQLite backend).
+            t_id = _cypher_escape(target_id)
+            t_name = _cypher_escape(target_name)
+            t_tenant = _cypher_escape(tenant_id)
+            t_repo = _cypher_escape(repo_id)
+            src_esc = _cypher_escape(source)
             conn.cypher(
-                """
-                MERGE (tgt:LexicalNode {node_id: $target_id})
-                ON CREATE SET tgt.node_id = $target_id,
-                    tgt.name = $target_name, tgt.node_type = 'external',
-                    tgt.tenant_id = $tenant_id, tgt.repo_id = $repo_id,
-                    tgt.confidence = $confidence, tgt.source = $source
-                """,
-                {
-                    "target_id": target_id,
-                    "target_name": target_name,
-                    "tenant_id": tenant_id,
-                    "repo_id": repo_id,
-                    "confidence": confidence,
-                    "source": source,
-                },
+                f'MERGE (tgt:LexicalNode {{node_id: "{t_id}"}}) '
+                f'ON CREATE SET tgt.node_id = "{t_id}", '
+                f'tgt.name = "{t_name}", tgt.node_type = "external", '
+                f'tgt.tenant_id = "{t_tenant}", '
+                f'tgt.repo_id = "{t_repo}", '
+                f'tgt.confidence = {confidence}, '
+                f'tgt.source = "{src_esc}"'
+            )
+            # Delete any existing edge with the same edge_id to avoid
+            # duplicates — GraphQLite does not support MERGE on edges.
+            s = _cypher_escape(source_id)
+            eid = _cypher_escape(edge_id)
+            conn.cypher(
+                f'MATCH (a:LexicalNode {{node_id: "{s}"}})'
+                f'-[r:{rel_type} {{edge_id: "{eid}"}}]->(b) '
+                f'DELETE r'
             )
             # Create edge with literal values (params don't persist
             # on relationship properties in GraphQLite)
-            s = _cypher_escape(source_id)
-            t = _cypher_escape(target_id)
-            eid = _cypher_escape(edge_id)
             f = _cypher_escape(file)
             ln = int(line or 0)
-            src_esc = _cypher_escape(source)
             rat = _cypher_escape(rationale)
             conn.cypher(
                 f'MATCH (src:LexicalNode {{node_id: "{s}"}}) '
-                f'MATCH (tgt:LexicalNode {{node_id: "{t}"}}) '
+                f'MATCH (tgt:LexicalNode {{node_id: "{t_id}"}}) '
                 f'CREATE (src)-[:{rel_type} {{edge_id: "{eid}", '
                 f'file: "{f}", line: {ln}, '
+                f'target_name: "{t_name}", target_id: "{t_id}", '
                 f'confidence: {confidence}, source: "{src_esc}", '
                 f'rationale: "{rat}"}}]->(tgt)'
             )
