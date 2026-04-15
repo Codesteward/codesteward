@@ -94,6 +94,14 @@ LABEL org.opencontainers.image.title="Codesteward MCP Graph Server"
 LABEL org.opencontainers.image.description="Structural codebase graph server over MCP (HTTP+SSE / stdio)"
 LABEL org.opencontainers.image.source="https://github.com/bitkaio/codesteward-mcp"
 
+# Apply outstanding Debian security updates on top of the python:slim base.
+# The upstream image is rebuilt on a slower cadence than Debian security
+# advisories, so pick up any waiting patches (e.g. openssl) at image-build time.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy installed packages from builder
 COPY --from=builder /install /usr/local
 

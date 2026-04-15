@@ -1,0 +1,35 @@
+# Trivy vulnerability suppressions — keep each entry narrow and time-bound.
+#
+# Format:
+#   <CVE-ID>
+# or an expiry-gated entry:
+#   <CVE-ID> exp:YYYY-MM-DD
+#
+# Every entry MUST have a comment above it explaining:
+#   1. Where the vulnerability lives (package, path).
+#   2. Why the fix is not available from this repo.
+#   3. What would make us drop the suppression.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# codesteward-taint binary — Go stdlib CVEs
+#
+# The bundled /usr/local/bin/codesteward-taint binary is downloaded from the
+# upstream bitkaio/codesteward-taint release. The only published release
+# (v0.1.0) was built with Go 1.22.12 and inherits a set of Go stdlib CVEs.
+# These cannot be fixed from this repo — they require the upstream project
+# to tag a new release built with a patched Go toolchain.
+#
+# TODO: drop these ignores once upstream ships a release built with Go ≥ 1.26.2
+# (tracked in codesteward-taint — see its release pipeline).
+# Until then, operators who do not need taint analysis can build with
+#   --build-arg TAINT_VERSION=none
+# which removes the binary and makes the scan pass without this file.
+CVE-2025-68121
+CVE-2025-47907
+CVE-2025-58183
+CVE-2025-61726
+CVE-2025-61728
+CVE-2025-61729
+CVE-2026-25679
+CVE-2026-32280
+CVE-2026-32282

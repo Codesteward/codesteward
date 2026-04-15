@@ -384,6 +384,7 @@ jobs:
             --exit-code 1 \
             --severity HIGH,CRITICAL \
             --ignore-unfixed \
+            --ignorefile .trivyignore \
             --format json \
             --output trivy-report.json \
             codesteward:scan
