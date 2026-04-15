@@ -155,6 +155,16 @@ jobs:
         with:
           persist-credentials: false
 
+      # OCI references must be lowercase. `github.repository` preserves the
+      # original org/repo casing (e.g. "Codesteward/codesteward"), which
+      # breaks tooling like syft that does not auto-normalize. Export a
+      # lowercased copy once and reuse it downstream.
+      - name: Compute lowercased image name
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          echo "IMAGE_LC=$(echo "$REPO" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -249,7 +259,7 @@ jobs:
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
-          syft "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}" \
+          syft "${REGISTRY}/${IMAGE_LC}@${DIGEST}" \
             -o cyclonedx-json > sbom.cdx.json
 
       - name: Upload container reports
@@ -292,22 +302,25 @@ jobs:
           path: container-reports/
 
       - name: Extract changelog for this version
+        env:
+          REPO: ${{ github.repository }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          REPO_LC=$(echo "$REPO" | tr '[:upper:]' '[:lower:]')
           awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > /tmp/release-notes.md
           {
             echo ""
             echo "## Container image"
             echo ""
             echo '```bash'
-            echo "docker pull ghcr.io/${{ github.repository }}:${GITHUB_REF_NAME#v}"
+            echo "docker pull ghcr.io/${REPO_LC}:${VERSION}"
             echo '```'
             echo ""
             echo "Image is signed with [cosign](https://github.com/sigstore/cosign) keyless via GitHub OIDC."
             echo "Verify with:"
             echo '```bash'
-            echo "cosign verify ghcr.io/${{ github.repository }}:${GITHUB_REF_NAME#v} \\"
-            echo "  --certificate-identity-regexp 'https://github.com/${{ github.repository }}/.*' \\"
+            echo "cosign verify ghcr.io/${REPO_LC}:${VERSION} \\"
+            echo "  --certificate-identity-regexp 'https://github.com/${REPO}/.*' \\"
             echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
             echo '```'
           } >> /tmp/release-notes.md
