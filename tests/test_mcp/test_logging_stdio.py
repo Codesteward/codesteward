@@ -13,12 +13,12 @@ import io
 import logging
 import sys
 
+import pytest
 import structlog
-
 from codesteward.mcp.server import _configure_logging
 
 
-def test_structlog_writes_to_stderr_not_stdout(monkeypatch):
+def test_structlog_writes_to_stderr_not_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
     """structlog output must go to stderr, leaving stdout clean for JSON-RPC."""
     fake_stdout = io.StringIO()
     fake_stderr = io.StringIO()
@@ -39,7 +39,7 @@ def test_structlog_writes_to_stderr_not_stdout(monkeypatch):
     assert "another_event" in fake_stderr.getvalue()
 
 
-def test_stdlib_logging_writes_to_stderr(monkeypatch):
+def test_stdlib_logging_writes_to_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
     """stdlib logging must also stay off stdout."""
     fake_stdout = io.StringIO()
     fake_stderr = io.StringIO()
@@ -53,7 +53,6 @@ def test_stdlib_logging_writes_to_stderr(monkeypatch):
     logging.getLogger("codesteward.test").warning("stdlib_event")
 
     assert fake_stdout.getvalue() == "", (
-        "stdlib logging wrote to stdout. "
-        f"Got: {fake_stdout.getvalue()!r}"
+        f"stdlib logging wrote to stdout. Got: {fake_stdout.getvalue()!r}"
     )
     assert "stdlib_event" in fake_stderr.getvalue()

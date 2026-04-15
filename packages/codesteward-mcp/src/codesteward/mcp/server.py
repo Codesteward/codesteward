@@ -27,7 +27,6 @@ binding on ``HOST:PORT`` from config.  Stdio transport reads from stdin and
 writes to stdout — suitable for direct subprocess use by MCP clients.
 """
 
-
 import argparse
 import logging
 import shutil
@@ -169,13 +168,15 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
             with total), edges (dict with total), duration_ms,
             backend_connected, graph_backend.
         """
-        return str(await tool_graph_rebuild(
-            repo_path=repo_path or cfg.default_repo_path,
-            tenant_id=tenant_id or cfg.default_tenant_id,
-            repo_id=repo_id or cfg.default_repo_id,
-            changed_files=changed_files,
-            cfg=cfg,
-        ))
+        return str(
+            await tool_graph_rebuild(
+                repo_path=repo_path or cfg.default_repo_path,
+                tenant_id=tenant_id or cfg.default_tenant_id,
+                repo_id=repo_id or cfg.default_repo_id,
+                changed_files=changed_files,
+                cfg=cfg,
+            )
+        )
 
     # ── codebase_graph_query ─────────────────────────────────────────────────
 
@@ -228,14 +229,16 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
             Each result row's ``node_id`` field can be used as ``source_id``
             or ``target_id`` in ``graph_augment``.
         """
-        return str(await tool_codebase_graph_query(
-            query_type=query_type,
-            query=query,
-            tenant_id=tenant_id or cfg.default_tenant_id,
-            repo_id=repo_id or cfg.default_repo_id,
-            limit=limit,
-            cfg=cfg,
-        ))
+        return str(
+            await tool_codebase_graph_query(
+                query_type=query_type,
+                query=query,
+                tenant_id=tenant_id or cfg.default_tenant_id,
+                repo_id=repo_id or cfg.default_repo_id,
+                limit=limit,
+                cfg=cfg,
+            )
+        )
 
     # ── graph_augment ────────────────────────────────────────────────────────
 
@@ -281,13 +284,15 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
             YAML summary: status (ok|partial), written count, skipped count,
             edges list, skip_details (explains why each item was rejected).
         """
-        return str(await tool_graph_augment(
-            tenant_id=tenant_id or cfg.default_tenant_id,
-            repo_id=repo_id or cfg.default_repo_id,
-            agent_id=agent_id,
-            additions=additions,
-            cfg=cfg,
-        ))
+        return str(
+            await tool_graph_augment(
+                tenant_id=tenant_id or cfg.default_tenant_id,
+                repo_id=repo_id or cfg.default_repo_id,
+                agent_id=agent_id,
+                additions=additions,
+                cfg=cfg,
+            )
+        )
 
     # ── graph_status ─────────────────────────────────────────────────────────
 
@@ -315,11 +320,13 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
             ``nodes`` (dict with ``total`` count or null), ``edges`` (dict
             with ``total`` count or null).
         """
-        return str(await tool_graph_status(
-            tenant_id=tenant_id or cfg.default_tenant_id,
-            repo_id=repo_id or cfg.default_repo_id,
-            cfg=cfg,
-        ))
+        return str(
+            await tool_graph_status(
+                tenant_id=tenant_id or cfg.default_tenant_id,
+                repo_id=repo_id or cfg.default_repo_id,
+                cfg=cfg,
+            )
+        )
 
     # ── taint_analysis (optional — only when codesteward-taint is on PATH) ──
 
@@ -364,16 +371,18 @@ def build_mcp_server(config_file: str | None = None) -> tuple[FastMCP, Any]:
                 hops, level), and duration_ms. TAINT_FLOW edges are written
                 to Neo4j so subsequent semantic queries return results.
             """
-            return str(await tool_taint_analysis(
-                tenant_id=tenant_id or cfg.default_tenant_id,
-                repo_id=repo_id or cfg.default_repo_id,
-                repo_path=repo_path or cfg.default_repo_path,
-                frameworks=frameworks,
-                max_hops=max_hops,
-                persist_cfg=persist_cfg,
-                cfg=cfg,
-                binary=_taint_binary,
-            ))
+            return str(
+                await tool_taint_analysis(
+                    tenant_id=tenant_id or cfg.default_tenant_id,
+                    repo_id=repo_id or cfg.default_repo_id,
+                    repo_path=repo_path or cfg.default_repo_path,
+                    frameworks=frameworks,
+                    max_hops=max_hops,
+                    persist_cfg=persist_cfg,
+                    cfg=cfg,
+                    binary=_taint_binary,
+                )
+            )
 
         log.info("taint_analysis_tool_registered", binary=_TAINT_BINARY)
 
