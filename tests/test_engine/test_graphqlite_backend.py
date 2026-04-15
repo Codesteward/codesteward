@@ -10,7 +10,7 @@ import pytest
 
 graphqlite = pytest.importorskip("graphqlite", reason="graphqlite not installed")
 
-from codesteward.engine.backends.graphqlite import GraphQLiteBackend
+from codesteward.engine.backends.graphqlite import GraphQLiteBackend  # noqa: E402
 
 
 @pytest.fixture

@@ -46,6 +46,9 @@ FROM alpine:3.20 AS taint-fetcher
 
 ARG TAINT_VERSION
 
+SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
+
+# hadolint ignore=DL3018
 RUN apk add --no-cache curl \
  && mkdir -p /opt/taint \
  && if [ "${TAINT_VERSION}" != "none" ]; then \
@@ -67,6 +70,7 @@ ARG INSTALL_EXTRA
 WORKDIR /build
 
 # System build deps for tree-sitter native extensions
+# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         gcc \

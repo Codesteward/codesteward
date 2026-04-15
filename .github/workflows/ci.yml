@@ -50,6 +50,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
+          enable-cache: false
 
       - name: Install dependencies
         run: uv sync --all-packages --extra graph-all --frozen
@@ -86,6 +87,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+          enable-cache: false
 
       - name: Install dependencies
         run: uv sync --all-packages --extra graph-all --frozen
@@ -327,17 +329,15 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+          enable-cache: false
 
       - name: Export locked requirements
         run: |
           uv export --frozen --no-hashes --format requirements-txt --all-packages \
             --extra graph-all > requirements-locked.txt
 
-      - name: Install pip-audit
-        run: python -m pip install --no-cache-dir pip-audit
-
       - name: Run pip-audit
-        run: pip-audit -r requirements-locked.txt --disable-pip
+        run: uvx pip-audit -r requirements-locked.txt
 
   # ── Container build + Trivy scan (push to main only, no push) ───────────────
   container-scan:
@@ -375,7 +375,7 @@ jobs:
       - name: Install Trivy
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sh -s -- -b /usr/local/bin v0.70.0
+            | sh -s -- -b /usr/local/bin v0.69.3
           trivy --version
 
       - name: Trivy scan (fail on HIGH/CRITICAL)
