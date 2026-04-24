@@ -45,10 +45,10 @@ Rather than scanning files repeatedly, the agent queries a pre-built graph — c
 The fastest way to use Codesteward with Claude Code is the official plugin — it wires up the MCP server and installs three focused skills (`/codesteward`, `/codesteward-security`, `/codesteward-deps`) in one command:
 
 ```bash
-claude plugin add https://github.com/bitkaio/codesteward-plugin
+claude plugin add https://github.com/codesteward/codesteward-plugin
 ```
 
-No separate server setup needed. The plugin auto-starts `codesteward-mcp` with the GraphQLite backend via `uvx`. See the **[codesteward-plugin repo](https://github.com/bitkaio/codesteward-plugin)** for full details.
+No separate server setup needed. The plugin auto-starts `codesteward-mcp` with the GraphQLite backend via `uvx`. See the **[codesteward-plugin](https://github.com/codesteward/codesteward-plugin)** for full details.
 
 For other AI tools (Cursor, Cline, Codex, Gemini) or alternative backends (Neo4j, JanusGraph), use the Quick Start below.
 
