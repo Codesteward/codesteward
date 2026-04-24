@@ -42,10 +42,11 @@ Rather than scanning files repeatedly, the agent queries a pre-built graph — c
 
 ## Claude Code Plugin
 
-The fastest way to use Codesteward with Claude Code is the official plugin — it wires up the MCP server and installs three focused skills (`/codesteward`, `/codesteward-security`, `/codesteward-deps`) in one command:
+The fastest way to use Codesteward with Claude Code is the official plugin — it wires up the MCP server and installs three focused skills (`/codesteward`, `/codesteward-security`, `/codesteward-deps`):
 
 ```bash
-claude plugin add https://github.com/codesteward/codesteward-plugin
+claude plugin marketplace add codesteward/codesteward-plugin
+claude plugin install codesteward@codesteward-codesteward-plugin
 ```
 
 No separate server setup needed. The plugin auto-starts `codesteward-mcp` with the GraphQLite backend via `uvx`. See the **[codesteward-plugin](https://github.com/codesteward/codesteward-plugin)** for full details.
