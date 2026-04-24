@@ -46,7 +46,7 @@ The fastest way to use Codesteward with Claude Code is the official plugin — i
 
 ```bash
 claude plugin marketplace add codesteward/codesteward-plugin
-claude plugin install codesteward@codesteward-codesteward-plugin
+claude plugin install codesteward@codesteward
 ```
 
 No separate server setup needed. The plugin auto-starts `codesteward-mcp` with the GraphQLite backend via `uvx`. See the **[codesteward-plugin](https://github.com/codesteward/codesteward-plugin)** for full details.
