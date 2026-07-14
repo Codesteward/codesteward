@@ -30,6 +30,13 @@ import {
   resolveIncrementalPaths,
   seedMemoriesFromSteward,
 } from "@codesteward/learning";
+import {
+  presentFingerprintSet,
+  reconcileFindingsOnRereview,
+  scopeTags,
+  upsertFindingAcrossSessions,
+  type FindingScope,
+} from "@codesteward/findings";
 import type { OrgPromptPack } from "./prompt-pack.js";
 import { createLimiter, defaultMaxConcurrent } from "./concurrency.js";
 import { planCrossRepoFanOut } from "./cross-repo/fanout.js";
@@ -1060,15 +1067,36 @@ export class ReviewOrchestrator {
       }
     }
 
+    const findingScope: FindingScope = {
+      orgId: session.orgId ?? "local",
+      repoId: job.repoId,
+      mode: job.mode ?? session.mode ?? "gate",
+      prNumber: job.prNumber ?? job.scm?.prNumber ?? session.prNumber,
+      headBranch:
+        session.headBranch ??
+        (job as { headBranch?: string }).headBranch ??
+        undefined,
+    };
+
+    const scopeTagList = scopeTags(findingScope);
     const persisted = [];
+    const upsertStats = { created: 0, updated: 0, reopened: 0, kept_closed: 0 };
     for (const c of proved) {
-      const f = await findings.create({
-        ...c,
-        sessionId: session.id,
-        repoId: c.repoId ?? job.repoId,
-        tenantId: job.tenantId,
-        orgId: session.orgId,
-      });
+      const { finding: f, action } = await upsertFindingAcrossSessions(
+        findings,
+        {
+          ...c,
+          sessionId: session.id,
+          repoId: c.repoId ?? job.repoId,
+          tenantId: job.tenantId,
+          orgId: session.orgId ?? "local",
+          tags: [...new Set([...(c.tags ?? []), ...scopeTagList])],
+        },
+        findingScope,
+      );
+      upsertStats[action] += 1;
+      // Skip noise from kept_closed (user dismissed) in session feed
+      if (action === "kept_closed") continue;
       persisted.push(f);
       await this.emit({
         type: "finding",
@@ -1082,6 +1110,49 @@ export class ReviewOrchestrator {
     const skippedUnits = units.filter((u) => u.status === "skipped");
     const failedUnits = units.filter((u) => u.status === "failed");
     const recoveredUnits = units.filter((u) => u.healed);
+
+    // Auto-close prior open findings for this PR/branch that are no longer present.
+    // Use *verified* fingerprints (before re-review convergence drops "already reported").
+    // Never auto-fix when zero units completed (agents failed — absence is not a fix).
+    try {
+      const present = presentFingerprintSet(verified);
+      const reviewedPaths =
+        incremental && effectivePaths?.length ? effectivePaths : undefined;
+      const rec = await reconcileFindingsOnRereview(findings, {
+        scope: findingScope,
+        sessionId: session.id,
+        presentFingerprints: present,
+        reviewedPaths,
+        skip: completedUnits.length === 0,
+      });
+      if (rec.fixed.length) {
+        await this.emit({
+          type: "log",
+          sessionId: session.id,
+          level: "info",
+          message: `Lifecycle: auto-fixed ${rec.fixed.length} prior finding(s) no longer present on this ${findingScope.prNumber != null ? `PR #${findingScope.prNumber}` : findingScope.headBranch ? `branch ${findingScope.headBranch}` : "scope"}`,
+          ts: nowIso(),
+        });
+      }
+      if (upsertStats.updated || upsertStats.reopened) {
+        await this.emit({
+          type: "log",
+          sessionId: session.id,
+          level: "info",
+          message: `Lifecycle: upsert created=${upsertStats.created} updated=${upsertStats.updated} reopened=${upsertStats.reopened} kept_closed=${upsertStats.kept_closed}`,
+          ts: nowIso(),
+        });
+      }
+    } catch (err) {
+      await this.emit({
+        type: "log",
+        sessionId: session.id,
+        level: "warn",
+        message: `Finding lifecycle reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
+        ts: nowIso(),
+      });
+    }
+
     const zeroUseful =
       completedUnits.length === 0 &&
       persisted.filter((f) => !f.tags?.includes("coverage-gap")).length === 0;
