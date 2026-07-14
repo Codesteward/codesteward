@@ -14,10 +14,34 @@ Production deployment with Neo4j/JanusGraph graph, API, UI, and **horizontally s
 ## Scale model (50+ concurrent units)
 
 ```
-HPA workers: min 2 … max 20
+Default queue: Postgres (DATABASE_URL) — single backend, SKIP LOCKED
+Optional broker: STEW_QUEUE_BROKER=nats|rabbitmq|pulsar (PG remains SoT)
+
+HPA workers (CPU): min 2 … max 20   # worker.hpa — disable when using KEDA
+KEDA (queue depth): worker.keda.enabled + worker.queueBroker
 Each pod: STEW_MAX_CONCURRENT=8 specialist slots
-Peak: 20 × 8 = 160 concurrent specialist units
 ```
+
+### Optional queue broker + KEDA
+
+Minimal installs use **Postgres only** as the job queue.
+
+For queue-depth autoscaling:
+
+1. Run NATS JetStream, RabbitMQ, or Pulsar  
+2. Set on API **and** workers: `STEW_QUEUE_BROKER` + URL (`NATS_URL` / `RABBITMQ_URL` / `PULSAR_URL`)  
+3. Install [KEDA](https://keda.sh), set:
+
+```bash
+helm upgrade --install codesteward ./deploy/helm/codesteward \
+  --set worker.queueBroker=rabbitmq \
+  --set worker.keda.enabled=true \
+  --set worker.keda.broker=rabbitmq \
+  --set worker.hpa.enabled=false
+# secret codesteward-secrets must include rabbitmqUrl=amqp://...
+```
+
+Compose helper: `docker-compose.queue.yml` (profiles `rabbitmq` / `nats`).
 
 ```bash
 # External Postgres (recommended)
@@ -55,4 +79,5 @@ For local graph stacks: `deploy/compose/docker-compose.neo4j.yml` and `docker-co
 
 - API: `Authorization: Bearer <STEW_API_KEY>` when `secrets.apiKey` set
 - Webhooks: `/v1/webhooks/github` (HMAC) and `/v1/webhooks/gitlab` (token) — auth exempt
+- PR mention trigger: default `@codesteward` (`webhooks.mentionToken` / `STEW_MENTION_TOKEN`); e.g. `@codesteward review`
 - Optional OIDC: set `OIDC_ISSUER` (stub/status endpoint; full SSO is optional enterprise enhancement)

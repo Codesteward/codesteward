@@ -10,15 +10,21 @@ export class ApiError extends Error {
   }
 }
 
-function authHeaders(): Record<string, string> {
+async function authHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
   try {
-    // Prefer session token; fall back to API key
-    const session = localStorage.getItem("cs-session-token");
-    const key = localStorage.getItem("cs-api-key");
-    const token = session || key;
+    // Prefer Keycloak access_token (JWT); then legacy session; then API key
+    let token: string | null = null;
+    try {
+      const { getAccessToken } = await import("./oidc.js");
+      token = await getAccessToken();
+    } catch {
+      /* oidc not available */
+    }
+    if (!token) token = localStorage.getItem("cs-session-token");
+    if (!token) token = localStorage.getItem("cs-api-key");
     if (token) headers.Authorization = `Bearer ${token}`;
     const org = localStorage.getItem("cs-org-id");
     if (org) headers["X-Org-Id"] = org;
@@ -30,7 +36,7 @@ function authHeaders(): Record<string, string> {
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
-    ...authHeaders(),
+    ...(await authHeaders()),
     ...(init?.headers as Record<string, string>),
   };
   const res = await fetch(`${API_URL}${path}`, {
@@ -1271,11 +1277,21 @@ export function getOrgId(): string | null {
   }
 }
 
+/** Fired after setOrgId so sidebar / pages pick up the active org without a hard refresh. */
+export const ORG_CHANGED_EVENT = "cs:org-changed";
+
 export function setOrgId(orgId: string | null) {
   try {
     if (orgId) localStorage.setItem("cs-org-id", orgId);
     else localStorage.removeItem("cs-org-id");
   } catch {
     /* privacy mode */
+  }
+  try {
+    window.dispatchEvent(
+      new CustomEvent(ORG_CHANGED_EVENT, { detail: { orgId: orgId ?? null } }),
+    );
+  } catch {
+    /* non-browser */
   }
 }

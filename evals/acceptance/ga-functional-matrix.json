@@ -3,7 +3,7 @@
   "require_all": true,
   "items": [
     {"id": "RT-01", "name": "PR automated review", "api": ["POST /v1/reviews/gate", "POST /v1/webhooks/github"]},
-    {"id": "RT-02", "name": "Mention @steward review", "code": ["issue_comment", "@steward"]},
+    {"id": "RT-02", "name": "Mention @codesteward review", "code": ["issue_comment", "@codesteward", "STEW_MENTION_TOKEN"]},
     {"id": "RT-03", "name": "Incremental re-review", "code": ["lastReviewedSha", "fullReview"]},
     {"id": "RT-04", "name": "Draft PR skip", "code": ["draft"]},
     {"id": "RT-05", "name": "Local staged review", "cli": ["review"]},

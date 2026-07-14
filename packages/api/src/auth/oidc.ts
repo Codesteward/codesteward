@@ -18,8 +18,11 @@ export type OidcStatus =
       authorizationEndpoint: string;
       tokenEndpoint: string;
       jwksUri: string;
+      endSessionEndpoint?: string;
       clientId: string;
       scopes: string[];
+      /** SPA should use browser OIDC (PKCE); API only validates JWT */
+      spaAuth: true;
     };
 
 export interface OidcConfig {
@@ -166,8 +169,12 @@ export async function getOidcStatus(): Promise<OidcStatus> {
       authorizationEndpoint: toPublicOidcUrl(doc.authorization_endpoint),
       tokenEndpoint: toPublicOidcUrl(doc.token_endpoint),
       jwksUri: toPublicOidcUrl(doc.jwks_uri),
+      endSessionEndpoint: doc.end_session_endpoint
+        ? toPublicOidcUrl(doc.end_session_endpoint)
+        : undefined,
       clientId: cfg.clientId,
       scopes: cfg.scopes,
+      spaAuth: true,
     };
   } catch (err) {
     return {

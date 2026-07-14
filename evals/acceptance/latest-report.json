@@ -47,7 +47,7 @@
     },
     {
       "id": "RT-02",
-      "name": "Mention @steward review",
+      "name": "Mention @codesteward review",
       "ok": true,
       "reasons": []
     },

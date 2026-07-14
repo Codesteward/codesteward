@@ -61,11 +61,40 @@ worker:
       cpu: "2"
       memory: 4Gi
   hpa:
+    # CPU-based scale when no external queue broker
     enabled: true
     minReplicas: 2
     maxReplicas: 20
     targetCPUUtilizationPercentage: 60
     targetQueueDepth: 10
+  keda:
+    # Optional queue-based autoscaling (requires KEDA + STEW_QUEUE_BROKER).
+    # When enabled, prefer disabling worker.hpa to avoid dual scalers.
+    enabled: false
+    broker: "" # rabbitmq | nats | pulsar
+    minReplicas: 1
+    maxReplicas: 20
+    pollingInterval: 15
+    cooldownPeriod: 300
+    rabbitmq:
+      queueName: codesteward.reviews
+      queueLength: "5"
+      secretName: codesteward-secrets
+      secretKey: rabbitmqUrl
+    nats:
+      monitoringEndpoint: nats.nats.svc.cluster.local:8222
+      account: "$G"
+      stream: REVIEWS
+      consumer: stew-worker
+      lagThreshold: "5"
+    pulsar:
+      adminURL: http://pulsar-admin:8080
+      topic: persistent://public/default/codesteward-reviews
+      subscription: stew-worker
+      msgBacklogThreshold: "5"
+
+  # Optional broker env (set secret values separately)
+  queueBroker: "" # nats | rabbitmq | pulsar — empty = Postgres/file SoT only
 
 ui:
   replicas: 2
@@ -75,6 +104,8 @@ webhooks:
   enabled: true
   path: /v1/webhooks/github
   gitlabPath: /v1/webhooks/gitlab
+  # PR comment substring trigger (default product handle)
+  mentionToken: "@codesteward"
 
 # Production-safe default: null until kubectl/Job path is configured.
 # Use local|docker for Prove on workers with docker.sock; k8s when RBAC + kubectl available.

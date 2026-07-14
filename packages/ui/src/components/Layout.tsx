@@ -4,6 +4,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   api,
   getOrgId,
+  ORG_CHANGED_EVENT,
   setOrgId,
   setSessionToken,
   type AuthUser,
@@ -120,21 +121,46 @@ function OrgSwitcher() {
   const [current, setCurrent] = useState<string>(() => getOrgId() ?? "");
   const [open, setOpen] = useState(false);
 
+  function applyOrgList(list: OrgSummary[], preferId?: string | null) {
+    setOrgs(list);
+    const stored = preferId ?? getOrgId();
+    if (stored && list.some((o) => o.id === stored)) {
+      setCurrent(stored);
+      return;
+    }
+    if (list.length > 0) {
+      const first = list[0]!.id;
+      setCurrent(first);
+      if (!stored) setOrgId(first);
+    }
+  }
+
   useEffect(() => {
-    api
-      .listOrgs()
-      .then((r) => {
-        setOrgs(r.orgs);
-        const stored = getOrgId();
-        if (stored && r.orgs.some((o) => o.id === stored)) {
-          setCurrent(stored);
-        } else if (r.orgs.length > 0) {
-          const first = r.orgs[0]!.id;
-          setCurrent(first);
-          if (!stored) setOrgId(first);
-        }
-      })
-      .catch(() => setOrgs([]));
+    let alive = true;
+    const refresh = () => {
+      api
+        .listOrgs()
+        .then((r) => {
+          if (!alive) return;
+          applyOrgList(r.orgs, getOrgId());
+        })
+        .catch(() => {
+          if (alive) setOrgs([]);
+        });
+    };
+    refresh();
+    // Onboarding / other pages call setOrgId — keep switcher in sync without hard refresh
+    const onOrgChanged = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ orgId?: string | null }>).detail;
+      const next = detail?.orgId ?? getOrgId();
+      if (next) setCurrent(next);
+      refresh();
+    };
+    window.addEventListener(ORG_CHANGED_EVENT, onOrgChanged);
+    return () => {
+      alive = false;
+      window.removeEventListener(ORG_CHANGED_EVENT, onOrgChanged);
+    };
   }, []);
 
   function select(orgId: string) {
@@ -145,6 +171,7 @@ function OrgSwitcher() {
     setOrgId(orgId);
     setCurrent(orgId);
     setOpen(false);
+    // Reload so org-scoped pages refetch under the new X-Org-Id
     window.location.reload();
   }
 
@@ -304,23 +331,6 @@ function UserMenu() {
   }, []);
 
   async function logout() {
-    let idToken: string | undefined;
-    try {
-      idToken = sessionStorage.getItem("cs-oidc-id-token") ?? undefined;
-    } catch {
-      /* ignore */
-    }
-    let idpLogoutUrl: string | undefined;
-    try {
-      const res = await api.authLogout({
-        idToken,
-        postLogoutRedirectUri:
-          typeof window !== "undefined" ? `${window.location.origin}/` : undefined,
-      });
-      idpLogoutUrl = res.idpLogoutUrl;
-    } catch {
-      /* ignore */
-    }
     setSessionToken(null);
     try {
       localStorage.removeItem("cs-user");
@@ -328,11 +338,22 @@ function UserMenu() {
     } catch {
       /* ignore */
     }
-    // End Keycloak SSO cookie — otherwise Sign-in silently re-authenticates
-    if (idpLogoutUrl) {
-      toast.info("Signed out");
-      window.location.replace(idpLogoutUrl);
-      return;
+    // SPA OIDC: end Keycloak session in the browser (no API session store)
+    try {
+      const { getOidcUser, startOidcLogout } = await import("../lib/oidc.js");
+      const u = await getOidcUser();
+      if (u) {
+        toast.info("Signed out");
+        await startOidcLogout();
+        return;
+      }
+    } catch {
+      /* fall through to local logout */
+    }
+    try {
+      await api.authLogout({});
+    } catch {
+      /* ignore */
     }
     toast.info("Signed out");
     navigate("/", { replace: true });

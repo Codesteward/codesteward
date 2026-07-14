@@ -82,7 +82,7 @@ Matrix requires `require_all: true`. Static scanner walks packages/services/acti
 | ID | Capability | Evidence (representative) |
 |----|------------|---------------------------|
 | RT-01 | PR automated review | `POST /v1/reviews/gate`, `POST /v1/webhooks/github` |
-| RT-02 | Mention `@steward` | webhook issue_comment path |
+| RT-02 | Mention `@codesteward` | webhook issue_comment path |
 | RT-03 | Incremental re-review | `lastReviewedSha` / `fullReview` |
 | RT-04 | Draft PR skip | draft handling |
 | RT-05 | Local staged review | CLI `review` |

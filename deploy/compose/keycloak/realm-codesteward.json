@@ -48,14 +48,16 @@
       "standardFlowEnabled": true,
       "redirectUris": [
         "http://localhost:8080/*",
-        "http://localhost:8081/*",
+        "http://localhost:8080/auth/callback",
         "http://127.0.0.1:8080/*",
+        "http://127.0.0.1:8080/auth/callback",
+        "http://localhost:8081/*",
         "http://127.0.0.1:8081/*"
       ],
-      "webOrigins": ["http://localhost:8080", "http://localhost:8081", "+"],
+      "webOrigins": ["http://localhost:8080", "http://127.0.0.1:8080", "http://localhost:8081", "+"],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "+"
+        "post.logout.redirect.uris": "http://localhost:8080/*##http://127.0.0.1:8080/*##+"
       },
       "protocol": "openid-connect",
       "fullScopeAllowed": true,

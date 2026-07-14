@@ -1,0 +1,38 @@
+# Optional message brokers for hybrid job queue (Postgres SoT + broker dispatch).
+# Usage (with category stack):
+#   docker compose -f docker-compose.category.yml -f docker-compose.queue.yml up -d
+#
+# Then set on api + worker:
+#   STEW_QUEUE_BROKER=rabbitmq   RABBITMQ_URL=amqp://steward:steward@rabbitmq:5672
+#   # or STEW_QUEUE_BROKER=nats  NATS_URL=nats://nats:4222
+#
+# Minimal installs omit this file and use Postgres-only queue (DATABASE_URL).
+name: codesteward-category
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    profiles: ["rabbitmq"]
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: steward
+      RABBITMQ_DEFAULT_PASS: steward
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  nats:
+    image: nats:2.10-alpine
+    profiles: ["nats"]
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  # Pulsar is heavy; use an external cluster or:
+  #   docker run -p 6650:6650 -p 8080:8080 apachepulsar/pulsar:3.3.0 bin/pulsar standalone
+  # STEW_QUEUE_BROKER=pulsar PULSAR_URL=pulsar://host.docker.internal:6650

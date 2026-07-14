@@ -135,6 +135,47 @@ export class JobsRepository {
     return { ...payload, attempts: row.attempts };
   }
 
+  /**
+   * Claim a specific job after a broker message delivery (hybrid queue).
+   * Returns undefined if already completed or owned by a live lease.
+   */
+  async claimById(id: string, workerId: string): Promise<ReviewJob | undefined> {
+    const leaseMs = Number(process.env.STEW_JOB_LEASE_MS ?? 2_700_000);
+    const res = await this.db.query<JobRow>(
+      `UPDATE jobs j SET
+         status = 'running',
+         attempts = j.attempts + 1,
+         locked_at = now(),
+         locked_by = $2,
+         updated_at = now(),
+         payload = jsonb_set(j.payload, '{attempts}', to_jsonb(j.attempts + 1), true)
+       WHERE j.id = $1
+         AND (
+           j.status = 'pending'
+           OR (
+             j.status = 'running'
+             AND (
+               j.locked_at IS NULL
+               OR j.locked_at < now() - ($3::text || ' milliseconds')::interval
+             )
+           )
+         )
+       RETURNING j.*`,
+      [id, workerId, String(leaseMs)],
+    );
+    const row = res.rows[0];
+    if (!row) return undefined;
+    const payload = row.payload as ReviewJob;
+    return { ...payload, attempts: row.attempts };
+  }
+
+  async getPayload(id: string): Promise<ReviewJob | undefined> {
+    const res = await this.db.query<JobRow>(`SELECT * FROM jobs WHERE id = $1`, [id]);
+    const row = res.rows[0];
+    if (!row) return undefined;
+    return { ...(row.payload as ReviewJob), attempts: row.attempts, id: row.id };
+  }
+
   async complete(id: string): Promise<void> {
     await this.db.query(
       `UPDATE jobs SET status = 'completed', completed_at = now(), updated_at = now(),

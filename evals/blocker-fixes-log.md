@@ -69,7 +69,7 @@
 | GitLab webhook handler + token/HMAC verify | `packages/webhooks/src/gitlab-handler.ts` |
 | Route `POST /v1/webhooks/gitlab` | `packages/api/src/app.ts` |
 | GitHub PR files pagination (`per_page=100`, Link headers) | `packages/scm/src/github.ts` |
-| `issue_comment` mention trigger `@steward review` | `packages/webhooks/src/github-handler.ts` |
+| `issue_comment` mention trigger `@codesteward review` | `packages/webhooks/src/github-handler.ts` (`STEW_MENTION_TOKEN`) |
 
 ## Attestation
 

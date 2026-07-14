@@ -34,5 +34,6 @@
     "smoke:category": "node scripts/category-live-smoke.mjs",
     "check:category-leader": "node scripts/category-leader-check.mjs && node scripts/category-acceptance.mjs"
   },
-  "author": "bitkaio LLC"
+  "author": "bitkaio LLC",
+  "license": "Apache-2.0"
 }

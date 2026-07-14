@@ -42,7 +42,7 @@ export interface GitHubWebhookDeps {
     ownerLogin?: string;
   }) => string | Promise<string>;
   defaultRiskTier?: ReviewJob["riskTier"];
-  /** Mention string that triggers review (default @steward) */
+  /** Mention string that triggers review (default @codesteward) */
   mentionToken?: string;
 }
 
@@ -56,7 +56,7 @@ export interface HandleResult {
  * Handle GitHub webhook events for PR Gate path.
  * Supported:
  * - pull_request (opened, synchronize, reopened, ready_for_review)
- * - issue_comment (created) when body mentions @steward review
+ * - issue_comment (created) when body mentions @codesteward review
  */
 export async function handleGitHubWebhook(
   deps: GitHubWebhookDeps,
@@ -151,9 +151,13 @@ async function handleIssueCommentMention(
     return { ok: true, status: 200, body: { ignored: true, reason: "not_pr_comment", delivery } };
   }
 
-  const mention = (deps.mentionToken ?? process.env.STEW_MENTION_TOKEN ?? "@steward").toLowerCase();
+  const mention = (
+    deps.mentionToken ??
+    process.env.STEW_MENTION_TOKEN ??
+    "@codesteward"
+  ).toLowerCase();
   const body = (payload.comment?.body ?? "").toLowerCase();
-  // Match "@steward review" or bare mention token + review keyword
+  // Match "@codesteward review" or bare mention token + review keyword
   const triggers = [
     `${mention} review`,
     `${mention} please review`,

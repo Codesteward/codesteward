@@ -1720,21 +1720,34 @@ label {
   inset: 22px;
   border-radius: 50%;
   background: var(--bg-elevated);
-  display: grid;
-  place-items: center;
+  /* Flex (not multi-row grid) so number + label center as one block in the ring */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
+  gap: 0.1rem;
+  line-height: 1.15;
+  pointer-events: none;
+  box-sizing: border-box;
+  padding: 0.15rem;
 }
 .donut-hole strong {
   font-size: 1.15rem;
   font-weight: 700;
   display: block;
   line-height: 1.1;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 .donut-hole span {
   font-size: 0.65rem;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  display: block;
+  margin: 0;
+  line-height: 1.2;
 }
 .legend {
   display: flex;
@@ -3413,3 +3426,9 @@ button.mustache-chip:disabled {
   cursor: default;
 }
 
+
+.onboarding-step.locked {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}

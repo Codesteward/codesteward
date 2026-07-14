@@ -1,0 +1,55 @@
+{{- if and .Values.worker.keda.enabled .Values.worker.keda.broker }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "codesteward.name" . }}-worker
+  labels:
+    {{- include "codesteward.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "codesteward.name" . }}-worker
+  minReplicaCount: {{ .Values.worker.keda.minReplicas }}
+  maxReplicaCount: {{ .Values.worker.keda.maxReplicas }}
+  pollingInterval: {{ .Values.worker.keda.pollingInterval | default 15 }}
+  cooldownPeriod: {{ .Values.worker.keda.cooldownPeriod | default 300 }}
+  triggers:
+{{- if eq .Values.worker.keda.broker "rabbitmq" }}
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: {{ .Values.worker.keda.rabbitmq.queueName | quote }}
+        mode: QueueLength
+        value: {{ .Values.worker.keda.rabbitmq.queueLength | quote }}
+      authenticationRef:
+        name: {{ include "codesteward.name" . }}-keda-rabbitmq
+{{- else if eq .Values.worker.keda.broker "nats" }}
+    - type: nats-jetstream
+      metadata:
+        natsServerMonitoringEndpoint: {{ .Values.worker.keda.nats.monitoringEndpoint | quote }}
+        account: {{ .Values.worker.keda.nats.account | default "$G" | quote }}
+        stream: {{ .Values.worker.keda.nats.stream | quote }}
+        consumer: {{ .Values.worker.keda.nats.consumer | quote }}
+        lagThreshold: {{ .Values.worker.keda.nats.lagThreshold | quote }}
+{{- else if eq .Values.worker.keda.broker "pulsar" }}
+    - type: pulsar
+      metadata:
+        adminURL: {{ .Values.worker.keda.pulsar.adminURL | quote }}
+        topic: {{ .Values.worker.keda.pulsar.topic | quote }}
+        subscription: {{ .Values.worker.keda.pulsar.subscription | quote }}
+        msgBacklogThreshold: {{ .Values.worker.keda.pulsar.msgBacklogThreshold | quote }}
+{{- end }}
+{{- if eq .Values.worker.keda.broker "rabbitmq" }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ include "codesteward.name" . }}-keda-rabbitmq
+  labels:
+    {{- include "codesteward.labels" . | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: {{ .Values.worker.keda.rabbitmq.secretName | default "codesteward-secrets" }}
+      key: {{ .Values.worker.keda.rabbitmq.secretKey | default "rabbitmqUrl" }}
+{{- end }}
+{{- end }}

@@ -52,6 +52,8 @@ x-stew-env: &stew-env
   GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
   GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
   GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-category-webhook-secret}
+  # PR comment trigger (string match on issue_comment body). Brand handle: @codesteward
+  STEW_MENTION_TOKEN: ${STEW_MENTION_TOKEN:-@codesteward}
   STEW_SANDBOX_PROVIDER: ${STEW_SANDBOX_PROVIDER:-local}
   STEW_REQUIRE_PG_TENANCY: "1"
   # SCIM 2.0 (IdP directory provisioning) — Bearer token for /scim/v2/*
@@ -65,6 +67,16 @@ x-stew-env: &stew-env
   LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
   STEW_LANGFUSE_TRACE_MODE: ${STEW_LANGFUSE_TRACE_MODE:-session}
   STEW_LANGFUSE_REDACT: ${STEW_LANGFUSE_REDACT:-1}
+  # Optional job dispatch broker (KEDA). Empty = Postgres/file SoT only.
+  # rabbitmq | nats | pulsar — requires matching URL below
+  STEW_QUEUE_BROKER: ${STEW_QUEUE_BROKER:-}
+  NATS_URL: ${NATS_URL:-}
+  RABBITMQ_URL: ${RABBITMQ_URL:-}
+  AMQP_URL: ${AMQP_URL:-}
+  STEW_RABBITMQ_QUEUE: ${STEW_RABBITMQ_QUEUE:-codesteward.reviews}
+  PULSAR_URL: ${PULSAR_URL:-}
+  STEW_PULSAR_TOPIC: ${STEW_PULSAR_TOPIC:-persistent://public/default/codesteward-reviews}
+  STEW_PULSAR_SUBSCRIPTION: ${STEW_PULSAR_SUBSCRIPTION:-stew-worker}
 
 services:
   postgres:

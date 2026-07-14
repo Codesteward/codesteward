@@ -12,6 +12,7 @@ import {
 import { ThemeToggle } from "../components/Layout";
 import { Logo } from "../components/Logo";
 import { api, getSessionToken } from "../lib/api";
+import { getAccessToken } from "../lib/oidc";
 
 const FEATURES = [
   {
@@ -60,7 +61,14 @@ export function Home() {
   useEffect(() => {
     let alive = true;
     (async () => {
-      const token = getSessionToken() || localStorage.getItem("cs-api-key");
+      let token = getSessionToken() || localStorage.getItem("cs-api-key");
+      if (!token) {
+        try {
+          token = await getAccessToken();
+        } catch {
+          token = null;
+        }
+      }
       if (!token) {
         if (alive) setChecking(false);
         return;

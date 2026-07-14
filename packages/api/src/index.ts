@@ -6,7 +6,14 @@ export {
   learningStore,
 } from "./app.js";
 export { SessionStore, PgSessionStore, createSessionStore } from "./store.js";
-export { FileJobQueue, PgJobQueue, createJobQueue } from "./queue.js";
+export {
+  FileJobQueue,
+  PgJobQueue,
+  HybridJobQueue,
+  createJobQueue,
+} from "./queue.js";
+export { createJobBroker, resolveBrokerKind } from "./queue-broker.js";
+export type { JobBroker, BrokerKind, ConsumedJob } from "./queue-broker.js";
 export { runReviewJob, resumeIncompleteSessions } from "./run-job.js";
 export {
   startInlineWorkerLoop,

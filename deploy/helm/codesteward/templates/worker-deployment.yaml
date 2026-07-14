@@ -38,6 +38,12 @@ spec:
               value: {{ .Values.sandbox.jobImage | quote }}
             - name: STEW_USE_DEEPAGENTS
               value: {{ .Values.env.STEW_USE_DEEPAGENTS | quote }}
+            - name: STEW_MENTION_TOKEN
+              value: {{ .Values.webhooks.mentionToken | default "@codesteward" | quote }}
+            {{- if .Values.worker.queueBroker }}
+            - name: STEW_QUEUE_BROKER
+              value: {{ .Values.worker.queueBroker | quote }}
+            {{- end }}
             - name: MODEL_PROVIDER
               value: {{ .Values.env.MODEL_PROVIDER | quote }}
             - name: MODEL_NAME

@@ -1,93 +1,143 @@
-# CodeSteward Review
+<p align="center">
+  <img src="packages/ui/public/brand/codesteward-wordmark.png" alt="Codesteward" height="56" />
+</p>
 
-> **Functional GA (self-hosted)** — design matrix + runtime smoke green (`node scripts/ga-acceptance.mjs`).  
-> Confirmations: `evals/architect-ga-final.md`, `evals/validator-ga-final.md`, `evals/GA-SHIPPED.md`.  
-> Enterprise SSO remains optional. Not a hosted multi-tenant SaaS GA.
+<h1 align="center">Codesteward Review</h1>
 
-**Review every change. Steward every branch.**
+<p align="center">
+  <strong>Agentic code review that knows your graph.</strong><br />
+  Gate every merge. Steward every branch. Self-hosted.
+</p>
 
-Open-source **agentic code review + codebase stewardship** platform built on
-[Codesteward Graph](https://github.com/Codesteward/codesteward) — dual-mode
-parity for **PR/MR gates** and **branch/path/full-tree stewardship**, one
-finding schema, one policy model, multi-specialist agents, multi-provider LLMs,
-and a full product UI.
+<p align="center">
+  <a href="https://codesteward.ai">codesteward.ai</a> ·
+  <a href="research/design/05-full-product-architecture.md">Architecture</a> ·
+  <a href="deploy/compose/docker-compose.category.yml">Category stack</a> ·
+  <a href="deploy/helm/codesteward">Helm</a>
+</p>
 
-> Architecture (target GA design): [`research/design/05-full-product-architecture.md`](research/design/05-full-product-architecture.md)  
-> Framework ADR: [`research/design/04-framework-decision.md`](research/design/04-framework-decision.md)
+<p align="center">
+  <code>Node ≥ 22</code> · <code>pnpm 9</code> · <code>TypeScript ESM</code> ·
+  <a href="LICENSE"><code>Apache-2.0</code></a> · <code>© bitkaio LLC</code>
+</p>
 
-## Features (beta foundation)
+---
 
-| Capability | Package / surface |
-|------------|-------------------|
-| Shared types & Zod schemas | `@codesteward/core` |
-| Multi-provider model router | `@codesteward/model-router` |
-| Graph MCP client (HTTP + mock) | `@codesteward/graph-client` |
-| STEWARD.md + path rules | `@codesteward/policy` |
-| Findings store + fingerprint + SARIF 2.1.0 | `@codesteward/findings` |
-| Learning (👍/👎 reactions, org memories) | `@codesteward/learning` |
-| Postgres data layer | `@codesteward/db` |
-| Sandbox (local/docker/k8s stub/null) + Prove | `@codesteward/sandbox` |
-| Multi-SCM (GitHub, GitLab, Bitbucket, Azure DevOps, Gitea) | `@codesteward/scm` |
-| Orchestrator + specialists + judge + discourse + noise + diff packing | `@codesteward/agents` |
-| HTTP API (Hono) + SSE progress | `@codesteward/api` |
-| CLI `stew` | `@codesteward/cli` |
-| GitHub Action | `actions/review-action` |
-| Worker | `@codesteward/worker` |
-| Review MCP tools | `@codesteward/mcp-server` |
-| Product UI | `@codesteward/ui` |
+## Why Codesteward
 
-## Quick start (local demo)
+Most AI review tools skim a diff and guess. **Codesteward** runs multi-agent reviews against a **structural code graph** — call chains, dependencies, auth paths — so findings are grounded in how the codebase actually works.
 
-Requirements: **Node ≥ 22**, **pnpm 9**.
+| | **Gate** | **Stewardship** |
+|--|----------|-----------------|
+| **When** | PR / MR open, push, or `@codesteward review` | Long-lived branches & paths |
+| **Scope** | Diff-focused units | Package / path / tree batches |
+| **Output** | Inline review, check run, verdict | Durable findings lifecycle |
+| **Policy** | `STEWARD.md` + path rules from **base** branch | Same model |
 
-```bash
-pnpm install
-pnpm -r run build
+One finding schema. One policy model. Multi-provider LLMs. Product UI, CLI, GitHub Action, and workers you can scale.
 
-# Offline graph (no MCP required)
-export GRAPH_MOCK=0
-# GRAPH_MOCK=1  # unit tests / offline only — demos must use live graph
+---
 
-# Optional: durable Postgres (omit for .steward-data JSON files)
-# export DATABASE_URL=postgres://steward:steward@localhost:5432/codesteward
-# pnpm --filter @codesteward/db run migrate
+## Highlights
 
-# Optional LLM keys (without keys, router returns mock JSON)
-export MODEL_PROVIDER=openai
-export OPENAI_API_KEY=sk-...
-# or ANTHROPIC_API_KEY / XAI_API_KEY / LITELLM_BASE_URL
+- **Graph-aware agents** — specialists use Codesteward Graph (MCP) for structure, not only the patch  
+- **Dual mode** — PR gate + continuous branch stewardship on one platform  
+- **Identity that scales** — Keycloak OIDC (SPA PKCE); API validates JWTs (no sticky sessions)  
+- **Multi-tenant orgs** — members, connectors, policy, learning, SCIM path `/scim/v2/orgs/{slug}`  
+- **Learning loop** — 👍/👎, dismissals, org memories → quieter next reviews  
+- **Multi-SCM** — GitHub App/webhooks, GitLab, Bitbucket, Azure DevOps, Gitea  
+- **Horizontal scale** — API/UI stateless; workers × concurrent specialists; optional queue broker + KEDA  
+- **Self-hosted** — your cloud, your models, your keys  
 
-# Terminal A — API
-pnpm dev:api
+---
 
-# Terminal B — Worker
-pnpm dev:worker
+## Architecture
 
-# Terminal C — UI
-pnpm dev:ui
-# open http://localhost:8080
+```text
+┌──────────────┐  SPA OIDC (PKCE)  ┌─────────────────┐
+│  UI :8080    │ ───────────────►  │  Keycloak IdP   │
+│  React       │ ◄── access_token ─│  MFA / federated│
+└──────┬───────┘                   └─────────────────┘
+       │ Bearer JWT
+       ▼
+┌──────────────┐   enqueue    ┌──────────────────────────────┐
+│  API :8081   │ ───────────► │  Postgres jobs (default SoT) │
+│  Hono        │              │  + optional NATS/Rabbit/Pulsar│
+└──────┬───────┘              └──────────────┬───────────────┘
+       │ sessions / findings                 │ claim
+       ▼                                     ▼
+┌──────────────┐                    ┌─────────────────┐
+│  Postgres    │                    │  Workers (HPA / │
+│  product SoT │                    │  KEDA optional) │
+└──────────────┘                    └────────┬────────┘
+                                             │
+              ┌──────────────────────────────┼────────────────────────┐
+              ▼                              ▼                        ▼
+     Codesteward Graph MCP           Model router              Sandbox / Prove
+     GraphQLite · Neo4j · Janus      OpenAI · Anthropic · xAI   local · docker · k8s
 ```
 
-### CLI (no API required)
+| Layer | Role |
+|-------|------|
+| **UI** | Product surface; browser holds OIDC tokens |
+| **API** | Validates JWT / API key; enqueues reviews; webhooks |
+| **Worker** | Orchestrator, specialists, judge, SCM publish |
+| **Graph** | Structural intelligence via MCP |
+| **Queue** | Postgres by default; optional broker for KEDA depth scaling |
+
+---
+
+## Quick start
+
+### Category stack (recommended demo)
+
+Full stack: Postgres, Graph MCP, API, worker, UI, Keycloak.
 
 ```bash
-pnpm stew -- config doctor
-pnpm stew -- doctor full                 # deep checks (graph, docker, SCM tokens)
-pnpm stew -- rules list -p .
-pnpm stew -- graph status
-pnpm stew -- review -p . -r codesteward --tier lite
+export OPENAI_API_KEY=sk-...   # or compatible provider
+pnpm install && pnpm -r run build
+
+pnpm compose:category
+# UI  → http://localhost:8080
+# API → http://localhost:8081
+# IdP → http://localhost:8083  (admin / admin for Keycloak console)
+```
+
+Sign in via the platform IdP (Codesteward-themed Keycloak).  
+Demo app user (realm seed): `admin@demo.com` / `DemoAdmin.123`.
+
+```bash
+pnpm compose:category:down
+```
+
+### Local packages (dev)
+
+```bash
+pnpm install && pnpm -r run build
+
+# Optional durable state
+export DATABASE_URL=postgres://steward:steward@localhost:5432/codesteward
+pnpm migrate
+
+export MODEL_PROVIDER=openai-compatible OPENAI_API_KEY=sk-...
+pnpm dev:api      # :8081
+pnpm dev:worker
+pnpm dev:ui       # :8080
+```
+
+### CLI
+
+```bash
+pnpm stew -- doctor full
 pnpm stew -- review -p . -r codesteward --tier thorough --depth thorough
 pnpm stew -- steward -p . -r codesteward
-pnpm stew -- resume <sessionId>          # re-enqueue failed session via API
-pnpm stew -- findings export --sarif -s <sessionId> -o out.sarif
-pnpm stew -- export sarif -s <sessionId>
-pnpm stew -- ask "Summarize what a review unit is"
+pnpm stew -- findings export --sarif -s <sessionId>
+pnpm stew -- ask "What does a review unit cover?"
 ```
 
 ### GitHub Action
 
 ```yaml
-# .github/workflows/codesteward.yml
 - uses: ./actions/review-action
   with:
     risk-tier: full
@@ -96,204 +146,164 @@ pnpm stew -- ask "Summarize what a review unit is"
     sarif-output: codesteward.sarif
   env:
     OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-    GRAPH_MOCK: "1"
 ```
 
-### Learning & reactions
+---
 
-```bash
-# Thumbs-down a finding (suppresses similar fingerprints on next judge)
-curl -X POST http://localhost:8081/v1/findings/<id>/react \
-  -H 'content-type: application/json' \
-  -d '{"reaction":"👎","note":"false positive"}'
+## Product capabilities
 
-# List org memories
-curl http://localhost:8081/v1/org/memories?orgId=local
+### Review pipeline
 
-# SARIF for a session
-curl http://localhost:8081/v1/sessions/<id>/findings.sarif
-```
-
-### Docker Compose demo
-
-```bash
-cp deploy/compose/.env.example deploy/compose/.env
-# edit keys as needed
-docker compose -f deploy/compose/docker-compose.demo.yml up --build
-# UI :8080  API :8081
-# Real graph MCP:
-# docker compose -f deploy/compose/docker-compose.demo.yml --profile graph up --build
-```
-
-## Architecture
-
-```text
-┌─────────────┐   ┌──────────────┐   ┌──────────────────┐
-│  stew-ui    │──▶│  stew-api    │──▶│ file/NATS queue  │
-│  :8080      │   │  :8081       │   └────────┬─────────┘
-└─────────────┘   └──────────────┘            │
-                      │                       ▼
-                      │              ┌──────────────────┐
- CLI / MCP / Action ──┘              │  stew-worker     │
-                                     │  orchestrator    │
-                                     └─────┬────────────┘
-                       ┌───────────────────┼───────────────────┐
-                       ▼                   ▼                   ▼
-              Codesteward Graph      Model router         Sandbox
-              MCP :3000              (multi-provider)     (prove tier)
-              GraphQLite|Neo4j|
-              JanusGraph
-```
-
-### Dual mode
-
-- **Gate** — PR/MR precision review: diff-scoped units, specialists, verifier, judge, optional SCM publish.
-- **Stewardship** — branch/path/full tree: package-batched units, durable findings lifecycle.
-
-### Graph backends
-
-| Backend | Use | Env |
-|---------|-----|-----|
-| **GraphQLite** | Demo / laptop | `GRAPH_BACKEND=graphqlite` |
-| **Neo4j** | Production | `NEO4J_URI=bolt://…` |
-| **JanusGraph** | Large scale | `JANUSGRAPH_URL=ws://…` |
-| **Mock** | CI / offline | `GRAPH_MOCK=1` |
-
-Client: `GRAPH_MCP_URL=http://localhost:3000/mcp` (or SSE). Every call is
-scoped with `tenantId` + `repoId`. Cross-repo: configure links in UI/API, then
-`graph.queryAcross(links)`.
-
-### Multi-provider models
-
-```bash
-MODEL_PROVIDER=openai|anthropic|xai|openai-compatible|litellm
-MODEL_NAME=gpt-4.1
-STEW_MODEL_JUDGE=…      # strong — judge/security/verifier
-STEW_MODEL_CHEAP=…      # cheap — summary/generalist
-OPENAI_API_KEY=
-ANTHROPIC_API_KEY=
-XAI_API_KEY=            # OpenAI-compatible at https://api.x.ai/v1
-OPENAI_BASE_URL=
-LITELLM_BASE_URL=
-```
-
-Role routing: **judge/security → strong model**; **summary/generalist → cheap**.
-
-### Agent runtime
-
-- Default: `SimpleAgentRunner` (fetch-based chat completions, no LangChain required).
-- Plug-in: `createDeepAgentRunner` + optional peerDep `deepagents` ≥1.10.7
-  (see `packages/agents/src/runner.ts` and TDR-004).
-
-Specialists: coordinator, generalist, correctness, security, performance,
-testing, rules, requirements, discourse, evidence/prove, judge, verifier.
-
-### Scaling to 50+ agents
-
-```text
-workers (K8s replicas) × STEW_WORKER_CONCURRENCY (jobs/pod)
-                       × STEW_MAX_CONCURRENT (specialists/job, default 8)
-
-Example: 8 worker pods × 4 jobs × 8 subagents ≈ 256 concurrent loops
-Mega stewardship jobs split into ReviewUnits (package/path batches).
-Prefer NATS JetStream subjects reviews.gate / reviews.steward / reviews.unit.
-```
-
-Do **not** pack 50 specialists into one Node process without a queue —
-horizontal workers are the scale unit.
+Specialists (correctness, security, performance, testing, rules, …) → optional discourse (thorough) → verifier → judge → noise filter → gate verdict → SCM publish (inline comments + check run).
 
 ### Policy
 
-- `STEWARD.md` — severity floor, nit caps, skip globs, verification bar
-- `.codesteward/rules/**/*.md` — path-scoped guidance
-- **Always load from base/default branch**, never PR head alone
+- **`STEWARD.md`** — severity floor, nits, skip globs, verification bar  
+- **`.codesteward/rules/**/*.md`** — path-scoped guidance  
+- Always loaded from the **base / default branch**, not PR head alone  
 
-### Sandbox / Prove
+### Webhooks & mentions
 
-- `NullSandbox` — demo default
-- `LocalSandbox` — host or `docker run`
-- `K8sSandbox` — stub with production TODOs
-- Prove jobs: generateTests + runTests + collectArtifacts
+```bash
+# GitHub App webhook
+# https://<public-api-host>/v1/webhooks/github
 
-## Monorepo layout
+# On a PR comment (default mention token):
+@codesteward review
+```
+
+Override with `STEW_MENTION_TOKEN`. Events: `pull_request` (opened / synchronize / reopened / ready_for_review) and `issue_comment` for mentions.
+
+### Identity & orgs
+
+- **Keycloak** as multi-tenant identity SoT (groups `/orgs/{slug}`, roles `steward-admin|reviewer|viewer`)  
+- SPA OIDC login; API validates access tokens via JWKS  
+- Org slug auto-generated from name; **unique per tenant** (409 on collision)  
+- SCIM: `/scim/v2/orgs/{orgId|slug}` with per-org bearer  
+
+### Learning
+
+React 👍/👎 on findings, set false-positive / won’t-fix — org memories feed the next review prompt. SARIF export for GHAS / other tools.
+
+### Scaling
+
+| Concern | Approach |
+|---------|----------|
+| More concurrent reviews | Scale **workers** (`STEW_MAX_CONCURRENT` specialists per job) |
+| More HTTP / webhooks | Scale **API** (JWT auth is stateless) |
+| More UI traffic | Scale **UI** (static nginx) |
+| Queue-depth autoscaling | Optional `STEW_QUEUE_BROKER=nats\|rabbitmq\|pulsar` + KEDA |
+
+```bash
+# Minimal: Postgres only for jobs
+DATABASE_URL=postgres://...
+
+# Optional hybrid (PG SoT + broker for KEDA)
+STEW_QUEUE_BROKER=rabbitmq
+RABBITMQ_URL=amqp://...
+
+# Helm workers
+helm upgrade --install codesteward ./deploy/helm/codesteward \
+  --set worker.hpa.maxReplicas=20 \
+  --set worker.maxConcurrent=8
+```
+
+Compose brokers: `deploy/compose/docker-compose.queue.yml` (profiles `rabbitmq` / `nats`).
+
+---
+
+## Monorepo
 
 ```text
 packages/
-  core, model-router, graph-client, policy, findings,
-  sandbox, scm, agents, api, cli, mcp-server, ui
-services/
-  worker          # @codesteward/worker
-deploy/compose/   # demo stack
-skills/           # agent skills (steward-review)
-research/design/  # product architecture
+  core · model-router · graph-client · policy · findings
+  learning · db · sandbox · scm · agents · webhooks
+  api · cli · mcp-server · ui
+services/worker          # job consumer
+actions/review-action    # GitHub Action
+deploy/compose           # demo + category + keycloak + queue
+deploy/helm/codesteward  # production chart + HPA / KEDA
+research/design          # architecture ADRs
 ```
-
-## Scripts
 
 | Script | Purpose |
 |--------|---------|
 | `pnpm build` | Build all packages |
-| `pnpm dev:api` | API on :8081 |
-| `pnpm dev:worker` | Job worker |
-| `pnpm dev:ui` | Vite UI on :8080 |
+| `pnpm compose:category` | Full product demo stack |
+| `pnpm dev:api` / `dev:worker` / `dev:ui` | Local surfaces |
 | `pnpm stew -- …` | CLI |
-| `pnpm compose:demo` | Docker demo |
+| `pnpm migrate` | Postgres migrations |
+
+---
+
+## Configuration sketch
+
+```bash
+# Graph
+GRAPH_MOCK=0
+GRAPH_MCP_URL=http://localhost:3000/sse   # or /mcp depending on transport
+
+# Models
+MODEL_PROVIDER=openai-compatible
+MODEL_NAME=gpt-4.1-mini
+OPENAI_API_KEY=
+# STEW_MODEL_JUDGE=…  STEW_MODEL_CHEAP=…
+
+# Auth (category stack sets these for Keycloak)
+STEW_IDENTITY_MODE=keycloak
+OIDC_ISSUER=http://keycloak:8083/realms/codesteward
+OIDC_PUBLIC_ISSUER=http://localhost:8083/realms/codesteward
+OIDC_CLIENT_ID=codesteward-ui
+
+# Webhooks (public URL required for live GitHub)
+STEW_WEBHOOK_PUBLIC_URL=https://your-tunnel.example
+GITHUB_WEBHOOK_SECRET=...
+STEW_MENTION_TOKEN=@codesteward
+```
+
+See [`.env.example`](.env.example) for the full template.
+
+---
+
+## Graph backends
+
+| Backend | Use | Notes |
+|---------|-----|--------|
+| **GraphQLite** | Laptop / demo | Embedded SQLite graph |
+| **Neo4j** | Production default | `deploy/compose/docker-compose.neo4j.yml` |
+| **JanusGraph** | Large scale | Apache-2.0 path |
+| **Mock** | CI | `GRAPH_MOCK=1` |
+
+---
+
+## Status
+
+Self-hosted dual-mode review platform with product UI, Keycloak identity, multi-tenant orgs, webhooks, and horizontal workers. Treat hosted multi-tenant SaaS packaging as ongoing product work — see `research/gap-analysis/` for scored honesty notes.
+
+Design references:
+
+- [`research/design/05-full-product-architecture.md`](research/design/05-full-product-architecture.md)  
+- [`research/design/04-framework-decision.md`](research/design/04-framework-decision.md)  
+
+---
 
 ## License
 
-Foundation packages: intended for open-source release (align with project root
-license when published). Graph substrate is Apache-2.0 upstream.
+Licensed under the **Apache License, Version 2.0** — see [`LICENSE`](LICENSE).
 
-
-## Implemented foundation slices (complete)
-
-| Slice | Status | How |
-|-------|--------|-----|
-| **DeepAgents TS** | Done | `@codesteward/agents` — `DeepAgentRunner` + graph/sandbox tools; `STEW_USE_DEEPAGENTS=1` |
-| **GitHub webhook Gate** | Done | `POST /v1/webhooks/github` + signature verify + enqueue + worker SCM publish |
-| **Compose + GraphQLite MCP** | Done | `deploy/compose/docker-compose.demo.yml` (`GRAPH_MOCK=0`) |
-| **Cross-repo fan-out** | Done | Links CRUD + preview API + orchestrator BFS budgets |
-| **Helm HPA workers** | Done | `deploy/helm/codesteward` — worker HPA min 2 / max 20 × 8 concurrent |
-
-### GitHub App webhook
-
-```bash
-# Point GitHub App webhook to:
-# https://<host>/v1/webhooks/github
-export GITHUB_WEBHOOK_SECRET=...
-export GITHUB_TOKEN=...   # or app installation token
-pnpm dev:api
-pnpm dev:worker
+```text
+Copyright 2026 bitkaio LLC
 ```
 
-Events: `pull_request` opened / synchronize / reopened / ready_for_review → Gate review → PR review comments.
+You may not use this project except in compliance with the License. A copy is also summarized by the SPDX id **`Apache-2.0`**.
 
-### Cross-repo
+Attribution and third-party notes: [`NOTICE`](NOTICE).
 
-```bash
-curl -X PUT localhost:8081/v1/org/repo-links -H 'content-type: application/json' \
-  -d '{"fromRepoId":"org/frontend","toRepoId":"org/backend","edgeType":"depends_on_api","enabled":true}'
-curl -X POST localhost:8081/v1/org/repo-links/preview -H 'content-type: application/json' \
-  -d '{"repoId":"org/frontend","paths":["src/api/client.ts"]}'
-```
+Codesteward Graph (when used as a dependency or service) is separately distributed under Apache-2.0.
 
-### Helm scale (50+ units)
+---
 
-```bash
-helm upgrade --install codesteward ./deploy/helm/codesteward \
-  --set worker.hpa.maxReplicas=20 \
-  --set worker.maxConcurrent=8
-# Peak ≈ 20 pods × 8 = 160 concurrent specialists
-```
-
-## Local UI product loop
-
-```bash
-export GRAPH_MOCK=1 STEW_USE_DEEPAGENTS=0
-pnpm -r run build
-pnpm dev:api   # includes inline worker by default
-pnpm dev:ui    # http://localhost:8080
-# First visit: /login → bootstrap admin
-# Sessions → Start stewardship (job runs in API process)
-# Connectors → Configure GitHub token for real PR diffs / repo picker
-```
+<p align="center">
+  <strong>Govern · Verify · Evolve</strong><br />
+  <sub>Built by bitkaio LLC · Apache-2.0</sub>
+</p>

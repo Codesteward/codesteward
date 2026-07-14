@@ -142,7 +142,7 @@ Must not remain ✅ without code:
 
 | ID / area | Status in code |
 |-----------|----------------|
-| RT-02 mention `@steward` | Missing |
+| RT-02 mention `@codesteward` | Missing |
 | RT-10 git attestation / pre-push guardrails | Missing |
 | AA-19 conversation agent | Missing |
 | CX-07 embeddings RAG (optional on) | Schema only; not in review path |

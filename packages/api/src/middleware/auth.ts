@@ -128,7 +128,7 @@ async function bindOrgContext(c: Context): Promise<Response | null> {
     c.set("orgId", requested);
     c.set("orgRole", membership.role);
     // Elevate/restrict product role by org membership when session user
-    if (authMode === "session" && membership.role) {
+    if ((authMode === "session" || authMode === "oidc_jwt") && membership.role) {
       const productFromOrg = mapOrgRoleToProduct(membership.role);
       const sessionRole = (user?.role ?? "viewer") as UserRole;
       // Use the more restrictive of session global role and org role for admin writes
@@ -155,7 +155,7 @@ async function bindOrgContext(c: Context): Promise<Response | null> {
       );
     }
     // No header — fall back to first membership or local if allowed
-    if (user?.id && authMode === "session") {
+    if (user?.id && (authMode === "session" || authMode === "oidc_jwt")) {
       const orgs = await store.listOrgsForUser(user.id);
       if (orgs[0]) {
         c.set("orgId", orgs[0].id);
@@ -209,6 +209,25 @@ export function apiAuthMiddleware(): MiddlewareHandler {
         if (orgErr) return orgErr;
         return enforceRbac(c, next, path, method);
       }
+      // Prefer Keycloak/OIDC JWT (stateless) — no server session store
+      try {
+        const { isLikelyJwt, resolveUserFromJwtBearer } = await import("../auth/jwt-bearer.js");
+        if (isLikelyJwt(bearer)) {
+          const jwtUser = await resolveUserFromJwtBearer(bearer);
+          if (jwtUser) {
+            c.set("user", jwtUser);
+            c.set("authMode", "oidc_jwt");
+            c.set("role", jwtUser.role);
+            if (!c.get("orgId")) c.set("orgId", jwtUser.orgId);
+            const orgErr = await bindOrgContext(c);
+            if (orgErr) return orgErr;
+            return enforceRbac(c, next, path, method);
+          }
+        }
+      } catch {
+        /* fall through to session / reject */
+      }
+      // Legacy Codesteward session token (local identity / older OIDC RP flow)
       const sess = await globalAuthStore.resolveToken(bearer);
       if (sess) {
         c.set("user", sess);
@@ -224,7 +243,7 @@ export function apiAuthMiddleware(): MiddlewareHandler {
           {
             error: "unauthorized",
             message:
-              "Invalid token. Use session from POST /v1/auth/login, OIDC, or STEW_API_KEY.",
+              "Invalid token. Use Keycloak access_token (Bearer JWT), session from local login, or STEW_API_KEY.",
           },
           401,
         );
@@ -248,7 +267,7 @@ export function apiAuthMiddleware(): MiddlewareHandler {
       {
         error: "unauthorized",
         message:
-          "Authorization: Bearer <session-token|STEW_API_KEY> required",
+          "Authorization: Bearer <access_token|session-token|STEW_API_KEY> required",
       },
       401,
     );
@@ -328,6 +347,6 @@ declare module "hono" {
     orgRole?: OrgRole | string;
     user?: PublicAuthUser;
     role?: UserRole | string;
-    authMode?: "api_key" | "session" | "dev_open";
+    authMode?: "api_key" | "session" | "dev_open" | "oidc_jwt";
   }
 }

@@ -4,11 +4,8 @@ import {
   runReviewJob,
   resumeIncompleteSessions,
 } from "@codesteward/api";
-import type { ReviewJob } from "@codesteward/core";
-import { createNatsConsumer } from "./queue-nats.js";
 
 const pollMs = Number(process.env.STEW_WORKER_POLL_MS ?? 1500);
-const natsUrl = process.env.NATS_URL;
 
 async function initWorkerOtel() {
   if (process.env.OTEL_ENABLED !== "1") return;
@@ -23,7 +20,7 @@ async function initWorkerOtel() {
   console.info(
     JSON.stringify({
       "resource.service.name": "stew-worker",
-      "otel.exporter": "console",
+      "otel.backend": "console",
       event: "otel_init",
       ts: new Date().toISOString(),
     }),
@@ -40,9 +37,11 @@ async function main() {
   } catch (err) {
     console.warn("[worker] runtime config apply failed", err);
   }
+
+  const queueDesc = globalQueue.describe?.() ?? "unknown";
   console.log("[worker] starting Codesteward review worker");
   console.log(
-    `[worker] GRAPH_MOCK=${process.env.GRAPH_MOCK ?? "0"} DEEPAGENTS=${process.env.STEW_USE_DEEPAGENTS ?? "auto"} NATS=${natsUrl ?? "off"} SANDBOX=${process.env.STEW_SANDBOX_PROVIDER ?? "null"}`,
+    `[worker] queue=${queueDesc} GRAPH_MOCK=${process.env.GRAPH_MOCK ?? "0"} DEEPAGENTS=${process.env.STEW_USE_DEEPAGENTS ?? "auto"} SANDBOX=${process.env.STEW_SANDBOX_PROVIDER ?? "null"}`,
   );
 
   await resumeIncompleteSessions({
@@ -50,18 +49,11 @@ async function main() {
     log: (msg, ...args) => console.log(`[worker] ${msg}`, ...args),
   });
 
-  let natsDequeue: (() => Promise<ReviewJob | undefined>) | undefined;
-  if (natsUrl) {
-    const nats = await createNatsConsumer(natsUrl);
-    natsDequeue = nats.dequeue;
-  }
-
   for (;;) {
     try {
       await globalSessionStore.reload();
       await globalQueue.load();
-      let job = await globalQueue.dequeue();
-      if (!job && natsDequeue) job = await natsDequeue();
+      const job = await globalQueue.dequeue();
       if (!job) {
         await sleep(pollMs);
         continue;

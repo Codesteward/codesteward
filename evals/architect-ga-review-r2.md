@@ -149,7 +149,7 @@ Note: `validate-ga.mjs` remains a **structural** gate (paths/symbols). It is no 
 
 | Item | Status | Evidence |
 |------|--------|----------|
-| RT-02 mention `@steward` | **Fixed** | `github-handler.ts` `issue_comment` + mention triggers |
+| RT-02 mention `@codesteward` | **Fixed** | `github-handler.ts` `issue_comment` + mention triggers |
 | RT-10 git guardrails / attestation | **Fixed** | `cli` `stew guard install/uninstall`; orchestrator `STW-REVIEWED*` trailers |
 | SAST Semgrep/gitleaks | **Fixed** | `packages/agents/src/sast.ts` + orchestrator early stage (`STEW_SAST=0` disable) |
 | Skills map/security | **Fixed** | `skills/steward-map/SKILL.md`, `skills/steward-security/SKILL.md` |
@@ -175,7 +175,7 @@ Note: `validate-ga.mjs` remains a **structural** gate (paths/symbols). It is no 
 | k8s fallback | **PASS** | factory fallback + LocalSandbox default path |
 | Learning dual mode | **PASS** | `createLearningStore` Pg vs file + `repo_review_state` |
 | GitLab webhook | **PASS** | handler + route + signature tests |
-| Mention handler | **PASS** | `issue_comment` → `@steward review` |
+| Mention handler | **PASS** | `issue_comment` → `@codesteward review` |
 | SAST | **PASS** | `runSastAdapters` semgrep/gitleaks on PATH |
 | Guard install | **PASS** | `stew guard install/uninstall` pre-commit |
 | Tests | **PASS** | 13 unit tests + build + validate-ga + smoke |

@@ -24,7 +24,17 @@ export interface SyncLoginResult {
 }
 
 /**
+ * Stateless JWT path: ensure shadow user + memberships exist, no app session cookie.
+ * Prefer this for Bearer access_token validation on every request (cache at caller).
+ */
+export async function resolveOidcUser(claims: OidcClaims): Promise<PublicAuthUser> {
+  const result = await syncOidcLogin(claims);
+  return result.user;
+}
+
+/**
  * After successful OIDC: upsert shadow user + memberships from claims.
+ * Still issues a Codesteward session token for legacy/API-RP flows.
  */
 export async function syncOidcLogin(claims: OidcClaims): Promise<SyncLoginResult> {
   const email = emailFromClaims(claims);

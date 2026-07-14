@@ -4,16 +4,15 @@ import { ThemeToggle } from "../components/Layout";
 import { Logo } from "../components/Logo";
 import { useToast } from "../components/Toast";
 import { api, setOrgId, setSessionToken, getSessionToken } from "../lib/api";
+import { getAccessToken, oidcReady, startOidcLogin } from "../lib/oidc";
 
 /**
  * Login entrypoint.
  *
- * When identity mode is Keycloak (platform IdP / OIDC):
- *   Always redirect to the themed Keycloak login. MFA, password policy, and
- *   federated SSO are configured only there — no local password form.
+ * Keycloak mode: SPA OIDC (PKCE) in the browser — tokens stay client-side;
+ * API only validates JWT. No API session for IdP users.
  *
- * Local email/password UI remains only for non-Keycloak deployments
- * (STEW_IDENTITY_MODE=local or OIDC not configured), including first-run bootstrap.
+ * Local mode: email/password form when OIDC is not configured.
  */
 export function Login() {
   const toast = useToast();
@@ -28,15 +27,13 @@ export function Login() {
   const [mode, setMode] = useState("…");
   const [redirectError, setRedirectError] = useState<string | null>(null);
   const [statusLine, setStatusLine] = useState("Checking login…");
-  /** True when platform uses Keycloak/OIDC as the sole browser login. */
   const [idpOnly, setIdpOnly] = useState(false);
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      // ── OIDC error bounce from API callback ────────────────────────────
       const oidcErr = searchParams.get("error");
-      if (oidcErr && !searchParams.get("oidc_token")) {
+      if (oidcErr) {
         setRedirectError(oidcErr);
         setStatusLine("Sign-in failed");
         setIdpOnly(true);
@@ -48,68 +45,26 @@ export function Login() {
         return;
       }
 
-      // ── OIDC return: session token in hash/query ───────────────────────
-      let oidcToken = searchParams.get("oidc_token");
-      let returnTo = searchParams.get("returnTo") || "/dashboard";
-      let orgFromOidc: string | null = null;
-      const hashRaw =
-        typeof window !== "undefined" ? window.location.hash.replace(/^#/, "") : "";
-      let oidcIdToken: string | null = null;
-      if (!oidcToken && hashRaw) {
-        const hashParams = new URLSearchParams(hashRaw);
-        oidcToken = hashParams.get("oidc_token");
-        oidcIdToken = hashParams.get("id_token");
-        const hashReturn = hashParams.get("returnTo");
-        if (hashReturn) returnTo = hashReturn;
-        orgFromOidc = hashParams.get("orgId");
-      }
-      if (!orgFromOidc) orgFromOidc = searchParams.get("orgId");
-      if (!oidcIdToken) oidcIdToken = searchParams.get("id_token");
-
-      if (oidcToken) {
-        setSessionToken(oidcToken);
-        // Persist IdP id_token for RP-initiated logout (ends Keycloak SSO session)
-        if (oidcIdToken) {
+      // Already have Keycloak access token
+      try {
+        const at = await getAccessToken();
+        if (at) {
           try {
-            sessionStorage.setItem("cs-oidc-id-token", oidcIdToken);
-          } catch {
-            /* ignore */
-          }
-        }
-        if (orgFromOidc) setOrgId(orgFromOidc);
-        const next = new URLSearchParams(searchParams);
-        next.delete("oidc_token");
-        next.delete("returnTo");
-        next.delete("orgId");
-        setSearchParams(next, { replace: true });
-        if (typeof window !== "undefined" && window.location.hash) {
-          const qs = next.toString();
-          window.history.replaceState(
-            null,
-            "",
-            `${window.location.pathname}${qs ? `?${qs}` : ""}`,
-          );
-        }
-        try {
-          const me = await api.authMe();
-          if (me.user) {
-            try {
-              localStorage.setItem("cs-user", JSON.stringify(me.user));
-            } catch {
-              /* ignore */
+            const me = await api.authMe();
+            if (me.user && alive) {
+              if (me.user.orgId) setOrgId(me.user.orgId);
+              navigate("/dashboard", { replace: true });
+              return;
             }
-            toast.success(
-              `Welcome, ${me.user.displayName || me.user.name || me.user.email}`,
-            );
+          } catch {
+            /* continue */
           }
-        } catch {
-          /* token may still work for later calls */
         }
-        if (alive) navigate(returnTo.startsWith("/") ? returnTo : "/dashboard", { replace: true });
-        return;
+      } catch {
+        /* continue */
       }
 
-      // Already have a session
+      // Legacy session token (local identity)
       if (getSessionToken() || localStorage.getItem("cs-api-key")) {
         try {
           const me = await api.authMe();
@@ -129,53 +84,38 @@ export function Login() {
 
         const keycloakMode =
           Boolean(s.keycloakIdentity) || s.identityMode === "keycloak";
-        let oidcReady = s.oidc?.status === "ready";
-        if (!oidcReady) {
-          try {
-            const oidc = await api.oidcStatus();
-            oidcReady = oidc.status === "ready";
-          } catch {
-            oidcReady = false;
-          }
-        }
+        const spa = await oidcReady();
 
-        // Platform IdP is the only browser login when Keycloak + OIDC are on.
-        if (keycloakMode && oidcReady) {
+        if (keycloakMode && spa) {
           setIdpOnly(true);
           setStatusLine("Redirecting to sign-in…");
           const from =
+            searchParams.get("returnTo") ||
             (typeof window !== "undefined" &&
               (window.history.state as { from?: string } | null)?.from) ||
-            searchParams.get("returnTo") ||
             "/dashboard";
           try {
-            const res = await api.oidcLogin(from.startsWith("/") ? from : "/dashboard");
-            if (!alive) return;
-            if (res.url) {
-              window.location.replace(res.url);
-              return;
-            }
-            setRedirectError("Login service did not return a redirect URL.");
+            await startOidcLogin(typeof from === "string" && from.startsWith("/") ? from : "/dashboard");
+            return;
           } catch (err) {
             setRedirectError(
               err instanceof Error ? err.message : "Could not start sign-in",
             );
+            setLoading(false);
+            return;
           }
-          setLoading(false);
-          return;
         }
 
-        if (keycloakMode && !oidcReady) {
+        if (keycloakMode && !spa) {
           setIdpOnly(true);
           setRedirectError(
-            "Platform identity is Keycloak, but OIDC is not ready. Check OIDC_ISSUER and Keycloak.",
+            "Platform identity is Keycloak, but OIDC is not configured for the UI (issuer/client).",
           );
           setStatusLine("Sign-in unavailable");
           setLoading(false);
           return;
         }
 
-        // Non-Keycloak / local identity only
         setBootstrapRequired(Boolean(s.bootstrapRequired));
         setIdpOnly(false);
         setLoading(false);
@@ -235,20 +175,13 @@ export function Login() {
     setLoading(true);
     try {
       const from = searchParams.get("returnTo") || "/dashboard";
-      const res = await api.oidcLogin(from.startsWith("/") ? from : "/dashboard");
-      if (res.url) {
-        window.location.replace(res.url);
-        return;
-      }
-      setRedirectError("Login service did not return a redirect URL.");
+      await startOidcLogin(from.startsWith("/") ? from : "/dashboard");
     } catch (err) {
       setRedirectError(err instanceof Error ? err.message : "Could not start sign-in");
-    } finally {
       setLoading(false);
     }
   }
 
-  // IdP redirect chrome or IdP error (no local password form)
   if (idpOnly || loading) {
     return (
       <div className="login-shell">
@@ -294,7 +227,6 @@ export function Login() {
     );
   }
 
-  // Local identity mode only (not used when Keycloak is the platform IdP)
   return (
     <div className="login-shell">
       <div className="login-theme-bar">

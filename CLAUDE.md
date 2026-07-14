@@ -78,6 +78,8 @@ pnpm stew -- findings export --sarif -s <sessionId>
 - Thorough mode (`riskTier` or `depth` = `thorough`) runs discourse (dual correctness + AGREE/CHALLENGE/CONNECT/SURFACE)
 - Incremental gate uses `last_reviewed_sha` in learning store; pass `fullReview` to force full
 - Env SCM tokens: `GITHUB_TOKEN`, `GITLAB_TOKEN`, `BITBUCKET_TOKEN`+`BITBUCKET_USERNAME`, `AZURE_DEVOPS_TOKEN`, `GITEA_TOKEN`
+- PR mention trigger (webhook `issue_comment`): default **`@codesteward`** via `STEW_MENTION_TOKEN` (override if needed). Example: `@codesteward review`
+- Job queue: **Postgres by default** (`DATABASE_URL`). Optional dispatch broker: `STEW_QUEUE_BROKER=nats|rabbitmq|pulsar` (+ URL) — hybrid SoT+broker for KEDA; see `deploy/compose/docker-compose.queue.yml`
 
 ## Self-host auth + connectors
 

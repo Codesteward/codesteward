@@ -9,6 +9,7 @@ import { Diff } from "./pages/Diff";
 import { Findings } from "./pages/Findings";
 import { Home } from "./pages/Home";
 import { Learnings } from "./pages/Learnings";
+import { AuthCallback } from "./pages/AuthCallback";
 import { Login } from "./pages/Login";
 import { Members } from "./pages/Members";
 import { Models } from "./pages/Models";
@@ -23,6 +24,7 @@ import { OrgSettings } from "./pages/OrgSettings";
 import { PlatformSettings } from "./pages/PlatformSettings";
 import { Settings } from "./pages/Settings";
 import { api, getSessionToken, setSessionToken } from "./lib/api";
+import { getAccessToken } from "./lib/oidc";
 
 /** Default post-login destination inside the authenticated app shell. */
 export const APP_HOME = "/dashboard";
@@ -49,10 +51,16 @@ function RequireAuth({ children }: { children: ReactNode }) {
           setAllowed(true);
           return;
         }
-        // Auth required — need session or api key
-        const token = getSessionToken() || localStorage.getItem("cs-api-key");
+        // Auth required — Keycloak JWT, legacy session, or API key
+        let token = getSessionToken() || localStorage.getItem("cs-api-key");
         if (!token) {
-          // No session: send to login (IdP). Public marketing lives on /.
+          try {
+            token = await getAccessToken();
+          } catch {
+            token = null;
+          }
+        }
+        if (!token) {
           navigate(loginPath, { replace: true });
           return;
         }
@@ -82,7 +90,20 @@ function RequireAuth({ children }: { children: ReactNode }) {
         typeof window !== "undefined"
           ? `${window.location.pathname}${window.location.search || ""}`
           : APP_HOME;
-      navigate(`/login?returnTo=${encodeURIComponent(returnTo)}`, { replace: true });
+      // Prefer IdP logout/re-login path when using SPA OIDC
+      void (async () => {
+        try {
+          const { getOidcUser } = await import("./lib/oidc.js");
+          const u = await getOidcUser();
+          if (u) {
+            navigate(`/login?returnTo=${encodeURIComponent(returnTo)}`, { replace: true });
+            return;
+          }
+        } catch {
+          /* fall through */
+        }
+        navigate(`/login?returnTo=${encodeURIComponent(returnTo)}`, { replace: true });
+      })();
     };
     window.addEventListener("cs:unauthorized", onUnauthorized);
     return () => window.removeEventListener("cs:unauthorized", onUnauthorized);
@@ -105,6 +126,7 @@ export function App() {
       {/* Public — no session, no Keycloak redirect */}
       <Route path="/" element={<Home />} />
       <Route path="/login" element={<Login />} />
+      <Route path="/auth/callback" element={<AuthCallback />} />
 
       {/* Authenticated app shell */}
       <Route
