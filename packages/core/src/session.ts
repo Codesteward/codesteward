@@ -72,7 +72,24 @@ export const TokenUsageSchema = z.object({
   promptTokens: z.number().int().nonnegative().default(0),
   completionTokens: z.number().int().nonnegative().default(0),
   totalTokens: z.number().int().nonnegative().default(0),
+  /** Estimated USD (list-price estimate, not invoice). */
   costUsd: z.number().nonnegative().optional(),
+  /** True when cost was estimated from published list prices. */
+  costEstimated: z.boolean().optional(),
+  /** Number of LLM complete() calls accounted for. */
+  calls: z.number().int().nonnegative().optional(),
+  /** Optional per-model rollup. */
+  byModel: z
+    .record(
+      z.object({
+        promptTokens: z.number().nonnegative(),
+        completionTokens: z.number().nonnegative(),
+        totalTokens: z.number().nonnegative(),
+        costUsd: z.number().nonnegative(),
+        calls: z.number().int().nonnegative(),
+      }),
+    )
+    .optional(),
 });
 export type TokenUsage = z.infer<typeof TokenUsageSchema>;
 

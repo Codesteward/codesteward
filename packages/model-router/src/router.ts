@@ -72,7 +72,12 @@ export function createModelRouter(
           () => original(req),
           lfDests,
         );
-        budget.record(res.usage);
+        budget.record({
+          promptTokens: res.usage.promptTokens,
+          completionTokens: res.usage.completionTokens,
+          totalTokens: res.usage.totalTokens,
+          model: res.model || target.model,
+        });
         return res;
       };
       return model;

@@ -246,6 +246,22 @@ export class DeepAgentRunner implements AgentRunner {
         messages: [{ role: "user", content: user }],
       });
 
+      // DeepAgents bypasses ModelRouter.complete — fold LangChain usage into session budget
+      try {
+        const deepUsage = extractUsageFromDeepResult(result);
+        if (deepUsage.promptTokens + deepUsage.completionTokens + deepUsage.totalTokens > 0) {
+          const target = resolveModelForRole(role as never, modelRouter.getConfig());
+          modelRouter.getBudget().record({
+            promptTokens: deepUsage.promptTokens,
+            completionTokens: deepUsage.completionTokens,
+            totalTokens: deepUsage.totalTokens,
+            model: target.model,
+          });
+        }
+      } catch {
+        /* optional — never fail review on accounting */
+      }
+
       const content = extractMessageContent(result);
       if (process.env.STEW_DEBUG_LLM === "1") {
         try {
@@ -369,6 +385,63 @@ export class DeepAgentRunner implements AgentRunner {
     for (const b of batches) all.push(...b);
     return all;
   }
+}
+
+/**
+ * Pull token usage from LangChain / DeepAgents invoke result messages.
+ * Handles usage_metadata (LC) and response_metadata.usage (OpenAI-style).
+ */
+function extractUsageFromDeepResult(result: unknown): {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+} {
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let totalTokens = 0;
+  if (!result || typeof result !== "object") {
+    return { promptTokens, completionTokens, totalTokens };
+  }
+  const r = result as {
+    messages?: Array<Record<string, unknown>>;
+    usage_metadata?: Record<string, unknown>;
+  };
+  const msgs = Array.isArray(r.messages) ? r.messages : [];
+  const candidates: Array<Record<string, unknown>> = [...msgs];
+  if (r.usage_metadata) candidates.push(r);
+
+  for (const m of candidates) {
+    if (!m || typeof m !== "object") continue;
+    const um = m.usage_metadata as Record<string, unknown> | undefined;
+    if (um) {
+      const p = Number(um.input_tokens ?? um.prompt_tokens ?? um.promptTokens ?? 0);
+      const c = Number(um.output_tokens ?? um.completion_tokens ?? um.completionTokens ?? 0);
+      const t = Number(um.total_tokens ?? um.totalTokens ?? 0);
+      if (Number.isFinite(p)) promptTokens += Math.max(0, p);
+      if (Number.isFinite(c)) completionTokens += Math.max(0, c);
+      if (Number.isFinite(t)) totalTokens += Math.max(0, t);
+      continue;
+    }
+    const rm = m.response_metadata as Record<string, unknown> | undefined;
+    const usage =
+      (rm?.usage as Record<string, unknown> | undefined) ??
+      (rm?.token_usage as Record<string, unknown> | undefined) ??
+      (rm?.tokenUsage as Record<string, unknown> | undefined);
+    if (usage) {
+      const p = Number(usage.prompt_tokens ?? usage.input_tokens ?? usage.promptTokens ?? 0);
+      const c = Number(
+        usage.completion_tokens ?? usage.output_tokens ?? usage.completionTokens ?? 0,
+      );
+      const t = Number(usage.total_tokens ?? usage.totalTokens ?? 0);
+      if (Number.isFinite(p)) promptTokens += Math.max(0, p);
+      if (Number.isFinite(c)) completionTokens += Math.max(0, c);
+      if (Number.isFinite(t)) totalTokens += Math.max(0, t);
+    }
+  }
+  if (totalTokens === 0 && promptTokens + completionTokens > 0) {
+    totalTokens = promptTokens + completionTokens;
+  }
+  return { promptTokens, completionTokens, totalTokens };
 }
 
 function extractMessageContent(result: unknown): string {

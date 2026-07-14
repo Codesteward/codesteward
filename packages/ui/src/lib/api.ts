@@ -1036,7 +1036,20 @@ export interface Session {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+    /** Estimated USD from list prices (not invoice). */
     costUsd?: number;
+    costEstimated?: boolean;
+    calls?: number;
+    byModel?: Record<
+      string,
+      {
+        promptTokens: number;
+        completionTokens: number;
+        totalTokens: number;
+        costUsd: number;
+        calls: number;
+      }
+    >;
   };
   error?: string;
   failureLog?: SessionFailureEntry[];

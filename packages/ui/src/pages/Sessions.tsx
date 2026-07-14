@@ -1309,14 +1309,73 @@ export function Sessions() {
               )}
             </div>
 
-            {selected.tokenUsage && selected.tokenUsage.totalTokens > 0 && (
+            {selected.tokenUsage &&
+              (selected.tokenUsage.totalTokens > 0 ||
+                (selected.tokenUsage.promptTokens ?? 0) +
+                  (selected.tokenUsage.completionTokens ?? 0) >
+                  0) && (
               <div className="card glass">
                 <h3>Token usage</h3>
-                <div className="mono muted" style={{ marginTop: 6 }}>
-                  {selected.tokenUsage.totalTokens.toLocaleString()} total ·{" "}
-                  {selected.tokenUsage.promptTokens.toLocaleString()} prompt ·{" "}
-                  {selected.tokenUsage.completionTokens.toLocaleString()} completion
+                <p className="muted" style={{ margin: "6px 0 0", fontSize: "0.8rem" }}>
+                  Whole session — all specialist / judge / discourse / prove LLM calls combined
+                  (input + output tracked separately when the provider reports them).
+                </p>
+                <div className="mono" style={{ marginTop: 10, fontSize: "0.9rem" }}>
+                  <strong>{selected.tokenUsage.totalTokens.toLocaleString()}</strong>
+                  <span className="muted"> total tokens</span>
                 </div>
+                <div className="mono muted" style={{ marginTop: 4, fontSize: "0.85rem" }}>
+                  {(selected.tokenUsage.promptTokens ?? 0).toLocaleString()} prompt (input) ·{" "}
+                  {(selected.tokenUsage.completionTokens ?? 0).toLocaleString()} completion
+                  (output)
+                  {typeof selected.tokenUsage.calls === "number" && selected.tokenUsage.calls > 0
+                    ? ` · ${selected.tokenUsage.calls} call${selected.tokenUsage.calls === 1 ? "" : "s"}`
+                    : ""}
+                </div>
+                {typeof selected.tokenUsage.costUsd === "number" &&
+                  Number.isFinite(selected.tokenUsage.costUsd) && (
+                    <div style={{ marginTop: 10 }}>
+                      <div className="mono" style={{ fontSize: "0.95rem" }}>
+                        <strong>
+                          {selected.tokenUsage.costUsd < 0.01 && selected.tokenUsage.costUsd > 0
+                            ? `$${selected.tokenUsage.costUsd.toFixed(4)}`
+                            : `$${selected.tokenUsage.costUsd.toFixed(2)}`}
+                        </strong>
+                        <span className="muted">
+                          {" "}
+                          est. cost
+                          {selected.tokenUsage.costEstimated !== false ? " (list price)" : ""}
+                        </span>
+                      </div>
+                      <p className="muted" style={{ margin: "4px 0 0", fontSize: "0.75rem" }}>
+                        Estimate from published list prices for the models used — not an invoice.
+                        Org negotiated rates may differ.
+                      </p>
+                    </div>
+                  )}
+                {selected.tokenUsage.byModel &&
+                  Object.keys(selected.tokenUsage.byModel).length > 0 && (
+                    <div style={{ marginTop: 12 }}>
+                      <div className="muted" style={{ fontSize: "0.75rem", marginBottom: 4 }}>
+                        By model
+                      </div>
+                      <div className="stack" style={{ gap: 4 }}>
+                        {Object.entries(selected.tokenUsage.byModel).map(([model, row]) => (
+                          <div
+                            key={model}
+                            className="mono muted"
+                            style={{ fontSize: "0.75rem" }}
+                          >
+                            {model}: {row.totalTokens.toLocaleString()} tok
+                            {typeof row.costUsd === "number"
+                              ? ` · ~$${row.costUsd < 0.01 ? row.costUsd.toFixed(4) : row.costUsd.toFixed(2)}`
+                              : ""}
+                            {row.calls ? ` · ${row.calls}×` : ""}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
               </div>
             )}
           </div>

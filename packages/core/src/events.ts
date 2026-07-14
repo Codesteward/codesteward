@@ -45,6 +45,9 @@ export const ProgressEventSchema = z.discriminatedUnion("type", [
     promptTokens: z.number(),
     completionTokens: z.number(),
     totalTokens: z.number(),
+    costUsd: z.number().optional(),
+    costEstimated: z.boolean().optional(),
+    calls: z.number().optional(),
     ts: z.string(),
   }),
   z.object({

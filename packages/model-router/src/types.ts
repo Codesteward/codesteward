@@ -50,11 +50,47 @@ export interface ChatModel {
   complete(req: CompleteRequest): Promise<CompleteResponse>;
 }
 
+export interface TokenUsageRecord {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens?: number;
+  /** Model id used for this call (for cost estimate). */
+  model?: string;
+  /** Optional provider-reported cost override. */
+  costUsd?: number;
+}
+
+export interface TokenBudgetSnapshot {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  /** Estimated USD from list prices (not invoice). */
+  costUsd: number;
+  costEstimated: boolean;
+  calls: number;
+  byModel?: Record<
+    string,
+    {
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+      costUsd: number;
+      calls: number;
+    }
+  >;
+}
+
 export interface TokenBudget {
   maxTokens: number;
   usedTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  costUsd: number;
+  calls: number;
   remaining(): number;
-  record(usage: { promptTokens: number; completionTokens: number }): void;
+  record(usage: TokenUsageRecord): void;
+  /** Full session rollup for persistence / UI. */
+  snapshot(): TokenBudgetSnapshot;
   reset(): void;
 }
 

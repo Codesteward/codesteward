@@ -120,6 +120,18 @@ function mapSession(row: SessionRow, units: ReviewUnit[] = []): ReviewSession {
         usage.costUsd === undefined || usage.costUsd === null
           ? undefined
           : Number(usage.costUsd),
+      costEstimated:
+        usage.costEstimated === undefined || usage.costEstimated === null
+          ? undefined
+          : Boolean(usage.costEstimated),
+      calls:
+        usage.calls === undefined || usage.calls === null
+          ? undefined
+          : Number(usage.calls),
+      byModel:
+        usage.byModel && typeof usage.byModel === "object"
+          ? (usage.byModel as ReviewSession["tokenUsage"]["byModel"])
+          : undefined,
     },
     policySnapshotId: row.policy_snapshot_id ?? undefined,
     parentSessionId: row.parent_session_id ?? undefined,

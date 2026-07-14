@@ -1149,7 +1149,30 @@ export class ReviewOrchestrator {
       }
     }
 
-    const usage = modelRouter.getBudget();
+    const budget = modelRouter.getBudget();
+    const usageSnap =
+      typeof budget.snapshot === "function"
+        ? budget.snapshot()
+        : {
+            promptTokens: budget.promptTokens ?? 0,
+            completionTokens: budget.completionTokens ?? 0,
+            totalTokens: budget.usedTokens,
+            costUsd: budget.costUsd ?? 0,
+            costEstimated: true as const,
+            calls: budget.calls ?? 0,
+            byModel: undefined as
+              | Record<
+                  string,
+                  {
+                    promptTokens: number;
+                    completionTokens: number;
+                    totalTokens: number;
+                    costUsd: number;
+                    calls: number;
+                  }
+                >
+              | undefined,
+          };
     const lastFailures = failureLog.slice(-5);
     const primaryError =
       sessionStatus === "failed"
@@ -1261,9 +1284,13 @@ export class ReviewOrchestrator {
       error: primaryError,
       audit: audit ?? current.audit,
       tokenUsage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: usage.usedTokens,
+        promptTokens: usageSnap.promptTokens,
+        completionTokens: usageSnap.completionTokens,
+        totalTokens: usageSnap.totalTokens,
+        costUsd: usageSnap.costUsd,
+        costEstimated: usageSnap.costEstimated,
+        calls: usageSnap.calls,
+        byModel: usageSnap.byModel,
       },
       completedAt: nowIso(),
       updatedAt: nowIso(),
