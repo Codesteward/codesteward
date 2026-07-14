@@ -529,17 +529,29 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  // Org memories (learnings)
-  listMemories: (params?: { repoId?: string; polarity?: "positive" | "negative" }) => {
+  // Org / repo / PR memories (learnings)
+  listMemories: (params?: {
+    repoId?: string;
+    prKey?: string;
+    scope?: "org" | "repo" | "pr";
+    polarity?: "positive" | "negative";
+    applicable?: boolean;
+  }) => {
     const q = new URLSearchParams();
     if (params?.repoId) q.set("repoId", params.repoId);
+    if (params?.prKey) q.set("prKey", params.prKey);
+    if (params?.scope) q.set("scope", params.scope);
     if (params?.polarity) q.set("polarity", params.polarity);
+    if (params?.applicable) q.set("applicable", "1");
     const qs = q.toString();
     return req<{ memories: OrgMemory[] }>(`/v1/org/memories${qs ? `?${qs}` : ""}`);
   },
   createMemory: (body: {
     orgId?: string;
+    scope?: "org" | "repo" | "pr";
     repoId?: string;
+    prKey?: string;
+    prNumber?: number;
     kind?: string;
     polarity?: "positive" | "negative";
     fingerprint?: string;
@@ -551,6 +563,19 @@ export const api = {
   }) =>
     req<{ memory: OrgMemory }>("/v1/org/memories", {
       method: "POST",
+      body: JSON.stringify(body),
+    }),
+  moveMemoryScope: (
+    id: string,
+    body: {
+      scope: "org" | "repo" | "pr";
+      repoId?: string;
+      prKey?: string;
+      prNumber?: number;
+    },
+  ) =>
+    req<{ memory: OrgMemory }>(`/v1/org/memories/${encodeURIComponent(id)}/scope`, {
+      method: "PATCH",
       body: JSON.stringify(body),
     }),
   deleteMemory: (id: string) =>
@@ -803,10 +828,16 @@ export interface OrgMember {
   displayName?: string;
 }
 
+export type LearningScope = "org" | "repo" | "pr";
+
 export interface OrgMemory {
   id: string;
   orgId: string;
+  /** org = all repos; repo = one repository; pr = one pull request */
+  scope?: LearningScope;
   repoId?: string;
+  /** `{repoId}#{prNumber}` when scope is pr */
+  prKey?: string;
   kind: string;
   polarity: "positive" | "negative";
   fingerprint?: string;

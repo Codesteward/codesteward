@@ -1360,13 +1360,8 @@ export function createApp() {
   app.post("/v1/org/model-profiles/test", async (c) => {
     const orgId = c.get("orgId") ?? "local";
     const body = (await c.req.json().catch(() => ({}))) as { role?: string };
-    const { loadOrgMatrixForRuntime } = await import("./org-settings-store.js");
-    const { mergeRoleOverrides, loadEnvModelConfig: loadCfg } = await import(
-      "@codesteward/model-router"
-    );
-    const orgMatrix = await loadOrgMatrixForRuntime(String(orgId));
-    const cfg = mergeRoleOverrides(loadCfg(), orgMatrix);
-    const router = createModelRouter(process.env, { config: cfg });
+    const { createOrgModelRouter } = await import("./org-model-router.js");
+    const { router, fromOrgMatrix } = await createOrgModelRouter(String(orgId));
     const role = (body.role ?? "default") as "default";
     const model = router.createChatModel(role);
     const res = await model.complete({
@@ -1379,6 +1374,8 @@ export function createApp() {
       model: res.model,
       provider: res.provider,
       role: body.role ?? "default",
+      orgId: String(orgId),
+      fromOrgMatrix,
     });
   });
 
@@ -2135,6 +2132,96 @@ export function createApp() {
           }
           return process.env.REPO_PATH;
         },
+        triageComment: async (input) => {
+          const {
+            triagePrComment,
+            makePrKey,
+          } = await import("@codesteward/learning");
+          // Cheap model from THIS org's matrix (BYOK + role overrides) — never a random host env model from another tenant
+          let model: {
+            complete: (req: {
+              model?: string;
+              messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+              temperature?: number;
+              maxTokens?: number;
+            }) => Promise<{ content?: string; text?: string }>;
+            resolveCheapModel?: () => string | undefined;
+          } | null = null;
+          try {
+            const { createOrgModelRouter, resolveOrgRoleModel } = await import(
+              "./org-model-router.js"
+            );
+            const { router, config, fromOrgMatrix } = await createOrgModelRouter(input.orgId);
+            const chat = router.createChatModel("summary" as never);
+            const cheapName = resolveOrgRoleModel(config, "summary");
+            if (fromOrgMatrix) {
+              console.info(
+                `[webhooks] comment triage model org=${input.orgId} role=summary model=${cheapName}`,
+              );
+            }
+            model = {
+              complete: async (req) => {
+                const res = await chat.complete({
+                  system: req.messages.find((m) => m.role === "system")?.content,
+                  messages: req.messages
+                    .filter((m) => m.role !== "system")
+                    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+                  temperature: req.temperature,
+                  maxTokens: req.maxTokens,
+                });
+                return { content: res.content, text: res.content };
+              },
+              resolveCheapModel: () => cheapName,
+            };
+          } catch (err) {
+            console.warn(
+              `[webhooks] org model for triage unavailable (org=${input.orgId}), heuristic only:`,
+              err instanceof Error ? err.message : err,
+            );
+            model = null;
+          }
+          const triage = await triagePrComment(
+            {
+              commentBody: input.commentBody,
+              repoId: input.repoId,
+              prNumber: input.prNumber,
+              author: input.author,
+              prTitle: input.prTitle,
+            },
+            model,
+          );
+          if (triage.learning) {
+            try {
+              const L = triage.learning;
+              await learningStore.addMemory({
+                orgId: input.orgId,
+                scope: L.scope,
+                repoId: L.scope === "org" ? undefined : input.repoId,
+                prKey:
+                  L.scope === "pr"
+                    ? makePrKey(input.repoId, input.prNumber)
+                    : undefined,
+                kind: L.kind ?? (L.polarity === "negative" ? "dismissal" : "preference"),
+                polarity: L.polarity,
+                title: L.title,
+                body: L.body,
+                source: `pr-comment:${input.author ?? "unknown"}`,
+                weight: 1,
+              });
+            } catch (err) {
+              console.warn(
+                "[webhooks] failed to persist learning from comment:",
+                err instanceof Error ? err.message : err,
+              );
+            }
+          }
+          return {
+            intent: triage.intent,
+            shouldReview: triage.intent === "review" || Boolean(triage.reviewFocus),
+            reviewFocus: triage.reviewFocus,
+            reply: triage.reply,
+          };
+        },
         enqueueGate: async ({ session, job }) => {
           // Persist session with fixed id
           const created = globalSessionStore.create({
@@ -2154,7 +2241,10 @@ export function createApp() {
             depth: session.depth,
             trigger: "webhook",
             paths: session.paths,
-            metadata: { webhook: true },
+            metadata: {
+              webhook: true,
+              ...(session.metadata ?? {}),
+            },
           });
           // overwrite id if store generated different — use created.id
           const enqueued = await globalQueue.enqueue({
@@ -2318,30 +2408,105 @@ export function createApp() {
     return c.json({ reaction, finding: await findingsStore.get(id) }, 201);
   });
 
-  // Org memories
+  // Org / repo / PR memories (learnings)
   app.get("/v1/org/memories", async (c) => {
     const orgId = c.get("orgId") ?? c.req.query("orgId") ?? "local";
     const repoId = c.req.query("repoId") ?? undefined;
+    const prKey = c.req.query("prKey") ?? undefined;
+    const scope = c.req.query("scope") as "org" | "repo" | "pr" | undefined;
     const polarity = c.req.query("polarity") as "positive" | "negative" | undefined;
-    const memories = await learningStore.listMemories({ orgId, repoId, polarity });
+    const applicable = c.req.query("applicable") === "1" || c.req.query("applicable") === "true";
+    const raw = await learningStore.listMemories({
+      orgId,
+      repoId,
+      prKey,
+      scope,
+      polarity,
+      applicable: applicable || undefined,
+    });
+    // Always surface scope for UI (legacy rows inferred from repoId/prKey)
+    const memories = raw.map((m) => {
+      const inferred =
+        m.scope === "org" || m.scope === "repo" || m.scope === "pr"
+          ? m.scope
+          : m.prKey
+            ? "pr"
+            : m.repoId
+              ? "repo"
+              : "org";
+      return { ...m, scope: inferred };
+    });
     return c.json({ memories });
   });
 
   app.post("/v1/org/memories", async (c) => {
     const body = await c.req.json();
-    const mem = await learningStore.addMemory({
-      orgId: c.get("orgId") ?? "local",
-      repoId: body.repoId,
-      kind: body.kind ?? "preference",
-      polarity: body.polarity ?? "negative",
-      fingerprint: body.fingerprint,
-      pattern: body.pattern,
-      title: body.title,
-      body: body.body,
-      source: body.source ?? "api",
-      weight: body.weight ?? 1,
-    });
-    return c.json({ memory: mem }, 201);
+    try {
+      const mem = await learningStore.addMemory({
+        orgId: c.get("orgId") ?? "local",
+        scope: body.scope,
+        repoId: body.repoId,
+        prKey: body.prKey,
+        prNumber: body.prNumber,
+        kind: body.kind ?? "preference",
+        polarity: body.polarity ?? "negative",
+        fingerprint: body.fingerprint,
+        pattern: body.pattern,
+        title: body.title,
+        body: body.body,
+        source: body.source ?? "api",
+        weight: body.weight ?? 1,
+      });
+      return c.json({ memory: mem }, 201);
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        400,
+      );
+    }
+  });
+
+  /** Move a memory across org / repo / PR scopes. */
+  app.patch("/v1/org/memories/:id/scope", async (c) => {
+    const id = c.req.param("id");
+    const body = (await c.req.json()) as {
+      scope?: "org" | "repo" | "pr";
+      repoId?: string;
+      prKey?: string;
+      prNumber?: number;
+    };
+    if (!body.scope || !["org", "repo", "pr"].includes(body.scope)) {
+      return c.json({ error: "scope must be org | repo | pr" }, 400);
+    }
+    const store = learningStore as {
+      moveMemory?: (
+        id: string,
+        target: {
+          scope: "org" | "repo" | "pr";
+          repoId?: string;
+          prKey?: string;
+          prNumber?: number;
+        },
+      ) => Promise<unknown>;
+    };
+    if (typeof store.moveMemory !== "function") {
+      return c.json({ error: "moveMemory not implemented on store" }, 501);
+    }
+    try {
+      const memory = await store.moveMemory(id, {
+        scope: body.scope,
+        repoId: body.repoId,
+        prKey: body.prKey,
+        prNumber: body.prNumber,
+      });
+      if (!memory) return c.json({ error: "memory not found" }, 404);
+      return c.json({ memory });
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        400,
+      );
+    }
   });
 
   // Repo review state (last_reviewed_sha) — org-scoped
@@ -3202,11 +3367,11 @@ export function createApp() {
 
   app.delete("/v1/org/memories/:id", async (c) => {
     const id = c.req.param("id");
-    // best-effort: learning store may expose delete
     const store = learningStore as { deleteMemory?: (id: string) => Promise<boolean> };
     if (typeof store.deleteMemory === "function") {
       const ok = await store.deleteMemory(id);
-      return c.json({ deleted: ok });
+      if (!ok) return c.json({ deleted: false, error: "memory not found" }, 404);
+      return c.json({ deleted: true });
     }
     return c.json({ deleted: false, message: "deleteMemory not implemented on store" }, 501);
   });

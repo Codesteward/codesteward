@@ -306,24 +306,26 @@ export async function runReviewJob(
 
   // Per-org model matrix + encrypted provider API keys (env is host fallback only).
   // Always pass sessionId so Langfuse groups all generations under one Session.
+  // Never use another org's matrix — createOrgModelRouter loads only `orgId`.
   let modelRouter = createModelRouter(process.env, {
     sessionId: job.sessionId,
     orgId,
     langfuseDestinations,
   });
   try {
-    const { loadOrgMatrixForRuntime } = await import("./org-settings-store.js");
-    const { mergeRoleOverrides, loadEnvModelConfig } = await import(
-      "@codesteward/model-router"
-    );
-    const orgMatrix = await loadOrgMatrixForRuntime(orgId);
-    const cfg = mergeRoleOverrides(loadEnvModelConfig(), orgMatrix);
-    modelRouter = createModelRouter(process.env, {
-      config: cfg,
+    const { createOrgModelRouter } = await import("./org-model-router.js");
+    const { createModelRouter: makeRouter } = await import("@codesteward/model-router");
+    const orgBound = await createOrgModelRouter(orgId, { sessionId: job.sessionId });
+    // Re-bind with Langfuse destinations (helper does not know license-gated LF)
+    modelRouter = makeRouter(process.env, {
+      config: orgBound.config,
       sessionId: job.sessionId,
       orgId,
       langfuseDestinations,
     });
+    if (orgBound.fromOrgMatrix) {
+      log(`org model matrix loaded for org=${orgId}`);
+    }
   } catch (err) {
     console.warn("[run-job] org model matrix unavailable, using env defaults", err);
   }

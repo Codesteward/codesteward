@@ -3,22 +3,47 @@ import { Link } from "react-router-dom";
 import { useToast } from "../components/Toast";
 import { Badge, EmptyState, KpiCard, PageHero, SkeletonLines, formatRelative } from "../components/ui";
 import { Select } from "../components/Select";
-import { api, downloadJson, type OrgMemory } from "../lib/api";
+import { api, downloadJson, type LearningScope, type OrgMemory } from "../lib/api";
+
+function memoryScope(m: OrgMemory): LearningScope {
+  if (m.scope === "org" || m.scope === "repo" || m.scope === "pr") return m.scope;
+  if (m.prKey) return "pr";
+  if (m.repoId) return "repo";
+  return "org";
+}
+
+const SCOPE_LABEL: Record<LearningScope, string> = {
+  org: "Org-wide",
+  repo: "Repo",
+  pr: "PR",
+};
 
 export function Learnings() {
   const toast = useToast();
   const [memories, setMemories] = useState<OrgMemory[]>([]);
   const [loading, setLoading] = useState(true);
   const [polarity, setPolarity] = useState<"all" | "positive" | "negative">("all");
+  const [scopeFilter, setScopeFilter] = useState<"all" | LearningScope>("all");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [formPolarity, setFormPolarity] = useState<"positive" | "negative">("positive");
+  const [formScope, setFormScope] = useState<LearningScope>("org");
+  const [formRepoId, setFormRepoId] = useState("");
+  const [formPrKey, setFormPrKey] = useState("");
+  /** Memory id currently showing the move panel */
+  const [movingId, setMovingId] = useState<string | null>(null);
+  const [moveScope, setMoveScope] = useState<LearningScope>("org");
+  const [moveRepoId, setMoveRepoId] = useState("");
+  const [movePrKey, setMovePrKey] = useState("");
 
   const refresh = () =>
     api
-      .listMemories(polarity === "all" ? undefined : { polarity })
+      .listMemories({
+        ...(polarity === "all" ? {} : { polarity }),
+        ...(scopeFilter === "all" ? {} : { scope: scopeFilter }),
+      })
       .then((r) => {
         setMemories(r.memories);
         setErr(null);
@@ -33,19 +58,31 @@ export function Learnings() {
     setLoading(true);
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [polarity]);
+  }, [polarity, scopeFilter]);
 
   const stats = useMemo(() => {
     const positive = memories.filter((m) => m.polarity === "positive").length;
     const negative = memories.filter((m) => m.polarity === "negative").length;
-    const kinds = new Set(memories.map((m) => m.kind)).size;
-    return { positive, negative, kinds };
+    const byScope = {
+      org: memories.filter((m) => memoryScope(m) === "org").length,
+      repo: memories.filter((m) => memoryScope(m) === "repo").length,
+      pr: memories.filter((m) => memoryScope(m) === "pr").length,
+    };
+    return { positive, negative, byScope };
   }, [memories]);
 
   async function createMemory(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim()) {
       toast.error("Title is required");
+      return;
+    }
+    if (formScope === "repo" && !formRepoId.trim()) {
+      toast.error("Repo id is required for repo scope (e.g. owner/name)");
+      return;
+    }
+    if (formScope === "pr" && (!formRepoId.trim() || !formPrKey.trim())) {
+      toast.error("Repo id and PR key are required for PR scope (PR key like owner/name#42)");
       return;
     }
     setBusy(true);
@@ -56,11 +93,17 @@ export function Learnings() {
         polarity: formPolarity,
         kind: "preference",
         source: "ui",
+        scope: formScope,
+        repoId: formScope === "org" ? undefined : formRepoId.trim() || undefined,
+        prKey: formScope === "pr" ? formPrKey.trim() || undefined : undefined,
       });
       toast.success("Memory created");
       setTitle("");
       setBody("");
       setFormPolarity("positive");
+      setFormScope("org");
+      setFormRepoId("");
+      setFormPrKey("");
       setLoading(true);
       await refresh();
     } catch (err) {
@@ -77,6 +120,45 @@ export function Learnings() {
       await api.deleteMemory(id);
       toast.info("Memory deleted");
       setMemories((prev) => prev.filter((m) => m.id !== id));
+      if (movingId === id) setMovingId(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openMove(m: OrgMemory) {
+    const s = memoryScope(m);
+    setMovingId(m.id);
+    setMoveScope(s);
+    setMoveRepoId(m.repoId ?? "");
+    setMovePrKey(m.prKey ?? (m.repoId ? `${m.repoId}#` : ""));
+  }
+
+  async function submitMove(id: string) {
+    if (moveScope === "repo" && !moveRepoId.trim()) {
+      toast.error("Repo id required");
+      return;
+    }
+    if (moveScope === "pr" && (!moveRepoId.trim() || !movePrKey.trim())) {
+      toast.error("Repo id and PR key required (e.g. owner/name#42)");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { memory } = await api.moveMemoryScope(id, {
+        scope: moveScope,
+        repoId: moveScope === "org" ? undefined : moveRepoId.trim() || undefined,
+        prKey: moveScope === "pr" ? movePrKey.trim() || undefined : undefined,
+      });
+      toast.success(`Moved to ${SCOPE_LABEL[memoryScope(memory)]}`);
+      setMovingId(null);
+      setMemories((prev) => prev.map((m) => (m.id === id ? memory : m)));
+      // If filtered by scope and moved away, drop from list
+      if (scopeFilter !== "all" && memoryScope(memory) !== scopeFilter) {
+        setMemories((prev) => prev.filter((m) => m.id !== id));
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
@@ -88,6 +170,7 @@ export function Learnings() {
     downloadJson(`codesteward-learnings-${Date.now()}.json`, {
       exportedAt: new Date().toISOString(),
       polarityFilter: polarity,
+      scopeFilter,
       count: memories.length,
       memories,
     });
@@ -99,9 +182,9 @@ export function Learnings() {
       <PageHero
         kicker="Trust"
         title="Learnings"
-        subtitle="Org memories from 👍 / 👎 and status feedback — injected into specialist model prompts and post-judge suppress, scoped per org."
+        subtitle="Memories from 👍 / 👎, PR comments, and explicit feedback — scoped org-wide, per-repo, or per-PR. Injected into specialist prompts and post-judge suppress."
         actions={
-          <div className="row">
+          <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
             {(["all", "positive", "negative"] as const).map((p) => (
               <button
                 key={p}
@@ -110,6 +193,19 @@ export function Learnings() {
                 onClick={() => setPolarity(p)}
               >
                 {p}
+              </button>
+            ))}
+            <span className="muted" style={{ fontSize: "0.75rem", marginLeft: 4 }}>
+              scope
+            </span>
+            {(["all", "org", "repo", "pr"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                className={scopeFilter === s ? "primary sm" : "ghost sm"}
+                onClick={() => setScopeFilter(s)}
+              >
+                {s === "all" ? "all scopes" : SCOPE_LABEL[s]}
               </button>
             ))}
             <button
@@ -129,6 +225,11 @@ export function Learnings() {
         <KpiCard label="Positive" value={stats.positive} meta="reinforce patterns" loading={loading} />
         <KpiCard label="Negative" value={stats.negative} meta="suppress noise" loading={loading} />
       </div>
+      <div className="grid cols-3" style={{ marginBottom: "1rem" }}>
+        <KpiCard label="Org-wide" value={stats.byScope.org} meta="all projects" loading={loading} />
+        <KpiCard label="Repo" value={stats.byScope.repo} meta="one repository" loading={loading} />
+        <KpiCard label="PR" value={stats.byScope.pr} meta="one pull request" loading={loading} />
+      </div>
 
       {err && (
         <div className="card" style={{ marginBottom: "1rem", borderColor: "rgba(248,113,113,0.3)" }}>
@@ -142,7 +243,8 @@ export function Learnings() {
       <div className="card stack" style={{ marginBottom: "1rem" }}>
         <h3 style={{ margin: 0 }}>Add memory</h3>
         <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
-          Explicit preferences (e.g. “never flag import order”) become org memories for future reviews.
+          Org-wide applies everywhere. Repo scope is for one codebase. PR scope is for one review
+          (e.g. “defer this fix to a follow-up PR”).
         </p>
         <form className="stack" onSubmit={(e) => void createMemory(e)}>
           <div className="grid cols-2">
@@ -168,6 +270,43 @@ export function Learnings() {
               />
             </div>
           </div>
+          <div className="grid cols-2">
+            <div className="field" style={{ margin: 0 }}>
+              <label>Scope</label>
+              <Select
+                value={formScope}
+                onChange={(v) => setFormScope(v as LearningScope)}
+                aria-label="Memory scope"
+                options={[
+                  { value: "org", label: "Org-wide (all projects)" },
+                  { value: "repo", label: "Repo (one repository)" },
+                  { value: "pr", label: "PR (one pull request)" },
+                ]}
+              />
+            </div>
+            {(formScope === "repo" || formScope === "pr") && (
+              <div className="field" style={{ margin: 0 }}>
+                <label>Repo id</label>
+                <input
+                  value={formRepoId}
+                  onChange={(e) => setFormRepoId(e.target.value)}
+                  placeholder="owner/repo"
+                  required
+                />
+              </div>
+            )}
+          </div>
+          {formScope === "pr" && (
+            <div className="field" style={{ margin: 0 }}>
+              <label>PR key</label>
+              <input
+                value={formPrKey}
+                onChange={(e) => setFormPrKey(e.target.value)}
+                placeholder="owner/repo#42"
+                required
+              />
+            </div>
+          )}
           <div className="field" style={{ margin: 0 }}>
             <label>Body</label>
             <textarea
@@ -188,9 +327,9 @@ export function Learnings() {
 
       <div className="card">
         <div className="card-header">
-          <h3>Org memory feed</h3>
+          <h3>Memory feed</h3>
           <span className="muted" style={{ fontSize: "0.75rem" }}>
-            {stats.kinds} kind{stats.kinds === 1 ? "" : "s"}
+            move across scopes if something landed wrong
           </span>
         </div>
         {loading ? (
@@ -198,7 +337,7 @@ export function Learnings() {
         ) : memories.length === 0 ? (
           <EmptyState
             title="No learnings yet"
-            description="Create a memory above, or react 👍 / 👎 on findings after a review."
+            description="Create a memory above, react 👍 / 👎 on findings, or comment @codesteward on a PR."
             icon="✦"
             action={
               <div className="row" style={{ justifyContent: "center", gap: 8 }}>
@@ -219,6 +358,7 @@ export function Learnings() {
           <div className="stack" style={{ gap: 10 }}>
             {memories.map((m) => {
               const label = m.title || m.pattern || m.fingerprint || "Untitled memory";
+              const scope = memoryScope(m);
               return (
                 <div
                   key={m.id}
@@ -226,7 +366,10 @@ export function Learnings() {
                   style={{ margin: 0, background: "var(--bg-deep)", padding: "0.85rem 1rem" }}
                 >
                   <div className="row" style={{ justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                    <div className="row" style={{ gap: 8 }}>
+                    <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                      <Badge tone={scope === "org" ? "ok" : scope === "repo" ? "info" : "warn"}>
+                        {SCOPE_LABEL[scope]}
+                      </Badge>
                       <Badge tone={m.polarity === "positive" ? "ok" : "warn"}>{m.polarity}</Badge>
                       <Badge>{m.kind}</Badge>
                       {m.repoId && (
@@ -234,11 +377,24 @@ export function Learnings() {
                           {m.repoId}
                         </span>
                       )}
+                      {m.prKey && (
+                        <span className="mono muted" style={{ fontSize: "0.72rem" }}>
+                          {m.prKey}
+                        </span>
+                      )}
                     </div>
                     <div className="row" style={{ gap: 8 }}>
                       <span className="muted" style={{ fontSize: "0.75rem" }}>
                         {formatRelative(m.updatedAt ?? m.createdAt)}
                       </span>
+                      <button
+                        type="button"
+                        className="ghost sm"
+                        disabled={busy}
+                        onClick={() => (movingId === m.id ? setMovingId(null) : openMove(m))}
+                      >
+                        {movingId === m.id ? "Cancel" : "Move scope"}
+                      </button>
                       <button
                         type="button"
                         className="ghost sm danger"
@@ -259,6 +415,67 @@ export function Learnings() {
                     <div className="mono faint" style={{ marginTop: 6, fontSize: "0.7rem" }}>
                       source · {m.source}
                       {typeof m.weight === "number" ? ` · weight ${m.weight}` : ""}
+                    </div>
+                  )}
+                  {movingId === m.id && (
+                    <div
+                      className="stack"
+                      style={{
+                        marginTop: 12,
+                        padding: "0.75rem",
+                        borderRadius: 8,
+                        border: "1px solid var(--border, rgba(255,255,255,0.08))",
+                        background: "var(--bg, transparent)",
+                      }}
+                    >
+                      <div className="muted" style={{ fontSize: "0.8rem" }}>
+                        Move to another scope
+                      </div>
+                      <div className="grid cols-2">
+                        <div className="field" style={{ margin: 0 }}>
+                          <label>Scope</label>
+                          <Select
+                            value={moveScope}
+                            onChange={(v) => setMoveScope(v as LearningScope)}
+                            aria-label="Move target scope"
+                            options={[
+                              { value: "org", label: "Org-wide" },
+                              { value: "repo", label: "Repo" },
+                              { value: "pr", label: "PR" },
+                            ]}
+                          />
+                        </div>
+                        {(moveScope === "repo" || moveScope === "pr") && (
+                          <div className="field" style={{ margin: 0 }}>
+                            <label>Repo id</label>
+                            <input
+                              value={moveRepoId}
+                              onChange={(e) => setMoveRepoId(e.target.value)}
+                              placeholder="owner/repo"
+                            />
+                          </div>
+                        )}
+                      </div>
+                      {moveScope === "pr" && (
+                        <div className="field" style={{ margin: 0 }}>
+                          <label>PR key</label>
+                          <input
+                            value={movePrKey}
+                            onChange={(e) => setMovePrKey(e.target.value)}
+                            placeholder="owner/repo#42"
+                          />
+                        </div>
+                      )}
+                      <div className="row">
+                        <button
+                          type="button"
+                          className="primary sm"
+                          disabled={busy}
+                          onClick={() => void submitMove(m.id)}
+                        >
+                          {busy ? "Moving…" : "Apply move"}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

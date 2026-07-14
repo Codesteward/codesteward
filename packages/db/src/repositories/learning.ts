@@ -145,6 +145,8 @@ export class LearningRepository {
         metadata, enabled, created_at, updated_at
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12)
       ON CONFLICT (id) DO UPDATE SET
+        repo_id = EXCLUDED.repo_id,
+        kind = EXCLUDED.kind,
         body = EXCLUDED.body,
         title = EXCLUDED.title,
         source = EXCLUDED.source,
@@ -167,6 +169,47 @@ export class LearningRepository {
       ],
     );
     return memory;
+  }
+
+  async getMemory(id: string): Promise<LearningMemory | undefined> {
+    const res = await this.db.query<{
+      id: string;
+      org_id: string;
+      tenant_id: string;
+      repo_id: string | null;
+      kind: string;
+      title: string | null;
+      body: string;
+      source: string | null;
+      metadata: unknown;
+      enabled: boolean;
+      created_at: Date | string;
+      updated_at: Date | string;
+    }>(`SELECT * FROM learning_memories WHERE id = $1`, [id]);
+    const row = res.rows[0];
+    if (!row) return undefined;
+    return {
+      id: row.id,
+      orgId: row.org_id,
+      tenantId: row.tenant_id,
+      repoId: row.repo_id ?? undefined,
+      kind: row.kind,
+      title: row.title ?? undefined,
+      body: row.body,
+      source: row.source ?? undefined,
+      metadata: asRecord(row.metadata),
+      enabled: row.enabled,
+      createdAt: toIso(row.created_at),
+      updatedAt: toIso(row.updated_at),
+    };
+  }
+
+  async deleteMemory(id: string): Promise<boolean> {
+    const res = await this.db.query(
+      `UPDATE learning_memories SET enabled = false, updated_at = now() WHERE id = $1`,
+      [id],
+    );
+    return (res.rowCount ?? 0) > 0;
   }
 
   async listMemories(filter: {

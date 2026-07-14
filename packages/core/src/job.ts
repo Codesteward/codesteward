@@ -45,6 +45,11 @@ export const ReviewJobSchema = z.object({
   installationId: z.string().optional(),
   /** Force full review even if last_reviewed_sha is set */
   fullReview: z.boolean().optional(),
+  /**
+   * Opaque job metadata (webhook triage focus, PR body snippet, etc.).
+   * Not used for scheduling — free-form context for the orchestrator.
+   */
+  metadata: z.record(z.unknown()).optional(),
   /** Diff patches for packing (path → patch text) */
   patches: z
     .array(

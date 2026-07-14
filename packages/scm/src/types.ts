@@ -11,6 +11,16 @@ export interface PullRequest {
   author?: string;
 }
 
+/** Issue used for linked PR context (Fixes #n, etc.). */
+export interface Issue {
+  number: number;
+  title: string;
+  body: string;
+  state: string;
+  url?: string;
+  labels?: string[];
+}
+
 export interface DiffFile {
   path: string;
   status: "added" | "modified" | "removed" | "renamed";
@@ -98,6 +108,11 @@ export interface ScmProvider {
     repo: string,
     opts?: { state?: "open" | "closed" | "all" },
   ): Promise<PullRequest[]>;
+  /**
+   * Fetch a single issue (for linked PR context: Fixes #n).
+   * Optional — providers without issues API skip linked-issue enrichment.
+   */
+  getIssue?(owner: string, repo: string, number: number): Promise<Issue>;
   /**
    * GitHub Checks API (or provider equivalent). Used for required status /
    * branch protection — stronger than PR review events alone.

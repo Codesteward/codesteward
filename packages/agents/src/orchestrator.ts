@@ -23,6 +23,9 @@ import type { DiffFile, ScmProvider } from "@codesteward/scm";
 import type { LearningStore } from "@codesteward/learning";
 import {
   buildOrgLearningPrompt,
+  formatLinkedIssuesContext,
+  loadLinkedIssues,
+  parseLinkedIssueRefs,
   markReviewed,
   resolveIncrementalPaths,
   seedMemoriesFromSteward,
@@ -175,19 +178,85 @@ export class ReviewOrchestrator {
         learningGuidance = await buildOrgLearningPrompt(learning, {
           orgId: session.orgId ?? "local",
           repoId: job.repoId,
+          prNumber: job.prNumber ?? job.scm?.prNumber,
         });
         if (learningGuidance) {
           await this.emit({
             type: "log",
             sessionId: session.id,
             level: "info",
-            message: `Org learning loaded for model prompts (~${learningGuidance.length} chars, org=${session.orgId ?? "local"})`,
+            message: `Learning loaded for model prompts (~${learningGuidance.length} chars, org=${session.orgId ?? "local"}, scopes=pr→repo→org)`,
             ts: nowIso(),
           });
         }
       } catch {
         /* optional */
       }
+    }
+
+    // Mention / triage focus (from webhook comment)
+    const reviewFocus =
+      typeof job.metadata?.reviewFocus === "string"
+        ? job.metadata.reviewFocus
+        : typeof session.metadata?.reviewFocus === "string"
+          ? (session.metadata.reviewFocus as string)
+          : undefined;
+    if (reviewFocus) {
+      learningGuidance = [
+        learningGuidance,
+        "",
+        "# Review focus (from PR comment)",
+        reviewFocus.slice(0, 800),
+      ]
+        .filter(Boolean)
+        .join("\n");
+    }
+
+    // Linked GitHub issues (Fixes #n / Closes #n) → product context
+    try {
+      const scm = this.deps.scm;
+      const owner = job.scm?.owner;
+      const repo = job.scm?.repo;
+      const prNumber = job.prNumber ?? job.scm?.prNumber;
+      if (scm && owner && repo && prNumber) {
+        let prBody =
+          typeof job.metadata?.prBody === "string"
+            ? (job.metadata.prBody as string)
+            : typeof session.metadata?.prBody === "string"
+              ? (session.metadata.prBody as string)
+              : "";
+        if (!prBody) {
+          try {
+            const pr = await scm.getPullRequest(owner, repo, prNumber);
+            prBody = pr.body ?? "";
+          } catch {
+            /* optional */
+          }
+        }
+        const refs = parseLinkedIssueRefs(prBody);
+        if (refs.length && typeof scm.getIssue === "function") {
+          const issues = await loadLinkedIssues(refs, async (n) => {
+            try {
+              return await scm.getIssue!(owner, repo, n);
+            } catch {
+              return null;
+            }
+          });
+          const block = formatLinkedIssuesContext(issues);
+          if (block) {
+            learningGuidance = [learningGuidance, "", block].filter(Boolean).join("\n");
+            await this.emit({
+              type: "log",
+              sessionId: session.id,
+              level: "info",
+              message: `Linked issues loaded: ${issues.map((i) => `#${i.number}`).join(", ")}`,
+              ts: nowIso(),
+            });
+          }
+        }
+      }
+    } catch {
+      /* optional */
     }
 
     const promptPack = this.deps.promptPack ?? null;

@@ -3,9 +3,39 @@ import { dirname } from "node:path";
 import { createId, nowIso } from "@codesteward/core";
 import type {
   FindingReaction,
+  LearningScope,
   OrgMemory,
   RepoReviewState,
 } from "./types.js";
+import {
+  inferMemoryScope,
+  normalizeMemoryScopeFields,
+} from "./types.js";
+
+export interface ListMemoriesFilter {
+  orgId?: string;
+  /** Exact repo id filter (admin UI). */
+  repoId?: string;
+  /** Exact PR key filter (admin UI). */
+  prKey?: string;
+  /** Exact scope filter (admin UI). */
+  scope?: LearningScope;
+  polarity?: "positive" | "negative";
+  kind?: OrgMemory["kind"];
+  /**
+   * When true, return memories applicable to a review context:
+   * org-wide + matching repo + matching PR (if prKey provided).
+   * Ignores exact `scope` match; uses hierarchy instead.
+   */
+  applicable?: boolean;
+}
+
+export interface MoveMemoryTarget {
+  scope: LearningScope;
+  repoId?: string;
+  prKey?: string;
+  prNumber?: number;
+}
 
 export interface LearningStore {
   react(input: {
@@ -23,19 +53,21 @@ export interface LearningStore {
     repoId?: string;
   }): Promise<FindingReaction[]>;
   addMemory(
-    input: Omit<OrgMemory, "id" | "createdAt" | "updatedAt"> & { id?: string },
+    input: Omit<OrgMemory, "id" | "createdAt" | "updatedAt" | "scope"> & {
+      id?: string;
+      scope?: LearningScope;
+      prNumber?: number;
+    },
   ): Promise<OrgMemory>;
-  listMemories(filter?: {
-    orgId?: string;
-    repoId?: string;
-    polarity?: "positive" | "negative";
-    kind?: OrgMemory["kind"];
-  }): Promise<OrgMemory[]>;
+  listMemories(filter?: ListMemoriesFilter): Promise<OrgMemory[]>;
   deleteMemory(id: string): Promise<boolean>;
+  /** Move a memory across org / repo / pr scopes. */
+  moveMemory(id: string, target: MoveMemoryTarget): Promise<OrgMemory | undefined>;
   /** Fingerprints / title patterns that should suppress findings. */
   negativeSuppression(opts?: {
     orgId?: string;
     repoId?: string;
+    prKey?: string;
   }): Promise<{ fingerprints: Set<string>; patterns: string[] }>;
   getRepoState(
     repoId: string,
@@ -65,6 +97,60 @@ function mapDbKindToReaction(kind: string): "up" | "down" {
   return "down";
 }
 
+function ensureMemoryShape(
+  m: Omit<OrgMemory, "scope"> & { scope?: LearningScope },
+): OrgMemory {
+  const scope = inferMemoryScope(m);
+  return { ...m, scope };
+}
+
+/** Whether a memory applies to a review of repoId / prKey. */
+export function memoryAppliesTo(
+  m: OrgMemory,
+  ctx: { repoId?: string; prKey?: string },
+): boolean {
+  const scope = inferMemoryScope(m);
+  if (scope === "org") return true;
+  if (scope === "repo") {
+    if (!ctx.repoId) return false;
+    return m.repoId === ctx.repoId;
+  }
+  // pr
+  if (!ctx.prKey) return false;
+  return m.prKey === ctx.prKey;
+}
+
+function filterMemories(
+  memories: OrgMemory[],
+  filter: ListMemoriesFilter,
+): OrgMemory[] {
+  return memories
+    .map(ensureMemoryShape)
+    .filter((m) => {
+      if (filter.orgId && m.orgId !== filter.orgId) return false;
+      if (filter.polarity && m.polarity !== filter.polarity) return false;
+      if (filter.kind && m.kind !== filter.kind) return false;
+
+      if (filter.applicable) {
+        return memoryAppliesTo(m, {
+          repoId: filter.repoId,
+          prKey: filter.prKey,
+        });
+      }
+
+      if (filter.scope) {
+        if (inferMemoryScope(m) !== filter.scope) return false;
+      }
+      if (filter.repoId) {
+        if (m.repoId && m.repoId !== filter.repoId) return false;
+        // When filtering exact scope=repo, require repoId match (not org-wide)
+        if (filter.scope === "repo" && m.repoId !== filter.repoId) return false;
+      }
+      if (filter.prKey && m.prKey !== filter.prKey) return false;
+      return true;
+    });
+}
+
 /**
  * Dual-mode learning store:
  * - Postgres via @codesteward/db when DATABASE_URL is set
@@ -89,7 +175,6 @@ export function createLearningStore(opts: LearningStoreOptions = {}): LearningSt
 }
 
 function createPgLearningStore(): LearningStore {
-  // Lazy import binding — resolved on first call via dynamic import cache
   type DbLearning = {
     addReaction: (input: {
       orgId?: string;
@@ -156,6 +241,7 @@ function createPgLearningStore(): LearningStore {
       orgId?: string;
       repoId?: string;
       enabled?: boolean;
+      limit?: number;
     }) => Promise<
       Array<{
         id: string;
@@ -170,6 +256,23 @@ function createPgLearningStore(): LearningStore {
         createdAt: string;
         updatedAt: string;
       }>
+    >;
+    deleteMemory?: (id: string) => Promise<boolean>;
+    getMemory?: (id: string) => Promise<
+      | {
+          id: string;
+          orgId: string;
+          repoId?: string;
+          kind: string;
+          title?: string;
+          body: string;
+          source?: string;
+          metadata: Record<string, unknown>;
+          enabled: boolean;
+          createdAt: string;
+          updatedAt: string;
+        }
+      | undefined
     >;
     getRepoState: (
       repoId: string,
@@ -237,10 +340,17 @@ function createPgLearningStore(): LearningStore {
     )
       ? m.kind
       : "preference") as OrgMemory["kind"];
-    return {
+    const prKey =
+      (m.metadata.prKey as string | undefined) ??
+      (m.metadata.pr_key as string | undefined) ??
+      undefined;
+    const scopeMeta = m.metadata.scope as string | undefined;
+    return ensureMemoryShape({
       id: m.id,
       orgId: m.orgId,
       repoId: m.repoId,
+      prKey,
+      scope: scopeMeta as LearningScope | undefined,
       kind,
       polarity,
       fingerprint: (m.metadata.fingerprint as string | undefined) ?? undefined,
@@ -251,7 +361,7 @@ function createPgLearningStore(): LearningStore {
       weight: typeof m.metadata.weight === "number" ? m.metadata.weight : 1,
       createdAt: m.createdAt,
       updatedAt: m.updatedAt,
-    };
+    });
   }
 
   const api: LearningStore = {
@@ -285,6 +395,7 @@ function createPgLearningStore(): LearningStore {
         await api.addMemory({
           orgId: reaction.orgId,
           repoId: reaction.repoId,
+          scope: reaction.repoId ? "repo" : "org",
           kind: "dismissal",
           polarity: "negative",
           fingerprint: input.fingerprint,
@@ -316,10 +427,16 @@ function createPgLearningStore(): LearningStore {
 
     async addMemory(input) {
       const r = await repo();
+      const scoped = normalizeMemoryScopeFields({
+        scope: input.scope,
+        repoId: input.repoId,
+        prKey: input.prKey,
+        prNumber: input.prNumber,
+      });
       const row = await r.upsertMemory({
         id: input.id,
         orgId: input.orgId ?? "local",
-        repoId: input.repoId,
+        repoId: scoped.repoId,
         kind: input.kind,
         title: input.title,
         body: input.body ?? input.title ?? "",
@@ -329,6 +446,8 @@ function createPgLearningStore(): LearningStore {
           fingerprint: input.fingerprint,
           pattern: input.pattern,
           weight: input.weight ?? 1,
+          scope: scoped.scope,
+          prKey: scoped.prKey,
         },
         enabled: true,
       });
@@ -337,32 +456,36 @@ function createPgLearningStore(): LearningStore {
 
     async listMemories(filter = {}) {
       const r = await repo();
+      // Scope / prKey live in metadata — load org slice and filter in process.
       const rows = await r.listMemories({
         orgId: filter.orgId,
-        repoId: filter.repoId,
         enabled: true,
+        limit: 500,
       });
-      return rows
-        .map(memFromDb)
-        .filter((m) => {
-          if (filter.polarity && m.polarity !== filter.polarity) return false;
-          if (filter.kind && m.kind !== filter.kind) return false;
-          return true;
-        });
+      return filterMemories(rows.map(memFromDb), filter);
     },
 
     async deleteMemory(id) {
       const r = await repo();
-      // Soft-disable via upsert when hard delete not on repository
+      if (typeof r.deleteMemory === "function") {
+        return r.deleteMemory(id);
+      }
+      // Soft-disable fallback
       try {
+        let existing: Awaited<ReturnType<NonNullable<DbLearning["getMemory"]>>> | undefined;
+        if (typeof r.getMemory === "function") {
+          existing = await r.getMemory(id);
+        }
         await r.upsertMemory({
           id,
-          orgId: "local",
-          kind: "preference",
-          body: "",
-          source: "api",
+          orgId: existing?.orgId ?? "local",
+          repoId: existing?.repoId,
+          kind: existing?.kind ?? "preference",
+          body: existing?.body ?? "",
+          title: existing?.title ?? "deleted",
+          source: existing?.source ?? "api",
+          metadata: { ...(existing?.metadata ?? {}), deleted: true },
           enabled: false,
-          title: "deleted",
         });
         return true;
       } catch {
@@ -370,12 +493,27 @@ function createPgLearningStore(): LearningStore {
       }
     },
 
+    async moveMemory(id, target) {
+      const r = await repo();
+      const rows = await r.listMemories({ enabled: true, limit: 500 });
+      const row = rows.find((x) => x.id === id);
+      if (!row) {
+        // try disabled / broader
+        const all = await r.listMemories({ limit: 1000 });
+        const found = all.find((x) => x.id === id);
+        if (!found) return undefined;
+        return movePgRow(r, found, target);
+      }
+      return movePgRow(r, row, target);
+    },
+
     async negativeSuppression(opts = {}) {
-      // Multi-tenant safety: never merge orgs. Missing orgId → "local".
       const orgId = opts.orgId ?? "local";
       const memories = await api.listMemories({
         orgId,
         repoId: opts.repoId,
+        prKey: opts.prKey,
+        applicable: true,
         polarity: "negative",
       });
       const reactions = await api.listReactions({
@@ -430,6 +568,41 @@ function createPgLearningStore(): LearningStore {
     },
   };
 
+  async function movePgRow(
+    r: DbLearning,
+    row: {
+      id: string;
+      orgId: string;
+      repoId?: string;
+      kind: string;
+      title?: string;
+      body: string;
+      source?: string;
+      metadata: Record<string, unknown>;
+    },
+    target: MoveMemoryTarget,
+  ): Promise<OrgMemory> {
+    const scoped = normalizeMemoryScopeFields(target);
+    const meta = {
+      ...row.metadata,
+      scope: scoped.scope,
+      prKey: scoped.prKey,
+    };
+    if (!scoped.prKey) delete meta.prKey;
+    const updated = await r.upsertMemory({
+      id: row.id,
+      orgId: row.orgId,
+      repoId: scoped.repoId,
+      kind: row.kind,
+      title: row.title,
+      body: row.body,
+      source: row.source,
+      metadata: meta,
+      enabled: true,
+    });
+    return memFromDb(updated);
+  }
+
   return api;
 }
 
@@ -455,7 +628,7 @@ function createFileLearningStore(opts: LearningStoreOptions = {}): LearningStore
         repoStates?: RepoReviewState[];
       };
       for (const r of data.reactions ?? []) reactions.push(r);
-      for (const m of data.memories ?? []) memories.push(m);
+      for (const m of data.memories ?? []) memories.push(ensureMemoryShape(m));
       for (const s of data.repoStates ?? []) repoStates.set(s.repoId, s);
     } catch {
       /* empty */
@@ -499,6 +672,7 @@ function createFileLearningStore(opts: LearningStoreOptions = {}): LearningStore
         await api.addMemory({
           orgId: reaction.orgId,
           repoId: reaction.repoId,
+          scope: reaction.repoId ? "repo" : "org",
           kind: "dismissal",
           polarity: "negative",
           fingerprint: input.fingerprint,
@@ -526,10 +700,18 @@ function createFileLearningStore(opts: LearningStoreOptions = {}): LearningStore
     async addMemory(input) {
       await ensureLoaded();
       const ts = nowIso();
+      const scoped = normalizeMemoryScopeFields({
+        scope: input.scope,
+        repoId: input.repoId,
+        prKey: input.prKey,
+        prNumber: input.prNumber,
+      });
       const mem: OrgMemory = {
         id: input.id ?? createId("mem"),
         orgId: input.orgId ?? "local",
-        repoId: input.repoId,
+        scope: scoped.scope,
+        repoId: scoped.repoId,
+        prKey: scoped.prKey,
         kind: input.kind,
         polarity: input.polarity ?? "negative",
         fingerprint: input.fingerprint,
@@ -548,16 +730,11 @@ function createFileLearningStore(opts: LearningStoreOptions = {}): LearningStore
 
     async listMemories(filter = {}) {
       await ensureLoaded();
-      return memories.filter((m) => {
-        if (filter.orgId && m.orgId !== filter.orgId) return false;
-        if (filter.repoId && m.repoId && m.repoId !== filter.repoId) return false;
-        if (filter.polarity && m.polarity !== filter.polarity) return false;
-        if (filter.kind && m.kind !== filter.kind) return false;
-        return true;
-      });
+      return filterMemories(memories, filter);
     },
 
     async deleteMemory(id) {
+      await ensureLoaded();
       const idx = memories.findIndex((m) => m.id === id);
       if (idx < 0) return false;
       memories.splice(idx, 1);
@@ -565,16 +742,30 @@ function createFileLearningStore(opts: LearningStoreOptions = {}): LearningStore
       return true;
     },
 
+    async moveMemory(id, target) {
+      await ensureLoaded();
+      const mem = memories.find((m) => m.id === id);
+      if (!mem) return undefined;
+      const scoped = normalizeMemoryScopeFields(target);
+      mem.scope = scoped.scope;
+      mem.repoId = scoped.repoId;
+      mem.prKey = scoped.prKey;
+      mem.updatedAt = nowIso();
+      await save();
+      return { ...mem };
+    },
+
     async negativeSuppression(opts = {}) {
       await ensureLoaded();
-      // Multi-tenant safety: never merge orgs. Missing orgId → "local".
       const orgId = opts.orgId ?? "local";
       const fps = new Set<string>();
       const patterns: string[] = [];
       for (const m of memories) {
         if (m.polarity !== "negative") continue;
         if (m.orgId !== orgId) continue;
-        if (opts.repoId && m.repoId && m.repoId !== opts.repoId) continue;
+        if (!memoryAppliesTo(ensureMemoryShape(m), { repoId: opts.repoId, prKey: opts.prKey })) {
+          continue;
+        }
         if (m.fingerprint) fps.add(m.fingerprint);
         if (m.pattern) patterns.push(m.pattern);
         if (m.title) patterns.push(m.title);
@@ -591,7 +782,6 @@ function createFileLearningStore(opts: LearningStoreOptions = {}): LearningStore
     async getRepoState(repoId, opts) {
       await ensureLoaded();
       const orgId = opts?.orgId ?? "local";
-      // Prefer composite key; fall back to legacy repoId-only for migration
       return (
         repoStates.get(`${orgId}::${repoId}`) ??
         (repoStates.get(repoId)?.orgId === orgId || !repoStates.get(repoId)?.orgId
@@ -613,7 +803,6 @@ function createFileLearningStore(opts: LearningStoreOptions = {}): LearningStore
       };
       const key = `${orgId}::${next.repoId}`;
       repoStates.set(key, next);
-      // Drop legacy unscoped key if it pointed at another org
       const legacy = repoStates.get(next.repoId);
       if (legacy && (legacy.orgId ?? "local") !== orgId) {
         /* keep other org's legacy entry under composite only */
@@ -647,10 +836,12 @@ export async function seedMemoriesFromSteward(
   },
 ): Promise<number> {
   let n = 0;
+  const scope: LearningScope = opts.repoId ? "repo" : "org";
   for (const rule of opts.ignoreRules ?? []) {
     await store.addMemory({
       orgId: opts.orgId ?? "local",
       repoId: opts.repoId,
+      scope,
       kind: "steward_rule",
       polarity: "negative",
       pattern: rule,
@@ -665,6 +856,7 @@ export async function seedMemoriesFromSteward(
     await store.addMemory({
       orgId: opts.orgId ?? "local",
       repoId: opts.repoId,
+      scope,
       kind: "preference",
       polarity: "positive",
       pattern: focus,
@@ -679,6 +871,7 @@ export async function seedMemoriesFromSteward(
     await store.addMemory({
       orgId: opts.orgId ?? "local",
       repoId: opts.repoId,
+      scope,
       kind: "steward_rule",
       polarity: "positive",
       body: opts.rawStewardMd.slice(0, 4000),

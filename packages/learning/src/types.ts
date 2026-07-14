@@ -25,10 +25,28 @@ export const MemoryKindSchema = z.enum([
 ]);
 export type MemoryKind = z.infer<typeof MemoryKindSchema>;
 
+/**
+ * Where a learning applies:
+ * - org  — every repo in the org
+ * - repo — one repository
+ * - pr   — one pull/merge request (e.g. "defer this fix to a follow-up PR")
+ */
+export const LearningScopeSchema = z.enum(["org", "repo", "pr"]);
+export type LearningScope = z.infer<typeof LearningScopeSchema>;
+
 export const OrgMemorySchema = z.object({
   id: z.string(),
   orgId: z.string().default("local"),
+  /**
+   * Applicability scope. Inferred from repoId/prKey when missing (legacy rows).
+   */
+  scope: LearningScopeSchema.default("org"),
   repoId: z.string().optional(),
+  /**
+   * Stable PR key: `{repoId}#{prNumber}` e.g. `acme/api#42`.
+   * Required when scope is `pr`.
+   */
+  prKey: z.string().optional(),
   kind: MemoryKindSchema,
   /** Negative memories suppress similar findings in judge. */
   polarity: z.enum(["positive", "negative"]).default("negative"),
@@ -53,3 +71,62 @@ export const RepoReviewStateSchema = z.object({
   updatedAt: z.string(),
 });
 export type RepoReviewState = z.infer<typeof RepoReviewStateSchema>;
+
+/** Build a stable PR-scoped memory key. */
+export function makePrKey(repoId: string, prNumber: number | string): string {
+  return `${repoId}#${prNumber}`;
+}
+
+/** Infer scope for legacy rows that predate the scope field. */
+export function inferMemoryScope(m: {
+  scope?: LearningScope | string | null;
+  repoId?: string | null;
+  prKey?: string | null;
+}): LearningScope {
+  if (m.scope === "org" || m.scope === "repo" || m.scope === "pr") return m.scope;
+  if (m.prKey) return "pr";
+  if (m.repoId) return "repo";
+  return "org";
+}
+
+/**
+ * Normalize scope + identifiers when creating or moving a memory.
+ * Throws on invalid combinations.
+ */
+export function normalizeMemoryScopeFields(input: {
+  scope?: LearningScope;
+  repoId?: string | null;
+  prKey?: string | null;
+  prNumber?: number | null;
+}): { scope: LearningScope; repoId?: string; prKey?: string } {
+  let scope = input.scope;
+  let repoId = input.repoId?.trim() || undefined;
+  let prKey = input.prKey?.trim() || undefined;
+
+  if (!scope) {
+    scope = inferMemoryScope({ repoId, prKey });
+  }
+
+  if (scope === "org") {
+    return { scope: "org" };
+  }
+
+  if (scope === "repo") {
+    if (!repoId) {
+      throw new Error("repo-scoped learning requires repoId");
+    }
+    return { scope: "repo", repoId };
+  }
+
+  // pr
+  if (!repoId && prKey?.includes("#")) {
+    repoId = prKey.slice(0, prKey.lastIndexOf("#"));
+  }
+  if (!prKey && repoId && input.prNumber != null) {
+    prKey = makePrKey(repoId, input.prNumber);
+  }
+  if (!repoId || !prKey) {
+    throw new Error("pr-scoped learning requires repoId and prKey (or prNumber)");
+  }
+  return { scope: "pr", repoId, prKey };
+}

@@ -1,6 +1,7 @@
 import type {
   CheckRunInput,
   DiffFile,
+  Issue,
   PostedCheckRun,
   PostedComment,
   PostedReview,
@@ -96,6 +97,28 @@ export class GitHubScm implements ScmProvider {
       headSha: pr.head.sha,
       url: pr.html_url,
       author: pr.user?.login,
+    };
+  }
+
+  async getIssue(owner: string, repo: string, number: number): Promise<Issue> {
+    const issue = await this.api<{
+      number: number;
+      title: string;
+      body: string | null;
+      state: string;
+      html_url: string;
+      labels?: Array<{ name?: string } | string>;
+    }>(`/repos/${owner}/${repo}/issues/${number}`);
+    const labels = (issue.labels ?? [])
+      .map((l) => (typeof l === "string" ? l : l.name))
+      .filter((n): n is string => Boolean(n));
+    return {
+      number: issue.number,
+      title: issue.title,
+      body: issue.body ?? "",
+      state: issue.state,
+      url: issue.html_url,
+      labels,
     };
   }
 

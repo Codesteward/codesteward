@@ -1,9 +1,14 @@
 import type { LearningStore } from "./store.js";
-import type { OrgMemory } from "./types.js";
+import type { LearningScope, OrgMemory } from "./types.js";
+import { inferMemoryScope, makePrKey } from "./types.js";
 
 export interface LearningPromptOptions {
   orgId?: string;
   repoId?: string;
+  /** PR number — used with repoId to form prKey when prKey is not set. */
+  prNumber?: number;
+  /** Explicit PR key (`repoId#number`). */
+  prKey?: string;
   /** Cap negative items (default 30). */
   maxNegative?: number;
   /** Cap positive items (default 15). */
@@ -12,11 +17,19 @@ export interface LearningPromptOptions {
   maxChars?: number;
 }
 
+const SCOPE_RANK: Record<LearningScope, number> = {
+  pr: 0,
+  repo: 1,
+  org: 2,
+};
+
 /**
- * Build model-side learning guidance from org memories + downvotes.
+ * Build model-side learning guidance from org / repo / PR memories + downvotes.
  * Injected into specialist / discourse system prompts so the LLM avoids
- * re-proposing dismissed noise and steers toward org preferences —
+ * re-proposing dismissed noise and steers toward preferences —
  * not only post-hoc judge filtering.
+ *
+ * Hierarchy (most specific first): PR → repo → org-wide.
  */
 export async function buildOrgLearningPrompt(
   store: LearningStore,
@@ -26,13 +39,23 @@ export async function buildOrgLearningPrompt(
   const maxNeg = opts.maxNegative ?? 30;
   const maxPos = opts.maxPositive ?? 15;
   const maxChars = opts.maxChars ?? 6000;
+  const prKey =
+    opts.prKey ??
+    (opts.repoId && opts.prNumber != null
+      ? makePrKey(opts.repoId, opts.prNumber)
+      : undefined);
 
-  const memories = await store.listMemories({ orgId, repoId: opts.repoId });
-  // Prefer repo-scoped first, then org-wide
+  const memories = await store.listMemories({
+    orgId,
+    repoId: opts.repoId,
+    prKey,
+    applicable: true,
+  });
+
   const sorted = [...memories].sort((a, b) => {
-    const ar = a.repoId === opts.repoId ? 0 : a.repoId ? 1 : 2;
-    const br = b.repoId === opts.repoId ? 0 : b.repoId ? 1 : 2;
-    if (ar !== br) return ar - br;
+    const as = SCOPE_RANK[inferMemoryScope(a)] ?? 2;
+    const bs = SCOPE_RANK[inferMemoryScope(b)] ?? 2;
+    if (as !== bs) return as - bs;
     return (b.weight ?? 0) - (a.weight ?? 0);
   });
 
@@ -61,14 +84,15 @@ export async function buildOrgLearningPrompt(
   }
 
   const lines: string[] = [
-    "# Org learning (user feedback for THIS organization — treat as hard policy)",
-    "These come from 👍/👎 reactions, status changes (wontfix / false_positive / dismissed), and explicit org memories.",
+    "# Org learning (user feedback — treat as hard policy for this review)",
+    "These come from 👍/👎 reactions, status changes (wontfix / false_positive / dismissed), PR comments, and explicit memories.",
+    "Scopes: **pr** (this PR only) → **repo** (this repository) → **org** (all repos). Prefer more specific scopes when they conflict.",
     "They apply only to this org; never invent feedback from other tenants.",
   ];
 
   if (negative.length || reactionLines.length) {
     lines.push("");
-    lines.push("## Suppress / do not re-report (noise, false positives, wontfix)");
+    lines.push("## Suppress / do not re-report (noise, false positives, wontfix, deferred)");
     lines.push(
       "Do NOT emit findings that match these themes, titles, paths, or fingerprints. If something is borderline-related, lower confidence or omit it.",
     );
@@ -80,7 +104,7 @@ export async function buildOrgLearningPrompt(
 
   if (positive.length) {
     lines.push("");
-    lines.push("## Prefer / emphasize (org focus)");
+    lines.push("## Prefer / emphasize (focus areas)");
     lines.push(
       "Weight review effort toward these areas when they appear in scope. Prefer high-signal findings that align with them.",
     );
@@ -91,7 +115,7 @@ export async function buildOrgLearningPrompt(
 
   lines.push("");
   lines.push(
-    "When org learning conflicts with a weak stylistic nit, drop the nit. When it conflicts with a clear critical security bug that is not listed above, still report the critical bug.",
+    "When learning conflicts with a weak stylistic nit, drop the nit. When it conflicts with a clear critical security bug that is not listed above, still report the critical bug.",
   );
 
   let text = lines.join("\n");
@@ -102,8 +126,11 @@ export async function buildOrgLearningPrompt(
 }
 
 function formatMemoryLine(m: OrgMemory): string {
+  const scope = inferMemoryScope(m);
   const title = (m.title ?? m.pattern ?? m.body ?? m.fingerprint ?? m.kind).slice(0, 160);
-  const bits = [`- [${m.kind}/${m.polarity}] ${title}`];
+  const bits = [`- [${scope}/${m.kind}/${m.polarity}] ${title}`];
+  if (scope === "repo" && m.repoId) bits.push(`  repo: ${m.repoId}`);
+  if (scope === "pr" && m.prKey) bits.push(`  pr: ${m.prKey}`);
   if (m.pattern && m.pattern !== m.title) bits.push(`  match: ${m.pattern.slice(0, 160)}`);
   if (m.fingerprint) bits.push(`  fingerprint: ${m.fingerprint.slice(0, 24)}…`);
   if (m.source) bits.push(`  source: ${m.source}`);

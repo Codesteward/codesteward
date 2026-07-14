@@ -3,6 +3,16 @@ import { jobId, nowIso, sessionId } from "@codesteward/core";
 import type { GitHubScm } from "@codesteward/scm";
 import { verifyGitHubSignature } from "./github-verify.js";
 
+export interface CommentTriageHookResult {
+  intent: "review" | "learn" | "ignore" | "clarify";
+  /** When intent is review (or dual), enqueue a gate job. */
+  shouldReview: boolean;
+  /** Optional focus string stored on the job / session metadata. */
+  reviewFocus?: string;
+  /** Optional reply posted back on the PR. */
+  reply?: string;
+}
+
 export interface GitHubWebhookDeps {
   secret: string;
   scm: GitHubScm;
@@ -28,6 +38,7 @@ export interface GitHubWebhookDeps {
       status: "pending";
       stage: "queued";
       paths: string[];
+      metadata?: Record<string, unknown>;
     };
     job: Omit<ReviewJob, "id" | "enqueuedAt" | "attempts">;
   }) => Promise<{ sessionId: string; jobId: string }>;
@@ -44,6 +55,18 @@ export interface GitHubWebhookDeps {
   defaultRiskTier?: ReviewJob["riskTier"];
   /** Mention string that triggers review (default @codesteward) */
   mentionToken?: string;
+  /**
+   * Optional cheap-model / heuristic triage for @mention comments.
+   * When set, non-review intents can still save learnings without enqueueing.
+   */
+  triageComment?: (input: {
+    commentBody: string;
+    repoId: string;
+    prNumber: number;
+    author?: string;
+    prTitle?: string;
+    orgId: string;
+  }) => Promise<CommentTriageHookResult>;
 }
 
 export interface HandleResult {
@@ -56,7 +79,7 @@ export interface HandleResult {
  * Handle GitHub webhook events for PR Gate path.
  * Supported:
  * - pull_request (opened, synchronize, reopened, ready_for_review)
- * - issue_comment (created) when body mentions @codesteward review
+ * - issue_comment (created) when body mentions @codesteward
  */
 export async function handleGitHubWebhook(
   deps: GitHubWebhookDeps,
@@ -156,20 +179,13 @@ async function handleIssueCommentMention(
     process.env.STEW_MENTION_TOKEN ??
     "@codesteward"
   ).toLowerCase();
-  const body = (payload.comment?.body ?? "").toLowerCase();
-  // Match "@codesteward review" or bare mention token + review keyword
-  const triggers = [
-    `${mention} review`,
-    `${mention} please review`,
-    `${mention} re-review`,
-    `${mention} rereview`,
-  ];
-  const matched = triggers.some((t) => body.includes(t)) || (body.includes(mention) && body.includes("review"));
-  if (!matched) {
+  const bodyRaw = payload.comment?.body ?? "";
+  const body = bodyRaw.toLowerCase();
+  if (!body.includes(mention)) {
     return {
       ok: true,
       status: 200,
-      body: { ignored: true, reason: "no_mention_trigger", delivery },
+      body: { ignored: true, reason: "no_mention", delivery },
     };
   }
 
@@ -177,6 +193,84 @@ async function handleIssueCommentMention(
   const repo = payload.repository.name;
   const fullName = payload.repository.full_name;
   const prNumber = payload.issue.number;
+
+  const installationId = payload.installation?.id
+    ? String(payload.installation.id)
+    : undefined;
+  const productOrgId = deps.resolveProductOrgId
+    ? await deps.resolveProductOrgId({
+        installationId,
+        ownerLogin: owner,
+      })
+    : process.env.DEFAULT_ORG_ID ?? "local";
+
+  // Cheap-model triage when available; else legacy keyword match
+  let triage: CommentTriageHookResult | undefined;
+  if (deps.triageComment) {
+    try {
+      triage = await deps.triageComment({
+        commentBody: bodyRaw,
+        repoId: fullName,
+        prNumber,
+        author: payload.comment?.user?.login,
+        orgId: productOrgId,
+      });
+    } catch (err) {
+      console.warn(
+        "[webhooks] triageComment failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  if (!triage) {
+    // Legacy: only trigger on explicit review keywords
+    const triggers = [
+      `${mention} review`,
+      `${mention} please review`,
+      `${mention} re-review`,
+      `${mention} rereview`,
+    ];
+    const matched =
+      triggers.some((t) => body.includes(t)) ||
+      (body.includes(mention) && body.includes("review"));
+    if (!matched) {
+      return {
+        ok: true,
+        status: 200,
+        body: { ignored: true, reason: "no_mention_trigger", delivery },
+      };
+    }
+    triage = { intent: "review", shouldReview: true };
+  }
+
+  // Post optional reply (learn/clarify/ack)
+  if (triage.reply) {
+    try {
+      await deps.scm.postComment(owner, repo, prNumber, triage.reply);
+    } catch (err) {
+      console.warn(
+        "[webhooks] postComment (triage reply) failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  if (!triage.shouldReview) {
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        accepted: true,
+        delivery,
+        intent: triage.intent,
+        reviewed: false,
+        learning: triage.intent === "learn",
+        pr: prNumber,
+        repo: fullName,
+      },
+    };
+  }
 
   let pr;
   try {
@@ -201,15 +295,21 @@ async function handleIssueCommentMention(
       draft: false,
       base: { ref: pr.baseBranch, sha: pr.baseSha },
       head: { ref: pr.headBranch, sha: pr.headSha },
+      title: pr.title,
+      body: pr.body,
     },
     repository: {
       name: repo,
       full_name: fullName,
       owner: { login: owner },
     },
+    installation: payload.installation,
   };
 
-  return enqueueFromPr(deps, synthetic, delivery, "mentioned");
+  return enqueueFromPr(deps, synthetic, delivery, "mentioned", {
+    reviewFocus: triage.reviewFocus,
+    orgId: productOrgId,
+  });
 }
 
 async function enqueueFromPr(
@@ -217,6 +317,7 @@ async function enqueueFromPr(
   payload: GitHubPullRequestEvent,
   delivery: string,
   action: string,
+  extra?: { reviewFocus?: string; orgId?: string },
 ): Promise<HandleResult> {
   const owner = payload.repository.owner.login;
   const repo = payload.repository.name;
@@ -242,12 +343,19 @@ async function enqueueFromPr(
   const installationId = payload.installation?.id
     ? String(payload.installation.id)
     : undefined;
-  const productOrgId = deps.resolveProductOrgId
-    ? await deps.resolveProductOrgId({
-        installationId,
-        ownerLogin: owner,
-      })
-    : process.env.DEFAULT_ORG_ID ?? "local";
+  const productOrgId =
+    extra?.orgId ??
+    (deps.resolveProductOrgId
+      ? await deps.resolveProductOrgId({
+          installationId,
+          ownerLogin: owner,
+        })
+      : process.env.DEFAULT_ORG_ID ?? "local");
+
+  const metadata: Record<string, unknown> = {};
+  if (extra?.reviewFocus) metadata.reviewFocus = extra.reviewFocus;
+  if (payload.pull_request.title) metadata.prTitle = payload.pull_request.title;
+  if (payload.pull_request.body) metadata.prBody = payload.pull_request.body;
 
   const result = await deps.enqueueGate({
     session: {
@@ -270,6 +378,7 @@ async function enqueueFromPr(
       status: "pending",
       stage: "queued",
       paths,
+      metadata: Object.keys(metadata).length ? metadata : undefined,
     },
     job: {
       sessionId: sid,
@@ -294,6 +403,7 @@ async function enqueueFromPr(
         prNumber,
         publish: true,
       },
+      metadata: Object.keys(metadata).length ? metadata : undefined,
     },
   });
 
@@ -310,6 +420,7 @@ async function enqueueFromPr(
       jobId: result.jobId,
       files: paths.length,
       trigger: action === "mentioned" ? "mention" : "pull_request",
+      reviewFocus: extra?.reviewFocus,
     },
   };
 }
@@ -320,6 +431,8 @@ interface GitHubPullRequestEvent {
   pull_request: {
     number: number;
     draft?: boolean;
+    title?: string;
+    body?: string;
     base: { ref: string; sha: string };
     head: { ref: string; sha: string };
   };
@@ -343,6 +456,7 @@ interface GitHubIssueCommentEvent {
     full_name: string;
     owner: { login: string };
   };
+  installation?: { id: number };
 }
 
 export function createWebhookJobId(delivery: string): string {
