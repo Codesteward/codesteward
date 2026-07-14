@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "codesteward.name" . }}-api
+  labels:
+    {{- include "codesteward.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: api
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: api
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["node", "packages/api/dist/server.js"]
+          ports:
+            - containerPort: {{ .Values.api.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.api.port | quote }}
+            - name: GRAPH_MCP_URL
+              value: "http://{{ include "codesteward.name" . }}-graph-mcp:{{ .Values.graph.mcp.port }}/mcp"
+            - name: GRAPH_MOCK
+              value: {{ .Values.env.GRAPH_MOCK | quote }}
+            - name: MODEL_PROVIDER
+              value: {{ .Values.env.MODEL_PROVIDER | quote }}
+            - name: MODEL_NAME
+              value: {{ .Values.env.MODEL_NAME | quote }}
+            - name: STEW_USE_DEEPAGENTS
+              value: {{ .Values.env.STEW_USE_DEEPAGENTS | quote }}
+            - name: STEW_DATA_DIR
+              value: /data
+            - name: OTEL_ENABLED
+              value: {{ .Values.env.OTEL_ENABLED | default "0" | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: codesteward-secrets
+                  key: databaseUrl
+            - name: STEW_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: codesteward-secrets
+                  key: apiKey
+                  optional: true
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: codesteward-secrets
+                  key: openaiApiKey
+                  optional: true
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: codesteward-secrets
+                  key: githubToken
+                  optional: true
+            - name: GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: codesteward-secrets
+                  key: githubWebhookSecret
+                  optional: true
+            - name: GITLAB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: codesteward-secrets
+                  key: gitlabToken
+                  optional: true
+            - name: GITLAB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: codesteward-secrets
+                  key: gitlabWebhookSecret
+                  optional: true
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "codesteward.name" . }}-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "codesteward.name" . }}-api
+spec:
+  selector:
+    app.kubernetes.io/component: api
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - port: {{ .Values.api.port }}
+      targetPort: {{ .Values.api.port }}

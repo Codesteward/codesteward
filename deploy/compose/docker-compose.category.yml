@@ -1,0 +1,183 @@
+# Category-leader stock stack: Postgres + Graph + API + Worker + UI + Keycloak
+# Usage:
+#   export OPENAI_API_KEY=... STEW_SECRETS_KEY=$(openssl rand -hex 32)
+#   docker compose -f deploy/compose/docker-compose.category.yml up --build -d
+name: codesteward-category
+
+x-stew-env: &stew-env
+  PORT: "8081"
+  GRAPH_MOCK: "0"
+  # Codesteward Graph image uses TRANSPORT=sse (GET /sse + POST /messages).
+  GRAPH_MCP_URL: "http://graph-mcp:3000/sse"
+  # MCP Python SSE rejects Docker DNS Host headers (421). Force local-IP Host.
+  GRAPH_MCP_HOST_HEADER: "127.0.0.1:3000"
+  STEW_DEBUG_LLM: ${STEW_DEBUG_LLM:-1}
+  STEW_CODE_TOKEN_BUDGET: ${STEW_CODE_TOKEN_BUDGET:-14000}
+  MODEL_PROVIDER: ${MODEL_PROVIDER:-openai-compatible}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+  MODEL_NAME: ${MODEL_NAME:-gpt-4.1-mini}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  XAI_API_KEY: ${XAI_API_KEY:-}
+  STEW_DATA_DIR: /data
+  DATABASE_URL: postgres://steward:steward@postgres:5432/codesteward
+  REPO_PATH: /repos/project
+  # Clone target SCM repos for stewardship (never silently review REPO_PATH platform tree)
+  STEW_WORKSPACE_CLONE: ${STEW_WORKSPACE_CLONE:-1}
+  # API + dedicated worker must not double-claim jobs
+  STEW_INLINE_WORKER: ${STEW_INLINE_WORKER:-0}
+  STEW_USE_DEEPAGENTS: "1"
+  STEW_REQUIRE_TOOL_AGENTS: "1"
+  STEW_AUTH_STRICT: ${STEW_AUTH_STRICT:-1}
+  STEW_SECRETS_KEY: ${STEW_SECRETS_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+  STEW_API_KEY: ${STEW_API_KEY:-category-demo-api-key-change-me}
+  STEW_PUBLIC_URL: ${STEW_PUBLIC_URL:-http://localhost:8080}
+  # Browser-reachable API (manifest redirect). Webhooks need a *public* URL — set tunnel for live GH:
+  #   STEW_WEBHOOK_PUBLIC_URL=https://xxxx.ngrok-free.app  (or smee.io proxy target)
+  STEW_API_PUBLIC_URL: ${STEW_API_PUBLIC_URL:-http://localhost:8081}
+  STEW_WEBHOOK_PUBLIC_URL: ${STEW_WEBHOOK_PUBLIC_URL:-}
+  GITHUB_APP_NAME: ${GITHUB_APP_NAME:-Codesteward}
+  OIDC_ISSUER: http://keycloak:8083/realms/codesteward
+  OIDC_PUBLIC_ISSUER: http://localhost:8083/realms/codesteward
+  OIDC_CLIENT_ID: codesteward-ui
+  OIDC_REDIRECT_URI: http://localhost:8081/v1/auth/oidc/callback
+  # Identity SoT: Keycloak (login OIDC-only; Members/orgs managed via KC Admin API)
+  STEW_IDENTITY_MODE: ${STEW_IDENTITY_MODE:-keycloak}
+  KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-codesteward-api}
+  KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-steward-api-dev-secret-change-me}
+  OIDC_SCOPES: ${OIDC_SCOPES:-openid profile email}
+  GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+  GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+  GITHUB_APP_PRIVATE_KEY_REF: ${GITHUB_APP_PRIVATE_KEY_REF:-}
+  GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
+  GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
+  GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-category-webhook-secret}
+  STEW_SANDBOX_PROVIDER: ${STEW_SANDBOX_PROVIDER:-local}
+  STEW_REQUIRE_PG_TENANCY: "1"
+  # SCIM 2.0 (IdP directory provisioning) — Bearer token for /scim/v2/*
+  STEW_SCIM_TOKEN: ${STEW_SCIM_TOKEN:-}
+  STEW_SCIM_ORG_ID: ${STEW_SCIM_ORG_ID:-local}
+  STEW_SCIM_HARD_DELETE: ${STEW_SCIM_HARD_DELETE:-0}
+  STEW_AUDIT_RETENTION_DAYS: ${STEW_AUDIT_RETENTION_DAYS:-365}
+  # Langfuse — all review LLM calls share sessionId = review session id
+  LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+  LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+  LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
+  STEW_LANGFUSE_TRACE_MODE: ${STEW_LANGFUSE_TRACE_MODE:-session}
+  STEW_LANGFUSE_REDACT: ${STEW_LANGFUSE_REDACT:-1}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: steward
+      POSTGRES_PASSWORD: steward
+      POSTGRES_DB: codesteward
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U steward -d codesteward"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    # --spi-theme-static-max-age=-1 helps pick up theme CSS during dev
+    command:
+      [
+        "start-dev",
+        "--import-realm",
+        "--http-port=8083",
+        "--spi-theme-static-max-age=-1",
+        "--spi-theme-cache-themes=false",
+        "--spi-theme-cache-templates=false",
+      ]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HTTP_PORT: 8083
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_RELATIVE_PATH: /
+      # Hostname for browser redirects (public)
+      KC_HOSTNAME_URL: ${KC_HOSTNAME_URL:-http://localhost:8083}
+      KC_HOSTNAME_ADMIN_URL: ${KC_HOSTNAME_ADMIN_URL:-http://localhost:8083}
+    ports:
+      - "8083:8083"
+    volumes:
+      - ./keycloak/realm-codesteward.json:/opt/keycloak/data/import/realm-codesteward.json:ro
+      # Codesteward-branded login theme (parent keycloak.v2 + custom CSS)
+      - ./keycloak/themes/codesteward:/opt/keycloak/themes/codesteward:ro
+
+  graph-mcp:
+    image: ghcr.io/bitkaio/codesteward:latest
+    environment:
+      TRANSPORT: "sse"
+      HOST: "0.0.0.0"
+      PORT: "3000"
+      GRAPH_BACKEND: "graphqlite"
+      GRAPHQLITE_PATH: "/data/graph.db"
+      DEFAULT_TENANT_ID: "local"
+      DEFAULT_REPO_ID: "demo"
+      DEFAULT_REPO_PATH: "/repos/project"
+      WORKSPACE_BASE: "/workspace"
+      LOG_LEVEL: "INFO"
+    ports:
+      - "3000:3000"
+    volumes:
+      - graph-data:/data
+      - ${REPO_PATH:-../..}:/repos/project:ro
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile.node
+      args:
+        SERVICE: api
+    environment:
+      <<: *stew-env
+    ports:
+      - "8081:8081"
+    volumes:
+      - stew-data:/data
+      - ${REPO_PATH:-../..}:/repos/project:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      graph-mcp:
+        condition: service_started
+      keycloak:
+        condition: service_started
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile.node
+      args:
+        SERVICE: worker
+    environment:
+      <<: *stew-env
+    volumes:
+      - stew-data:/data
+      - ${REPO_PATH:-../..}:/repos/project:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+  ui:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile.ui
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  stew-data:
+  graph-data:
+  pg-data:

@@ -1,0 +1,37 @@
+# CodeSteward + Keycloak (OIDC reference IdP)
+# Usage: docker compose -f deploy/compose/docker-compose.keycloak.yml up -d
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command:
+      [
+        "start-dev",
+        "--import-realm",
+        "--http-port=8083",
+        "--spi-theme-static-max-age=-1",
+        "--spi-theme-cache-themes=false",
+        "--spi-theme-cache-templates=false",
+      ]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HTTP_PORT: 8083
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_URL: ${KC_HOSTNAME_URL:-http://localhost:8083}
+      KC_HOSTNAME_ADMIN_URL: ${KC_HOSTNAME_ADMIN_URL:-http://localhost:8083}
+    ports:
+      - "8083:8083"
+    volumes:
+      - ./keycloak/realm-codesteward.json:/opt/keycloak/data/import/realm-codesteward.json:ro
+      - ./keycloak/themes/codesteward:/opt/keycloak/themes/codesteward:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8083"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # Optional: link docs for API env when using this stack
+  # OIDC_ISSUER=http://localhost:8083/realms/codesteward
+  # OIDC_CLIENT_ID=codesteward-ui
+  # OIDC_REDIRECT_URI=http://localhost:8081/v1/auth/oidc/callback
+  # STEW_PUBLIC_URL=http://localhost:8080

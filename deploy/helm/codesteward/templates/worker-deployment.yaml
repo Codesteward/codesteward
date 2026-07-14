@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "codesteward.name" . }}-worker
+  labels:
+    {{- include "codesteward.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: worker
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: worker
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["node", "services/worker/dist/index.js"]
+          env:
+            - name: GRAPH_MCP_URL
+              value: "http://{{ include "codesteward.name" . }}-graph-mcp:{{ .Values.graph.mcp.port }}/mcp"
+            - name: GRAPH_MOCK
+              value: {{ .Values.env.GRAPH_MOCK | quote }}
+            - name: STEW_MAX_CONCURRENT
+              value: {{ .Values.worker.maxConcurrent | quote }}
+            - name: AGENT_MAX_CONCURRENT
+              value: {{ .Values.worker.maxConcurrent | quote }}
+            - name: STEW_SANDBOX_PROVIDER
+              value: {{ .Values.sandbox.provider | quote }}
+            - name: STEW_SANDBOX_IMAGE
+              value: {{ .Values.sandbox.jobImage | quote }}
+            - name: STEW_USE_DEEPAGENTS
+              value: {{ .Values.env.STEW_USE_DEEPAGENTS | quote }}
+            - name: MODEL_PROVIDER
+              value: {{ .Values.env.MODEL_PROVIDER | quote }}
+            - name: MODEL_NAME
+              value: {{ .Values.env.MODEL_NAME | quote }}
+            - name: STEW_DATA_DIR
+              value: /data
+            - name: OTEL_ENABLED
+              value: {{ .Values.env.OTEL_ENABLED | default "0" | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: codesteward-secrets
+                  key: databaseUrl
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: codesteward-secrets
+                  key: openaiApiKey
+                  optional: true
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: codesteward-secrets
+                  key: githubToken
+                  optional: true
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "codesteward.name" . }}-data

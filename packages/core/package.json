@@ -1,0 +1,31 @@
+{
+  "name": "@codesteward/core",
+  "version": "0.1.0",
+  "description": "Shared types, Zod schemas, IDs, and events for CodeSteward Review",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test src/**/*.test.ts src/__tests__/**/*.test.ts 2>/dev/null || node --test dist/**/*.test.js 2>/dev/null || node --import tsx --test $(find src -name \"*.test.ts\" 2>/dev/null | tr \"\\n\" \" \")",
+    "lint": "echo 'lint:ok'"
+  },
+  "dependencies": {
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2",
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3"
+  },
+  "files": [
+    "dist"
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "name": "@codesteward/sandbox",
+  "version": "0.1.0",
+  "description": "Sandbox session interface: local Docker, K8s stub, null",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo 'no tests'",
+    "lint": "echo 'lint:ok'"
+  },
+  "dependencies": {
+    "@codesteward/core": "workspace:*",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2",
+    "@types/node": "^22.13.10"
+  },
+  "files": ["dist"]
+}

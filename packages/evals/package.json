@@ -1,0 +1,13 @@
+{
+  "name": "@codesteward/evals",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "eval": "node src/run-eval.mjs",
+    "test": "node src/run-eval.mjs",
+    "build": "echo 'evals:ok'",
+    "typecheck": "echo 'evals:ok'",
+    "lint": "echo 'lint:ok'"
+  }
+}

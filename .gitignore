@@ -1,0 +1,75 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.yarn/
+.pnp.*
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.turbo/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+.vitest/
+.nyc_output/
+
+# Env & secrets (keep *.example committed)
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_rsa.pub
+*.keystore
+
+# Logs & OS
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Local product / runtime state
+.codesteward/
+.steward-data/
+data/
+*.db
+*.sqlite
+*.sqlite3
+tmp/
+tmp
+.cache/
+
+# IDE / editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+*.swp
+*~
+
+# Docker local volumes / compose overrides
+docker-data/
+**/pg-data/
+deploy/compose/.env
+deploy/compose/*.override.yml
+
+# Vendored competitor research clones (large; not product source)
+research/source/
+
+# Local workspace scratch
+workspace/
+
+# Generated eval / smoke artifacts (optional local)
+evals/**/tmp/
+evals/**/*.local.json
+
+research/

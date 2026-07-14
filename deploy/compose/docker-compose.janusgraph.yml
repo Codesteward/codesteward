@@ -1,0 +1,133 @@
+# CodeSteward Review — demo stack with JanusGraph graph backend
+# Usage:
+#   export REPO_PATH=/path/to/repo OPENAI_API_KEY=...
+#   docker compose -f deploy/compose/docker-compose.janusgraph.yml up -d
+name: codesteward-janus
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: codesteward-postgres
+    environment:
+      POSTGRES_USER: steward
+      POSTGRES_PASSWORD: steward
+      POSTGRES_DB: codesteward
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U steward -d codesteward"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  janusgraph:
+    image: janusgraph/janusgraph:1.1.0
+    container_name: codesteward-janusgraph
+    environment:
+      JANUS_PROPS_TEMPLATE: "berkeleyje-lucene"
+      JAVA_OPTIONS: "-Xms512m -Xmx1g"
+    ports:
+      - "8182:8182"
+    volumes:
+      - janusgraph-data:/var/lib/janusgraph
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import socket; s=socket.socket(); s.settimeout(5); s.connect(('localhost',8182)); s.close()\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+
+  graph-mcp:
+    image: ghcr.io/bitkaio/codesteward:latest
+    container_name: codesteward-graph-mcp
+    depends_on:
+      janusgraph:
+        condition: service_healthy
+    environment:
+      TRANSPORT: "sse"
+      HOST: "0.0.0.0"
+      PORT: "3000"
+      GRAPH_BACKEND: "janusgraph"
+      JANUSGRAPH_URL: "ws://janusgraph:8182/gremlin"
+      DEFAULT_TENANT_ID: "local"
+      DEFAULT_REPO_ID: "demo"
+      DEFAULT_REPO_PATH: "/repos/project"
+      WORKSPACE_BASE: "/workspace"
+      LOG_LEVEL: "INFO"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ${REPO_PATH:-../..}:/repos/project:ro
+      - mcp-workspace:/workspace
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile.node
+      args:
+        SERVICE: api
+    environment:
+      PORT: "8081"
+      GRAPH_MOCK: "0"
+      GRAPH_MCP_URL: "http://graph-mcp:3000/mcp"
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-openai-compatible}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MODEL_NAME: ${MODEL_NAME:-gpt-4.1-mini}
+      STEW_DATA_DIR: /data
+      DATABASE_URL: postgres://steward:steward@postgres:5432/codesteward
+      STEW_API_KEY: ${STEW_API_KEY:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-dev-insecure}
+      REPO_PATH: /repos/project
+    ports:
+      - "8081:8081"
+    volumes:
+      - stew-data:/data
+      - ${REPO_PATH:-../..}:/repos/project:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      graph-mcp:
+        condition: service_started
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile.node
+      args:
+        SERVICE: worker
+    environment:
+      GRAPH_MOCK: "0"
+      GRAPH_MCP_URL: "http://graph-mcp:3000/mcp"
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-openai-compatible}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MODEL_NAME: ${MODEL_NAME:-gpt-4.1-mini}
+      STEW_DATA_DIR: /data
+      DATABASE_URL: postgres://steward:steward@postgres:5432/codesteward
+      STEW_SANDBOX_PROVIDER: ${STEW_SANDBOX_PROVIDER:-local}
+      STEW_MAX_CONCURRENT: ${STEW_MAX_CONCURRENT:-8}
+      REPO_PATH: /repos/project
+    volumes:
+      - stew-data:/data
+      - ${REPO_PATH:-../..}:/repos/project:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+  ui:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile.ui
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  pg-data:
+  janusgraph-data:
+  stew-data:
+  mcp-workspace:

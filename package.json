@@ -1,0 +1,38 @@
+{
+  "name": "codesteward-review",
+  "private": true,
+  "version": "0.1.0",
+  "description": "CodeSteward Review \u2014 agentic PR gate + branch stewardship on Codesteward Graph",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r run build",
+    "dev": "pnpm --filter @codesteward/api --filter @codesteward/worker --filter @codesteward/ui --parallel run dev",
+    "dev:api": "pnpm --filter @codesteward/api run dev",
+    "dev:worker": "pnpm --filter @codesteward/worker run dev",
+    "dev:ui": "pnpm --filter @codesteward/ui run dev",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "lint": "pnpm -r run lint",
+    "stew": "node packages/cli/dist/index.js",
+    "compose:demo": "docker compose -f deploy/compose/docker-compose.demo.yml up -d",
+    "compose:neo4j": "docker compose -f deploy/compose/docker-compose.neo4j.yml up -d",
+    "compose:janus": "docker compose -f deploy/compose/docker-compose.janusgraph.yml up -d",
+    "validate:ga": "node scripts/validate-ga.mjs",
+    "migrate": "pnpm --filter @codesteward/db run migrate",
+    "accept:ga": "node scripts/ga-acceptance.mjs",
+    "eval": "pnpm --filter @codesteward/evals run eval",
+    "check:leader": "node scripts/category-leader-check.mjs",
+    "test:isolation": "pnpm --filter @codesteward/api exec tsx --test src/__tests__/org-isolation.test.ts",
+    "compose:keycloak": "docker compose -f deploy/compose/docker-compose.keycloak.yml up -d",
+    "compose:category": "docker compose -f deploy/compose/docker-compose.category.yml up --build -d",
+    "compose:category:down": "docker compose -f deploy/compose/docker-compose.category.yml down",
+    "accept:category": "node scripts/category-acceptance.mjs && node scripts/category-compose-validate.mjs && node scripts/category-live-smoke.mjs",
+    "check:compose": "node scripts/category-compose-validate.mjs",
+    "smoke:category": "node scripts/category-live-smoke.mjs",
+    "check:category-leader": "node scripts/category-leader-check.mjs && node scripts/category-acceptance.mjs"
+  },
+  "author": "bitkaio LLC"
+}

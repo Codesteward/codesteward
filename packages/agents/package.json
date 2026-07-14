@@ -1,0 +1,57 @@
+{
+  "name": "@codesteward/agents",
+  "version": "0.1.0",
+  "description": "Review orchestrator, specialists, judge, verifier \u2014 DeepAgents-pluggable",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test src/**/*.test.ts src/__tests__/**/*.test.ts 2>/dev/null || node --test dist/**/*.test.js 2>/dev/null || node --import tsx --test $(find src -name \"*.test.ts\" 2>/dev/null | tr \"\\n\" \" \")",
+    "lint": "echo 'lint:ok'"
+  },
+  "dependencies": {
+    "@codesteward/core": "workspace:*",
+    "@codesteward/findings": "workspace:*",
+    "@codesteward/graph-client": "workspace:*",
+    "@codesteward/model-router": "workspace:*",
+    "@codesteward/policy": "workspace:*",
+    "@codesteward/sandbox": "workspace:*",
+    "@langchain/core": "^1.2.0",
+    "@langchain/langgraph": "^1.4.4",
+    "@langchain/openai": "^1.5.5",
+    "@langchain/anthropic": "^1.2.0",
+    "langchain": "^1.5.0",
+    "zod": "^3.24.2",
+    "@codesteward/scm": "workspace:*",
+    "@codesteward/learning": "workspace:*",
+    "@codesteward/db": "workspace:*",
+    "deepagents": "^1.10.7"
+  },
+  "peerDependencies": {
+    "deepagents": ">=1.10.7"
+  },
+  "peerDependenciesMeta": {
+    "deepagents": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2",
+    "tsx": "^4.19.3"
+  },
+  "files": [
+    "dist"
+  ],
+  "optionalDependencies": {
+    "deepagents": "1.10.7"
+  }
+}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: codesteward
+description: CodeSteward Review — agentic PR gate + branch stewardship
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

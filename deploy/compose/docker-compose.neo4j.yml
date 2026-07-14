@@ -1,0 +1,144 @@
+# CodeSteward Review — demo stack with Neo4j graph backend
+# Extends docker-compose.demo.yml patterns; replaces GraphQLite MCP with Neo4j.
+#
+# Usage:
+#   export REPO_PATH=/path/to/repo OPENAI_API_KEY=...
+#   docker compose -f deploy/compose/docker-compose.neo4j.yml up -d
+#
+# MCP: http://localhost:3000/mcp
+# Neo4j Browser: http://localhost:7474  (neo4j / changeme)
+name: codesteward-neo4j
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: codesteward-postgres
+    environment:
+      POSTGRES_USER: steward
+      POSTGRES_PASSWORD: steward
+      POSTGRES_DB: codesteward
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U steward -d codesteward"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  neo4j:
+    image: neo4j:2025.03.0
+    container_name: codesteward-neo4j
+    environment:
+      NEO4J_AUTH: "neo4j/changeme"
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+      NEO4J_server_memory_heap_initial__size: "512m"
+      NEO4J_server_memory_heap_max__size: "1g"
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7474/"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  graph-mcp:
+    image: ghcr.io/bitkaio/codesteward:latest
+    container_name: codesteward-graph-mcp
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    environment:
+      TRANSPORT: "sse"
+      HOST: "0.0.0.0"
+      PORT: "3000"
+      GRAPH_BACKEND: "neo4j"
+      NEO4J_URI: "bolt://neo4j:7687"
+      NEO4J_USER: "neo4j"
+      NEO4J_PASSWORD: "changeme"
+      DEFAULT_TENANT_ID: "local"
+      DEFAULT_REPO_ID: "demo"
+      DEFAULT_REPO_PATH: "/repos/project"
+      WORKSPACE_BASE: "/workspace"
+      LOG_LEVEL: "INFO"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ${REPO_PATH:-../..}:/repos/project:ro
+      - mcp-workspace:/workspace
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile.node
+      args:
+        SERVICE: api
+    environment:
+      PORT: "8081"
+      GRAPH_MOCK: "0"
+      GRAPH_MCP_URL: "http://graph-mcp:3000/mcp"
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-openai-compatible}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MODEL_NAME: ${MODEL_NAME:-gpt-4.1-mini}
+      STEW_DATA_DIR: /data
+      DATABASE_URL: postgres://steward:steward@postgres:5432/codesteward
+      STEW_API_KEY: ${STEW_API_KEY:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-dev-insecure}
+      REPO_PATH: /repos/project
+    ports:
+      - "8081:8081"
+    volumes:
+      - stew-data:/data
+      - ${REPO_PATH:-../..}:/repos/project:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      graph-mcp:
+        condition: service_started
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile.node
+      args:
+        SERVICE: worker
+    environment:
+      GRAPH_MOCK: "0"
+      GRAPH_MCP_URL: "http://graph-mcp:3000/mcp"
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-openai-compatible}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MODEL_NAME: ${MODEL_NAME:-gpt-4.1-mini}
+      STEW_DATA_DIR: /data
+      DATABASE_URL: postgres://steward:steward@postgres:5432/codesteward
+      STEW_SANDBOX_PROVIDER: ${STEW_SANDBOX_PROVIDER:-local}
+      STEW_MAX_CONCURRENT: ${STEW_MAX_CONCURRENT:-8}
+      REPO_PATH: /repos/project
+    volumes:
+      - stew-data:/data
+      - ${REPO_PATH:-../..}:/repos/project:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+  ui:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile.ui
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  pg-data:
+  neo4j-data:
+  stew-data:
+  mcp-workspace:

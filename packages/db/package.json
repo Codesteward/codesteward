@@ -1,0 +1,37 @@
+{
+  "name": "@codesteward/db",
+  "version": "0.1.0",
+  "description": "Postgres data layer for CodeSteward Review (sessions, findings, jobs, learning)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "stew-db-migrate": "./dist/migrate.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "migrate": "node dist/migrate.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo 'no tests'",
+    "lint": "echo 'lint:ok'"
+  },
+  "dependencies": {
+    "@codesteward/core": "workspace:*",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.20.0",
+    "typescript": "^5.8.2",
+    "@types/node": "^22.13.10"
+  },
+  "files": [
+    "dist",
+    "migrations"
+  ]
+}

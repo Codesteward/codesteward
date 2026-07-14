@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "codesteward.name" . }}-data
+spec:
+  accessModes: ["ReadWriteMany"]
+  resources:
+    requests:
+      storage: {{ .Values.persistence.dataSize }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "codesteward.name" . }}-graph
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.persistence.graphSize }}

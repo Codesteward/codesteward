@@ -1,0 +1,36 @@
+{
+  "name": "@codesteward/cli",
+  "version": "0.1.0",
+  "description": "stew CLI for CodeSteward Review",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "stew": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo 'no tests'",
+    "lint": "echo 'lint:ok'"
+  },
+  "dependencies": {
+    "@codesteward/core": "workspace:*",
+    "@codesteward/graph-client": "workspace:*",
+    "@codesteward/model-router": "workspace:*",
+    "@codesteward/policy": "workspace:*",
+    "@codesteward/agents": "workspace:*",
+    "@codesteward/findings": "workspace:*",
+    "commander": "^13.1.0",
+    "@codesteward/learning": "workspace:*",
+    "@codesteward/scm": "workspace:*",
+    "@codesteward/sandbox": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2",
+    "@types/node": "^22.13.10"
+  },
+  "files": [
+    "dist"
+  ]
+}

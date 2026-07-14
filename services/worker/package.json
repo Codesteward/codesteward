@@ -1,0 +1,41 @@
+{
+  "name": "@codesteward/worker",
+  "version": "0.1.0",
+  "description": "Review worker \u2014 pulls jobs (file/Pg/NATS) and runs orchestrator",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node --watch --import tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo 'no tests'",
+    "lint": "echo 'lint:ok'"
+  },
+  "dependencies": {
+    "@codesteward/core": "workspace:*",
+    "@codesteward/agents": "workspace:*",
+    "@codesteward/findings": "workspace:*",
+    "@codesteward/graph-client": "workspace:*",
+    "@codesteward/model-router": "workspace:*",
+    "@codesteward/policy": "workspace:*",
+    "@codesteward/api": "workspace:*",
+    "@codesteward/sandbox": "workspace:*",
+    "@codesteward/scm": "workspace:*",
+    "@codesteward/learning": "workspace:*",
+    "deepagents": "^1.10.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2",
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3"
+  },
+  "files": [
+    "dist"
+  ],
+  "optionalDependencies": {
+    "nats": "^2.29.3",
+    "@opentelemetry/api": "^1.9.0"
+  }
+}

@@ -1,0 +1,325 @@
+{
+  "ts": "2026-07-12T16:52:08.650Z",
+  "static": {
+    "passed": 47,
+    "total": 47,
+    "rate": 1
+  },
+  "runtime": {
+    "passed": 6,
+    "total": 6,
+    "rate": 1,
+    "checks": [
+      {
+        "id": "RT-auth-status",
+        "ok": true
+      },
+      {
+        "id": "RT-bootstrap",
+        "ok": true
+      },
+      {
+        "id": "RT-start-steward",
+        "ok": true
+      },
+      {
+        "id": "RT-session-complete",
+        "ok": true,
+        "detail": "completed/completed"
+      },
+      {
+        "id": "RT-connector-put",
+        "ok": true
+      },
+      {
+        "id": "RT-auth-required",
+        "ok": true
+      }
+    ]
+  },
+  "overall": "PASS_GA_FUNCTIONAL",
+  "results": [
+    {
+      "id": "RT-01",
+      "name": "PR automated review",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "RT-02",
+      "name": "Mention @steward review",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "RT-03",
+      "name": "Incremental re-review",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "RT-04",
+      "name": "Draft PR skip",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "RT-05",
+      "name": "Local staged review",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "RT-07",
+      "name": "Branch ref-range",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "RT-08",
+      "name": "Full scan",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "RT-09",
+      "name": "Stewardship mode",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "RT-10",
+      "name": "Git guardrails",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "RT-11",
+      "name": "Plain-diff",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "RT-12",
+      "name": "Cross-repo links",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "RT-14",
+      "name": "Large PR map",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "CX-diff",
+      "name": "Diff packing",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "CX-graph",
+      "name": "Graph tools",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "CX-policy",
+      "name": "STEWARD.md",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "CX-ticket",
+      "name": "Ticket context",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "AA-specialists",
+      "name": "Specialists",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "AA-judge",
+      "name": "Judge",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "AA-verifier",
+      "name": "Verifier",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "AA-deep",
+      "name": "DeepAgents",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "AA-discourse",
+      "name": "Discourse",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "AA-selfheal",
+      "name": "Self-heal",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "AA-conversation",
+      "name": "Conversation agent",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "OUT-sarif",
+      "name": "SARIF",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "OUT-labels",
+      "name": "PR labels",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "OUT-diagram",
+      "name": "PR diagram",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "NC-noise",
+      "name": "Noise stack",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "LM-learning",
+      "name": "Learning",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "EV-prove",
+      "name": "Prove",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "EV-sast",
+      "name": "SAST",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "EV-typecheck",
+      "name": "Typecheck tool",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "SC-multi",
+      "name": "Multi-SCM adapters",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "SC-webhooks",
+      "name": "Multi webhooks",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "SC-bb-webhook",
+      "name": "Bitbucket webhook",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "AUTH-login",
+      "name": "Login RBAC",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "AUTH-connectors",
+      "name": "Connector config",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "DB-postgres",
+      "name": "Postgres",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "UI-all",
+      "name": "Product UI pages",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "WORKER-inline",
+      "name": "Inline worker",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "DEPLOY-compose",
+      "name": "Compose demo+neo4j+janus",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "DEPLOY-helm",
+      "name": "Helm",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "ACTION",
+      "name": "GH Action",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "SKILLS",
+      "name": "Agent skills",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "CLI-full",
+      "name": "CLI surface",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "ANALYTICS",
+      "name": "Address rate analytics",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "OUTBOX",
+      "name": "Outbox reliability",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "id": "ARTIFACTS",
+      "name": "Artifact store",
+      "ok": true,
+      "reasons": []
+    }
+  ]
+}

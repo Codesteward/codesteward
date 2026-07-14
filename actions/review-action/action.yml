@@ -1,0 +1,62 @@
+name: CodeSteward Review
+description: Run CodeSteward agentic PR review and post findings via GITHUB_TOKEN
+author: CodeSteward
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  github-token:
+    description: GitHub token for posting the review (defaults to GITHUB_TOKEN)
+    required: false
+    default: ${{ github.token }}
+  repo-path:
+    description: Path to the repository checkout
+    required: false
+    default: ${{ github.workspace }}
+  repo-id:
+    description: CodeSteward repo id (defaults to repository name)
+    required: false
+    default: ""
+  risk-tier:
+    description: Risk tier (trivial|lite|full|security|thorough)
+    required: false
+    default: full
+  depth:
+    description: Review depth (fast|normal|deep|thorough)
+    required: false
+    default: normal
+  publish:
+    description: Post review comments to the PR
+    required: false
+    default: "true"
+  full-review:
+    description: Ignore last_reviewed_sha and review all PR files
+    required: false
+    default: "false"
+  graph-mock:
+    description: Use GRAPH_MOCK=1 for offline graph
+    required: false
+    default: "1"
+  fail-on:
+    description: Fail the action when findings at this severity or higher exist (critical|high|medium|low|none)
+    required: false
+    default: high
+  sarif-output:
+    description: Path to write SARIF results (empty to skip)
+    required: false
+    default: codesteward.sarif
+
+outputs:
+  session-id:
+    description: Review session id
+  finding-count:
+    description: Number of findings published
+  verdict:
+    description: approve|comment|request_changes
+  sarif-path:
+    description: Path to written SARIF file if any
+
+runs:
+  using: node20
+  main: dist/index.js

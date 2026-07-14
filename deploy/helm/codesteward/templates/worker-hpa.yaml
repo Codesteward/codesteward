@@ -1,0 +1,35 @@
+{{- if .Values.worker.hpa.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "codesteward.name" . }}-worker
+  labels:
+    {{- include "codesteward.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "codesteward.name" . }}-worker
+  minReplicas: {{ .Values.worker.hpa.minReplicas }}
+  maxReplicas: {{ .Values.worker.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.worker.hpa.targetCPUUtilizationPercentage }}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 4
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+{{- end }}

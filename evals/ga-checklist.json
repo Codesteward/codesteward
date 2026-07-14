@@ -1,0 +1,70 @@
+{
+  "version": "1.0",
+  "product": "CodeSteward Review",
+  "minimum_pass_rate": 0.92,
+  "categories": {
+    "review_targets": [
+      {"id": "RT-01", "name": "PR/MR automated review", "paths": ["packages/webhooks/src/github-handler.ts", "packages/agents/src/orchestrator.ts"]},
+      {"id": "RT-02", "name": "Manual mention trigger", "paths": ["packages/webhooks/src", "packages/api/src"]},
+      {"id": "RT-03", "name": "Incremental re-review", "paths": ["packages/agents/src"]},
+      {"id": "RT-05", "name": "Local/staged review", "paths": ["packages/cli/src/index.ts"]},
+      {"id": "RT-07", "name": "Branch ref-range", "paths": ["packages/cli/src/index.ts"]},
+      {"id": "RT-08", "name": "Full scan", "paths": ["packages/cli/src/index.ts", "packages/agents/src/orchestrator.ts"]},
+      {"id": "RT-09", "name": "Stewardship mode", "paths": ["packages/agents/src/orchestrator.ts", "packages/core/src/session.ts"]},
+      {"id": "RT-11", "name": "Plain-diff air-gap", "paths": ["packages/cli/src"]},
+      {"id": "RT-12", "name": "Cross-repo", "paths": ["packages/agents/src/cross-repo/fanout.ts", "packages/api/src/app.ts"]}
+    ],
+    "context": [
+      {"id": "CX-graph", "name": "Structural graph client", "paths": ["packages/graph-client/src/client.ts"]},
+      {"id": "CX-diff", "name": "Diff packing", "paths": ["packages/agents/src"]},
+      {"id": "CX-policy", "name": "STEWARD.md policy", "paths": ["packages/policy/src/parse-steward.ts"]}
+    ],
+    "agents": [
+      {"id": "AA-specialists", "name": "Specialist agents", "paths": ["packages/agents/src/specialists.ts"]},
+      {"id": "AA-judge", "name": "Judge", "paths": ["packages/agents/src/judge.ts"]},
+      {"id": "AA-verifier", "name": "Verifier", "paths": ["packages/agents/src/verifier.ts"]},
+      {"id": "AA-deepagents", "name": "DeepAgents runner", "paths": ["packages/agents/src/deep-agent-runner.ts"]},
+      {"id": "AA-discourse", "name": "Discourse engine", "paths": ["packages/agents/src/discourse.ts"]},
+      {"id": "AA-selfheal", "name": "Self-healing", "paths": ["packages/agents/src/self-heal.ts"]}
+    ],
+    "data": [
+      {"id": "DB-postgres", "name": "Postgres package", "paths": ["packages/db/src"]},
+      {"id": "DB-migrations", "name": "SQL migrations", "paths": ["packages/db/migrations"]},
+      {"id": "DB-configs", "name": "Config storage", "paths": ["packages/db"]}
+    ],
+    "scm": [
+      {"id": "SC-github", "name": "GitHub", "paths": ["packages/scm/src/github.ts"]},
+      {"id": "SC-gitlab", "name": "GitLab", "paths": ["packages/scm/src/gitlab.ts"]},
+      {"id": "SC-bitbucket", "name": "Bitbucket", "paths": ["packages/scm/src/bitbucket.ts"]},
+      {"id": "SC-ado", "name": "Azure DevOps", "paths": ["packages/scm/src/azure-devops.ts"]},
+      {"id": "SC-gitea", "name": "Gitea", "paths": ["packages/scm/src/gitea.ts"]},
+      {"id": "SC-webhook", "name": "Webhook gate", "paths": ["packages/webhooks/src/github-handler.ts"]}
+    ],
+    "outputs": [
+      {"id": "OUT-sarif", "name": "SARIF export", "paths": ["packages/findings/src/sarif.ts"]},
+      {"id": "OUT-publish", "name": "SCM publish", "paths": ["packages/agents/src/orchestrator.ts"]}
+    ],
+    "learning": [
+      {"id": "LM-react", "name": "Finding reactions", "paths": ["packages/learning/src"]},
+      {"id": "LM-memory", "name": "Memories", "paths": ["packages/learning/src"]}
+    ],
+    "execution": [
+      {"id": "EV-sandbox", "name": "Sandbox", "paths": ["packages/sandbox/src"]},
+      {"id": "EV-prove", "name": "Prove tier", "paths": ["packages/sandbox/src/prove.ts"]}
+    ],
+    "surfaces": [
+      {"id": "UI-pages", "name": "Product UI", "paths": ["packages/ui/src/pages"]},
+      {"id": "CLI", "name": "CLI", "paths": ["packages/cli/src/index.ts"]},
+      {"id": "MCP", "name": "MCP server", "paths": ["packages/mcp-server/src"]},
+      {"id": "ACTION", "name": "GitHub Action", "paths": ["actions/review-action"]}
+    ],
+    "deploy": [
+      {"id": "DP-compose", "name": "Docker compose", "paths": ["deploy/compose/docker-compose.demo.yml"]},
+      {"id": "DP-helm", "name": "Helm chart", "paths": ["deploy/helm/codesteward"]},
+      {"id": "DP-postgres", "name": "Postgres in compose", "paths": ["deploy/compose"]}
+    ],
+    "noise": [
+      {"id": "NC-noise", "name": "Noise stack", "paths": ["packages/agents/src"]}
+    ]
+  }
+}

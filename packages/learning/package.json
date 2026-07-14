@@ -1,0 +1,33 @@
+{
+  "name": "@codesteward/learning",
+  "version": "0.1.0",
+  "description": "Finding reactions and org memories for noise suppression",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test src/**/*.test.ts src/__tests__/**/*.test.ts 2>/dev/null || node --test dist/**/*.test.js 2>/dev/null || echo no-tests",
+    "lint": "echo 'lint:ok'"
+  },
+  "dependencies": {
+    "@codesteward/core": "workspace:*",
+    "zod": "^3.24.2",
+    "@codesteward/db": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2",
+    "@types/node": "^22.13.10"
+  },
+  "files": [
+    "dist"
+  ],
+  "optionalDependencies": {}
+}

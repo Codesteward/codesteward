@@ -1,0 +1,130 @@
+# Default values for CodeSteward Review (production-oriented self-host)
+
+image:
+  repository: ghcr.io/codesteward/review
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+graphImage:
+  repository: ghcr.io/bitkaio/codesteward
+  tag: latest
+
+# Graph backend: graphqlite | neo4j | janusgraph
+# Production requires Neo4j or JanusGraph (or external managed graph).
+graph:
+  backend: neo4j
+  mcp:
+    replicas: 2
+    port: 3000
+  neo4j:
+    enabled: true
+    auth: "neo4j/changeme"
+    boltPort: 7687
+  janusgraph:
+    enabled: false
+    gremlinPort: 8182
+
+# Postgres is required in production (sessions, jobs, findings, learning, checkpoints).
+# Either enable the optional in-cluster chart template, or set database.url / secret.
+database:
+  # When true, deploy optional postgres StatefulSet (dev/small). Prefer external managed PG in prod.
+  enabled: false
+  url: ""  # optional inline — prefer secrets.databaseUrl
+  host: postgres
+  port: 5432
+  name: codesteward
+  user: steward
+  # password via secret key databasePassword
+
+api:
+  replicas: 2
+  port: 8081
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+worker:
+  # Horizontal scale for 50+ concurrent review units:
+  # each pod runs STEW_MAX_CONCURRENT specialists (default 8)
+  # target: 8 pods × 8 = 64 concurrent units
+  replicas: 4
+  maxConcurrent: 8
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 60
+    targetQueueDepth: 10
+
+ui:
+  replicas: 2
+  port: 80
+
+webhooks:
+  enabled: true
+  path: /v1/webhooks/github
+  gitlabPath: /v1/webhooks/gitlab
+
+# Production-safe default: null until kubectl/Job path is configured.
+# Use local|docker for Prove on workers with docker.sock; k8s when RBAC + kubectl available.
+sandbox:
+  provider: "null"  # null | local | docker | k8s
+  networkPolicy: true
+  jobImage: node:22-bookworm
+  serviceAccountName: codesteward-sandbox
+  activeDeadlineSeconds: 900
+
+env:
+  MODEL_PROVIDER: openai-compatible
+  MODEL_NAME: gpt-4.1-mini
+  STEW_USE_DEEPAGENTS: "1"
+  GRAPH_MOCK: "0"
+  DEFAULT_TENANT_ID: local
+  OTEL_ENABLED: "0"
+  # CORS_ORIGIN: "https://codesteward.example.com"
+  # STEW_API_KEY set via secrets.apiKey
+
+secrets:
+  # create via sealed-secrets / external-secrets
+  openaiApiKey: ""
+  anthropicApiKey: ""
+  xaiApiKey: ""
+  githubToken: ""
+  githubWebhookSecret: ""
+  gitlabToken: ""
+  gitlabWebhookSecret: ""
+  apiKey: ""           # STEW_API_KEY
+  databaseUrl: ""      # DATABASE_URL full connection string (required in production)
+  databasePassword: "" # used when database.enabled=true
+
+persistence:
+  dataSize: 20Gi
+  graphSize: 50Gi
+
+serviceAccount:
+  create: true
+  name: codesteward
+
+ingress:
+  enabled: false
+  className: nginx
+  hosts:
+    - host: codesteward.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+          service: ui
+        - path: /v1
+          pathType: Prefix
+          service: api

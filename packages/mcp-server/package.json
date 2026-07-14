@@ -1,0 +1,28 @@
+{
+  "name": "@codesteward/mcp-server",
+  "version": "0.1.0",
+  "description": "Thin MCP wrapper exposing CodeSteward review tools",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "stew-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo 'no tests'",
+    "lint": "echo 'lint:ok'"
+  },
+  "dependencies": {
+    "@codesteward/core": "workspace:*",
+    "@codesteward/graph-client": "workspace:*",
+    "@codesteward/policy": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2",
+    "@types/node": "^22.13.10"
+  },
+  "files": ["dist"]
+}

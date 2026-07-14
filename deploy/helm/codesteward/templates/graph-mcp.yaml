@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "codesteward.name" . }}-graph-mcp
+  labels:
+    {{- include "codesteward.labels" . | nindent 4 }}
+    app.kubernetes.io/component: graph-mcp
+spec:
+  replicas: {{ .Values.graph.mcp.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: graph-mcp
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: graph-mcp
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: graph-mcp
+          image: "{{ .Values.graphImage.repository }}:{{ .Values.graphImage.tag }}"
+          ports:
+            - containerPort: {{ .Values.graph.mcp.port }}
+          env:
+            - name: TRANSPORT
+              value: sse
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: {{ .Values.graph.mcp.port | quote }}
+            - name: GRAPH_BACKEND
+              value: {{ .Values.graph.backend | quote }}
+            {{- if eq .Values.graph.backend "neo4j" }}
+            - name: NEO4J_URI
+              value: "bolt://{{ include "codesteward.name" . }}-neo4j:{{ .Values.graph.neo4j.boltPort }}"
+            - name: NEO4J_USER
+              value: neo4j
+            - name: NEO4J_PASSWORD
+              value: changeme
+            {{- end }}
+            {{- if eq .Values.graph.backend "janusgraph" }}
+            - name: JANUSGRAPH_URL
+              value: "ws://{{ include "codesteward.name" . }}-janusgraph:{{ .Values.graph.janusgraph.gremlinPort }}/gremlin"
+            {{- end }}
+            {{- if eq .Values.graph.backend "graphqlite" }}
+            - name: GRAPHQLITE_PATH
+              value: /data/graph.db
+            {{- end }}
+          volumeMounts:
+            - name: graph
+              mountPath: /data
+      volumes:
+        - name: graph
+          persistentVolumeClaim:
+            claimName: {{ include "codesteward.name" . }}-graph
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "codesteward.name" . }}-graph-mcp
+spec:
+  selector:
+    app.kubernetes.io/component: graph-mcp
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - port: {{ .Values.graph.mcp.port }}
+      targetPort: {{ .Values.graph.mcp.port }}

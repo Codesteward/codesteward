@@ -1,0 +1,144 @@
+{
+  "cases": [
+    {
+      "id": "sql-injection-1",
+      "expected": {
+        "severity": "high",
+        "category": "security",
+        "should_fire": true
+      },
+      "predicted": {
+        "severity": "high",
+        "category": "security",
+        "fired": true,
+        "line_correct": true
+      }
+    },
+    {
+      "id": "nit-style-1",
+      "expected": {
+        "severity": "nit",
+        "category": "style",
+        "should_fire": false
+      },
+      "predicted": {
+        "severity": "nit",
+        "category": "style",
+        "fired": true,
+        "line_correct": true
+      }
+    },
+    {
+      "id": "auth-missing-1",
+      "expected": {
+        "severity": "critical",
+        "category": "security",
+        "should_fire": true
+      },
+      "predicted": {
+        "severity": "critical",
+        "category": "security",
+        "fired": true,
+        "line_correct": false
+      }
+    },
+    {
+      "id": "race-1",
+      "expected": {
+        "severity": "medium",
+        "category": "correctness",
+        "should_fire": true
+      },
+      "predicted": {
+        "severity": "medium",
+        "category": "correctness",
+        "fired": true,
+        "line_correct": true
+      }
+    },
+    {
+      "id": "false-secret-1",
+      "expected": {
+        "severity": "high",
+        "category": "security",
+        "should_fire": false
+      },
+      "predicted": {
+        "severity": "high",
+        "category": "security",
+        "fired": false,
+        "line_correct": true
+      }
+    },
+    {
+      "id": "extra-5",
+      "expected": {
+        "severity": "medium",
+        "category": "correctness",
+        "should_fire": true
+      },
+      "predicted": {
+        "severity": "medium",
+        "category": "correctness",
+        "fired": true,
+        "line_correct": true
+      }
+    },
+    {
+      "id": "extra-6",
+      "expected": {
+        "severity": "medium",
+        "category": "correctness",
+        "should_fire": true
+      },
+      "predicted": {
+        "severity": "medium",
+        "category": "correctness",
+        "fired": true,
+        "line_correct": true
+      }
+    },
+    {
+      "id": "extra-7",
+      "expected": {
+        "severity": "medium",
+        "category": "correctness",
+        "should_fire": true
+      },
+      "predicted": {
+        "severity": "medium",
+        "category": "correctness",
+        "fired": true,
+        "line_correct": true
+      }
+    },
+    {
+      "id": "extra-8",
+      "expected": {
+        "severity": "medium",
+        "category": "correctness",
+        "should_fire": true
+      },
+      "predicted": {
+        "severity": "medium",
+        "category": "correctness",
+        "fired": true,
+        "line_correct": true
+      }
+    },
+    {
+      "id": "extra-9",
+      "expected": {
+        "severity": "medium",
+        "category": "correctness",
+        "should_fire": true
+      },
+      "predicted": {
+        "severity": "medium",
+        "category": "correctness",
+        "fired": true,
+        "line_correct": true
+      }
+    }
+  ]
+}

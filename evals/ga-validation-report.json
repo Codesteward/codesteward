@@ -1,0 +1,331 @@
+{
+  "passed": 46,
+  "total": 46,
+  "rate": 1,
+  "min": 0.92,
+  "results": [
+    {
+      "id": "RT-01",
+      "name": "PR/MR automated review",
+      "category": "review_targets",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "RT-02",
+      "name": "Manual mention trigger",
+      "category": "review_targets",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "RT-03",
+      "name": "Incremental re-review",
+      "category": "review_targets",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "RT-05",
+      "name": "Local/staged review",
+      "category": "review_targets",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "RT-07",
+      "name": "Branch ref-range",
+      "category": "review_targets",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "RT-08",
+      "name": "Full scan",
+      "category": "review_targets",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "RT-09",
+      "name": "Stewardship mode",
+      "category": "review_targets",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "RT-11",
+      "name": "Plain-diff air-gap",
+      "category": "review_targets",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "RT-12",
+      "name": "Cross-repo",
+      "category": "review_targets",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "CX-graph",
+      "name": "Structural graph client",
+      "category": "context",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "CX-diff",
+      "name": "Diff packing",
+      "category": "context",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "CX-policy",
+      "name": "STEWARD.md policy",
+      "category": "context",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "AA-specialists",
+      "name": "Specialist agents",
+      "category": "agents",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "AA-judge",
+      "name": "Judge",
+      "category": "agents",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "AA-verifier",
+      "name": "Verifier",
+      "category": "agents",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "AA-deepagents",
+      "name": "DeepAgents runner",
+      "category": "agents",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "AA-discourse",
+      "name": "Discourse engine",
+      "category": "agents",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "AA-selfheal",
+      "name": "Self-healing",
+      "category": "agents",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "DB-postgres",
+      "name": "Postgres package",
+      "category": "data",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "DB-migrations",
+      "name": "SQL migrations",
+      "category": "data",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "DB-configs",
+      "name": "Config storage",
+      "category": "data",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "SC-github",
+      "name": "GitHub",
+      "category": "scm",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "SC-gitlab",
+      "name": "GitLab",
+      "category": "scm",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "SC-bitbucket",
+      "name": "Bitbucket",
+      "category": "scm",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "SC-ado",
+      "name": "Azure DevOps",
+      "category": "scm",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "SC-gitea",
+      "name": "Gitea",
+      "category": "scm",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "SC-webhook",
+      "name": "Webhook gate",
+      "category": "scm",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "OUT-sarif",
+      "name": "SARIF export",
+      "category": "outputs",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "OUT-publish",
+      "name": "SCM publish",
+      "category": "outputs",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "LM-react",
+      "name": "Finding reactions",
+      "category": "learning",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "LM-memory",
+      "name": "Memories",
+      "category": "learning",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "EV-sandbox",
+      "name": "Sandbox",
+      "category": "execution",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "EV-prove",
+      "name": "Prove tier",
+      "category": "execution",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "UI-pages",
+      "name": "Product UI",
+      "category": "surfaces",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "CLI",
+      "name": "CLI",
+      "category": "surfaces",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "MCP",
+      "name": "MCP server",
+      "category": "surfaces",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "ACTION",
+      "name": "GitHub Action",
+      "category": "surfaces",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "DP-compose",
+      "name": "Docker compose",
+      "category": "deploy",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "DP-helm",
+      "name": "Helm chart",
+      "category": "deploy",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "DP-postgres",
+      "name": "Postgres in compose",
+      "category": "deploy",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "NC-noise",
+      "name": "Noise stack",
+      "category": "noise",
+      "ok": true,
+      "reason": "path"
+    },
+    {
+      "id": "SEM-selfheal",
+      "name": "Self-healing strategies",
+      "category": "semantic",
+      "ok": true,
+      "reason": "pass"
+    },
+    {
+      "id": "SEM-postgres",
+      "name": "Postgres migrations present",
+      "category": "semantic",
+      "ok": true,
+      "reason": "pass"
+    },
+    {
+      "id": "SEM-completed_with_errors",
+      "name": "Degraded success status",
+      "category": "semantic",
+      "ok": true,
+      "reason": "pass"
+    },
+    {
+      "id": "SEM-build",
+      "name": "dist builds exist for core packages",
+      "category": "semantic",
+      "ok": true,
+      "reason": "pass"
+    },
+    {
+      "id": "SEM-ui-brand",
+      "name": "UI has branded CSS tokens",
+      "category": "semantic",
+      "ok": true,
+      "reason": "pass"
+    }
+  ],
+  "ts": "2026-07-12T16:17:38.425Z"
+}
