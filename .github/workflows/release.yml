@@ -1,0 +1,349 @@
+# Codesteward Review — Release
+#
+# Triggered by version tags (e.g. v0.1.0). Pipeline:
+#   1. test       — install, build, typecheck, unit tests (gate)
+#   2. container  — build images, Trivy gate, push multi-arch, cosign, SBOM
+#   3. release    — GitHub Release with changelog notes + scan assets
+#
+# Images (GHCR, lowercased repository path):
+#   ghcr.io/<owner>/<repo>              — monorepo app (API + worker)
+#   ghcr.io/<owner>/<repo>/ui           — product UI (nginx)
+#   ghcr.io/<owner>/<repo>/saas-billing — private SaaS billing control plane
+#
+# Cosign keyless signing via GitHub OIDC. No Docker Hub credentials required.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  NODE_VERSION: "22"
+  PNPM_VERSION: "9.15.0"
+
+jobs:
+
+  # ── Gate: tests must pass before we publish ────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm -r run build
+
+      - name: Typecheck
+        run: pnpm -r run typecheck
+
+      - name: Unit tests
+        run: pnpm run test:unit
+        env:
+          GRAPH_MOCK: "1"
+
+  # ── Build, scan, push, sign container images ───────────────────────────────
+  container:
+    name: Container build, scan, sign
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
+    outputs:
+      digest_app: ${{ steps.push-app.outputs.digest }}
+      image_app: ${{ steps.meta-app.outputs.tags }}
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Compute lowercased image names
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          REPO_LC=$(echo "$REPO" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_APP=${REGISTRY}/${REPO_LC}" >> "$GITHUB_ENV"
+          echo "IMAGE_UI=${REGISTRY}/${REPO_LC}/ui" >> "$GITHUB_ENV"
+          echo "IMAGE_BILLING=${REGISTRY}/${REPO_LC}/saas-billing" >> "$GITHUB_ENV"
+          echo "REPO_LC=${REPO_LC}" >> "$GITHUB_ENV"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract Docker metadata (app)
+        id: meta-app
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_APP }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+
+      - name: Extract Docker metadata (ui)
+        id: meta-ui
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_UI }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Extract Docker metadata (saas-billing)
+        id: meta-billing
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_BILLING }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      # STEP 1 — Build amd64 locally for Trivy gate
+      - name: Build app image for scan (amd64, local)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/compose/Dockerfile.node
+          push: false
+          load: true
+          tags: codesteward-review:scan
+          build-args: |
+            SERVICE=api
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin v0.69.3
+          trivy --version
+
+      - name: Trivy scan (gate — HIGH/CRITICAL fails the release)
+        run: |
+          trivy image \
+            --exit-code 1 \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --format json \
+            --output trivy-report.json \
+            codesteward-review:scan
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # STEP 2 — Multi-arch push with provenance + SBOM attestation
+      - name: Build and push app (api/worker monorepo)
+        id: push-app
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/compose/Dockerfile.node
+          push: true
+          tags: ${{ steps.meta-app.outputs.tags }}
+          labels: ${{ steps.meta-app.outputs.labels }}
+          build-args: |
+            SERVICE=api
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push UI
+        id: push-ui
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/compose/Dockerfile.ui
+          push: true
+          tags: ${{ steps.meta-ui.outputs.tags }}
+          labels: ${{ steps.meta-ui.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push SaaS billing
+        id: push-billing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/saas-billing/Dockerfile
+          push: true
+          tags: ${{ steps.meta-billing.outputs.tags }}
+          labels: ${{ steps.meta-billing.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # STEP 3 — cosign keyless
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign images (keyless via GitHub OIDC)
+        env:
+          DIGEST_APP: ${{ steps.push-app.outputs.digest }}
+          DIGEST_UI: ${{ steps.push-ui.outputs.digest }}
+          DIGEST_BILLING: ${{ steps.push-billing.outputs.digest }}
+          TAGS_APP: ${{ steps.meta-app.outputs.tags }}
+          TAGS_UI: ${{ steps.meta-ui.outputs.tags }}
+          TAGS_BILLING: ${{ steps.meta-billing.outputs.tags }}
+        run: |
+          set -euo pipefail
+          sign_tags() {
+            local digest="$1"
+            shift
+            local images=""
+            for tag in "$@"; do
+              images+="${tag}@${digest} "
+            done
+            # shellcheck disable=SC2086
+            cosign sign --yes ${images}
+          }
+          # metadata-action emits newline-separated tags
+          mapfile -t app_tags <<< "$TAGS_APP"
+          mapfile -t ui_tags <<< "$TAGS_UI"
+          mapfile -t bill_tags <<< "$TAGS_BILLING"
+          sign_tags "$DIGEST_APP" "${app_tags[@]}"
+          sign_tags "$DIGEST_UI" "${ui_tags[@]}"
+          sign_tags "$DIGEST_BILLING" "${bill_tags[@]}"
+
+      # STEP 4 — SBOM for release assets
+      - name: Install syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Generate SBOM from pushed app image
+        env:
+          DIGEST: ${{ steps.push-app.outputs.digest }}
+        run: |
+          syft "${IMAGE_APP}@${DIGEST}" -o cyclonedx-json > sbom.cdx.json
+
+      - name: Upload container reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-reports
+          path: |
+            trivy-report.json
+            sbom.cdx.json
+          if-no-files-found: error
+
+  # ── Create GitHub release ──────────────────────────────────────────────────
+  release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    needs: [container]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download container reports
+        uses: actions/download-artifact@v4
+        with:
+          name: container-reports
+          path: container-reports/
+
+      - name: Extract changelog for this version
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          REPO_LC=$(echo "$REPO" | tr '[:upper:]' '[:lower:]')
+          awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > /tmp/release-notes.md
+          if [ ! -s /tmp/release-notes.md ]; then
+            echo "No CHANGELOG section for ${VERSION}; using Unreleased/fallback." >&2
+            echo "Release ${GITHUB_REF_NAME}" > /tmp/release-notes.md
+          fi
+          {
+            echo ""
+            echo "## Container images"
+            echo ""
+            echo '```bash'
+            echo "docker pull ghcr.io/${REPO_LC}:${VERSION}"
+            echo "docker pull ghcr.io/${REPO_LC}/ui:${VERSION}"
+            echo "docker pull ghcr.io/${REPO_LC}/saas-billing:${VERSION}"
+            echo '```'
+            echo ""
+            echo "App image runs API by default (\`SERVICE=api\`). Worker:"
+            echo '```bash'
+            echo "docker run --rm -e SERVICE=worker ghcr.io/${REPO_LC}:${VERSION}"
+            echo '```'
+            echo ""
+            echo "Images are signed with [cosign](https://github.com/sigstore/cosign) keyless via GitHub OIDC."
+            echo "Verify with:"
+            echo '```bash'
+            echo "cosign verify ghcr.io/${REPO_LC}:${VERSION} \\"
+            echo "  --certificate-identity-regexp 'https://github.com/${REPO}/.*' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
+          } >> /tmp/release-notes.md
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: /tmp/release-notes.md
+          files: |
+            container-reports/trivy-report.json
+            container-reports/sbom.cdx.json
+          generate_release_notes: false

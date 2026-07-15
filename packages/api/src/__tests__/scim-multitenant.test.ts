@@ -16,6 +16,7 @@ describe("scim multi-tenant isolation", () => {
   let dir: string;
   let orgA: string;
   let orgB: string;
+  let slugA: string;
   let tokenA: string;
   let tokenB: string;
   let userA: string;
@@ -26,21 +27,34 @@ describe("scim multi-tenant isolation", () => {
     process.env.STEW_DATA_DIR = dir;
     delete process.env.STEW_SCIM_TOKEN;
     delete process.env.STEW_API_KEY;
+    // Allow SCIM token mint under unit tests without Enterprise plan
+    process.env.STEW_SCIM_ALLOW_WITHOUT_LICENSE = "1";
     resetTenancyStoreForTests();
     const store = getTenancyStore();
     await store.ensureDefaults();
-    const a = await store.createOrg({ name: "Tenant A", slug: "tenant-a", ownerUserId: "owner-a" });
-    const b = await store.createOrg({ name: "Tenant B", slug: "tenant-b", ownerUserId: "owner-b" });
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const a = await store.createOrg({
+      name: "Tenant A",
+      slug: `tenant-a-${suffix}`,
+      ownerUserId: "owner-a",
+    });
+    const b = await store.createOrg({
+      name: "Tenant B",
+      slug: `tenant-b-${suffix}`,
+      ownerUserId: "owner-b",
+    });
     orgA = a.id;
     orgB = b.id;
+    slugA = a.slug;
 
+    // Unique emails — globalAuthStore is process-wide and survives STEW_DATA_DIR swaps
     const ua = await globalAuthStore.createUserRaw({
-      email: "a@tenant-a.test",
+      email: `a-${suffix}@tenant-a.test`,
       role: "admin",
       orgId: orgA,
     });
     const ub = await globalAuthStore.createUserRaw({
-      email: "b@tenant-b.test",
+      email: `b-${suffix}@tenant-b.test`,
       role: "admin",
       orgId: orgB,
     });
@@ -70,7 +84,7 @@ describe("scim multi-tenant isolation", () => {
   });
 
   it("path org resolves by slug", async () => {
-    const o = await resolveOrgKey("tenant-a");
+    const o = await resolveOrgKey(slugA);
     assert.equal(o?.id, orgA);
   });
 

@@ -276,6 +276,30 @@ See [`.env.example`](.env.example) for the full template.
 
 ---
 
+## Changelog & release
+
+- **[CHANGELOG.md](./CHANGELOG.md)** — Keep a Changelog (current: **1.0.0**)
+- **CI** — `.github/workflows/ci.yml` (build, typecheck, unit tests, Semgrep, zizmor, dependency-review)
+- **Release** — tag `vX.Y.Z` → `.github/workflows/release.yml` publishes GHCR images + GitHub Release notes from the matching changelog section:
+
+```bash
+# First production release
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Images (lowercased repo path on GHCR):
+
+| Image | Dockerfile |
+|-------|------------|
+| `ghcr.io/<owner>/<repo>` | `deploy/compose/Dockerfile.node` (API default; `SERVICE=worker` for workers) |
+| `ghcr.io/<owner>/<repo>/ui` | `deploy/compose/Dockerfile.ui` |
+| `ghcr.io/<owner>/<repo>/saas-billing` | `services/saas-billing/Dockerfile` |
+
+Also: weekly security scans, OpenSSF Scorecard, Renovate (`renovate.json`).
+
+---
+
 ## Status
 
 Self-hosted dual-mode review platform with product UI, Keycloak identity, multi-tenant orgs, webhooks, and horizontal workers.

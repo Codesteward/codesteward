@@ -1,0 +1,283 @@
+# Codesteward Cloud — isolated SaaS demo stack (private billing + product).
+#
+# Completely separate from category/demo stacks:
+#   - compose project name: codesteward-saas
+#   - own Postgres volume + DB name (codesteward_saas)
+#   - own ports so both stacks can run in parallel
+#
+# Usage:
+#   export OPENAI_API_KEY=...   # optional for real reviews
+#   docker compose -f deploy/compose/docker-compose.saas.yml up --build -d
+#
+# URLs (host):
+#   UI            http://localhost:9080
+#   API           http://localhost:9081
+#   Keycloak      http://localhost:9083  (admin/admin)
+#   Graph MCP     http://localhost:9300
+#   Billing       http://localhost:9095
+#   Postgres      localhost:5433  (steward/steward @ codesteward_saas)
+#
+# Demo IdP logins (password: demo-change-me):
+#   owner@acme.test   → org acme   (free plan)
+#   owner@proco.test  → org proco  (pro plan)
+#   owner@entco.test  → org entco  (enterprise)
+#   admin@demo.com    → org local  (pro)  password: DemoAdmin.123
+#
+# Stop / wipe SaaS data only:
+#   docker compose -f deploy/compose/docker-compose.saas.yml down
+#   docker compose -f deploy/compose/docker-compose.saas.yml down -v   # destroy volumes
+name: codesteward-saas
+
+x-stew-env: &stew-env
+  PORT: "8081"
+  GRAPH_MOCK: "0"
+  GRAPH_MCP_URL: "http://graph-mcp:3000/sse"
+  GRAPH_MCP_HOST_HEADER: "127.0.0.1:3000"
+  STEW_DEBUG_LLM: ${STEW_DEBUG_LLM:-1}
+  STEW_CODE_TOKEN_BUDGET: ${STEW_CODE_TOKEN_BUDGET:-14000}
+  MODEL_PROVIDER: ${MODEL_PROVIDER:-openai-compatible}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+  MODEL_NAME: ${MODEL_NAME:-gpt-4.1-mini}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  XAI_API_KEY: ${XAI_API_KEY:-}
+  STEW_DATA_DIR: /data
+  STEW_WORKSPACE_DIR: /workspace
+  # Isolated DB — never shares category/demo Postgres volume
+  DATABASE_URL: postgres://steward:steward@postgres:5432/codesteward_saas
+  REPO_PATH: /repos/project
+  STEW_WORKSPACE_CLONE: ${STEW_WORKSPACE_CLONE:-1}
+  STEW_INLINE_WORKER: ${STEW_INLINE_WORKER:-0}
+  STEW_USE_DEEPAGENTS: "1"
+  STEW_REQUIRE_TOOL_AGENTS: "1"
+  STEW_AUTH_STRICT: ${STEW_AUTH_STRICT:-1}
+  STEW_SECRETS_KEY: ${STEW_SECRETS_KEY:-saas-demo-secrets-key-0123456789abcdef0123456789abcdef}
+  STEW_API_KEY: ${STEW_API_KEY:-saas-demo-api-key-change-me}
+  STEW_PUBLIC_URL: ${SAAS_PUBLIC_URL:-http://localhost:9080}
+  STEW_API_PUBLIC_URL: ${SAAS_API_PUBLIC_URL:-http://localhost:9081}
+  STEW_WEBHOOK_PUBLIC_URL: ${STEW_WEBHOOK_PUBLIC_URL:-}
+  GITHUB_APP_NAME: ${GITHUB_APP_NAME:-Codesteward Cloud}
+  # SaaS licensing: org plans from private control plane
+  STEW_LICENSE_OPEN: "0"
+  STEW_LICENSE_ENFORCE: "1"
+  STEW_BILLING_URL: http://saas-billing:8095
+  # Browser-reachable billing portal (host port 9095)
+  STEW_BILLING_PUBLIC_URL: ${STEW_BILLING_PUBLIC_URL:-http://localhost:9095}
+  STEW_BILLING_TOKEN: ${STEW_BILLING_TOKEN:-saas-billing-m2m-token-change-me}
+  STEW_BILLING_PORTAL_SECRET: ${STEW_BILLING_PORTAL_SECRET:-saas-billing-m2m-token-change-me}
+  STEW_BILLING_TIMEOUT_MS: "5000"
+  OIDC_ISSUER: http://keycloak:8083/realms/codesteward
+  OIDC_PUBLIC_ISSUER: http://localhost:9083/realms/codesteward
+  OIDC_CLIENT_ID: codesteward-ui
+  OIDC_REDIRECT_URI: http://localhost:9081/v1/auth/oidc/callback
+  STEW_IDENTITY_MODE: ${STEW_IDENTITY_MODE:-keycloak}
+  KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-codesteward-api}
+  KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-steward-api-dev-secret-change-me}
+  OIDC_SCOPES: ${OIDC_SCOPES:-openid profile email}
+  GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+  GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+  GITHUB_APP_PRIVATE_KEY_REF: ${GITHUB_APP_PRIVATE_KEY_REF:-}
+  GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
+  GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
+  GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-saas-webhook-secret}
+  STEW_MENTION_TOKEN: ${STEW_MENTION_TOKEN:-@codesteward}
+  STEW_SANDBOX_PROVIDER: ${STEW_SANDBOX_PROVIDER:-local}
+  STEW_REQUIRE_PG_TENANCY: "1"
+  STEW_SCIM_TOKEN: ${STEW_SCIM_TOKEN:-}
+  STEW_SCIM_ORG_ID: ${STEW_SCIM_ORG_ID:-local}
+  STEW_SCIM_HARD_DELETE: ${STEW_SCIM_HARD_DELETE:-0}
+  STEW_AUDIT_RETENTION_DAYS: ${STEW_AUDIT_RETENTION_DAYS:-365}
+  LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+  LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+  LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
+  STEW_LANGFUSE_TRACE_MODE: ${STEW_LANGFUSE_TRACE_MODE:-session}
+  STEW_LANGFUSE_REDACT: ${STEW_LANGFUSE_REDACT:-1}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: steward
+      POSTGRES_PASSWORD: steward
+      POSTGRES_DB: codesteward_saas
+    ports:
+      - "5433:5432"
+    volumes:
+      - saas-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U steward -d codesteward_saas"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  saas-billing:
+    build:
+      context: ../..
+      dockerfile: services/saas-billing/Dockerfile
+    environment:
+      PORT: "8095"
+      SAAS_BILLING_DATA_DIR: /data
+      STEW_BILLING_TOKEN: ${STEW_BILLING_TOKEN:-saas-billing-m2m-token-change-me}
+      STEW_BILLING_PORTAL_SECRET: ${STEW_BILLING_PORTAL_SECRET:-saas-billing-m2m-token-change-me}
+      STEW_BILLING_PUBLIC_URL: ${STEW_BILLING_PUBLIC_URL:-http://localhost:9095}
+      STEW_PUBLIC_URL: ${SAAS_PUBLIC_URL:-http://localhost:9080}
+      # Portal browser auth — same Keycloak realm as product UI
+      OIDC_ISSUER: http://keycloak:8083/realms/codesteward
+      OIDC_PUBLIC_ISSUER: http://localhost:9083/realms/codesteward
+      OIDC_CLIENT_ID: codesteward-ui
+      OIDC_REQUIRE: "1"
+    ports:
+      - "9095:8095"
+    volumes:
+      - saas-billing-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8095/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # One-shot: assign demo org plans so free vs pro is visible immediately
+  saas-billing-seed:
+    image: curlimages/curl:8.12.1
+    depends_on:
+      saas-billing:
+        condition: service_healthy
+    environment:
+      TOKEN: ${STEW_BILLING_TOKEN:-saas-billing-m2m-token-change-me}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        H="Authorization: Bearer $$TOKEN"
+        C="Content-Type: application/json"
+        base=http://saas-billing:8095
+        curl -sf -X PUT "$$base/v1/orgs/local/subscription" -H "$$H" -H "$$C" \
+          -d '{"planId":"pro","seats":25,"customerName":"Local SaaS","status":"active"}'
+        curl -sf -X PUT "$$base/v1/orgs/acme/subscription" -H "$$H" -H "$$C" \
+          -d '{"planId":"free","seats":5,"customerName":"Acme Free","status":"active"}'
+        curl -sf -X PUT "$$base/v1/orgs/proco/subscription" -H "$$H" -H "$$C" \
+          -d '{"planId":"pro","seats":20,"customerName":"ProCo","status":"active"}'
+        curl -sf -X PUT "$$base/v1/orgs/entco/subscription" -H "$$H" -H "$$C" \
+          -d '{"planId":"enterprise","seats":200,"customerName":"EntCo","status":"active"}'
+        echo "seeded local=pro acme=free proco=pro entco=enterprise"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command:
+      [
+        "start-dev",
+        "--import-realm",
+        "--http-port=8083",
+        "--spi-theme-static-max-age=-1",
+        "--spi-theme-cache-themes=false",
+        "--spi-theme-cache-templates=false",
+      ]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HTTP_PORT: 8083
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_RELATIVE_PATH: /
+      KC_HOSTNAME_URL: ${SAAS_KC_HOSTNAME_URL:-http://localhost:9083}
+      KC_HOSTNAME_ADMIN_URL: ${SAAS_KC_HOSTNAME_URL:-http://localhost:9083}
+    ports:
+      - "9083:8083"
+    volumes:
+      - ./keycloak/realm-codesteward-saas.json:/opt/keycloak/data/import/realm-codesteward.json:ro
+      - ./keycloak/themes/codesteward:/opt/keycloak/themes/codesteward:ro
+
+  graph-mcp:
+    image: ghcr.io/bitkaio/codesteward:latest
+    environment:
+      TRANSPORT: "sse"
+      HOST: "0.0.0.0"
+      PORT: "3000"
+      GRAPH_BACKEND: "graphqlite"
+      GRAPHQLITE_PATH: "/data/graph.db"
+      DEFAULT_TENANT_ID: "local"
+      DEFAULT_REPO_ID: "demo"
+      DEFAULT_REPO_PATH: "/repos/project"
+      WORKSPACE_BASE: "/workspace"
+      LOG_LEVEL: "INFO"
+    ports:
+      - "9300:3000"
+    volumes:
+      - saas-graph-data:/data
+      - ${REPO_PATH:-../..}:/repos/project:ro
+      - saas-workspaces:/workspace
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile.node
+      args:
+        SERVICE: api
+    environment:
+      <<: *stew-env
+    ports:
+      - "9081:8081"
+    volumes:
+      - saas-stew-data:/data
+      - saas-workspaces:/workspace
+      - ${REPO_PATH:-../..}:/repos/project:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      saas-billing:
+        condition: service_healthy
+      saas-billing-seed:
+        condition: service_completed_successfully
+      graph-mcp:
+        condition: service_started
+      keycloak:
+        condition: service_started
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile.node
+      args:
+        SERVICE: worker
+    environment:
+      <<: *stew-env
+    volumes:
+      - saas-stew-data:/data
+      - saas-workspaces:/workspace
+      - ${REPO_PATH:-../..}:/repos/project:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+      saas-billing:
+        condition: service_healthy
+
+  ui:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile.ui
+      args:
+        VITE_OIDC_ISSUER: http://localhost:9083/realms/codesteward
+        VITE_OIDC_CLIENT_ID: codesteward-ui
+        VITE_OIDC_REDIRECT_URI: http://localhost:9080/auth/callback
+        VITE_OIDC_POST_LOGOUT_REDIRECT_URI: http://localhost:9080/
+        VITE_OIDC_SCOPES: "openid profile email"
+    ports:
+      - "9080:80"
+    depends_on:
+      - api
+
+volumes:
+  # Prefixed by project name → codesteward-saas_* — never category pg-data
+  saas-pg-data:
+  saas-stew-data:
+  saas-workspaces:
+  saas-graph-data:
+  saas-billing-data:

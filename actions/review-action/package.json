@@ -1,6 +1,6 @@
 {
   "name": "@codesteward/review-action",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "GitHub Action: run CodeSteward review and post findings",
   "type": "module",

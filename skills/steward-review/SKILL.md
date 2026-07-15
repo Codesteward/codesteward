@@ -1,7 +1,7 @@
 ---
 name: steward-review
 description: Run CodeSteward dual-mode code review (gate or stewardship) with graph-backed specialists.
-version: 0.1.0
+version: 1.0.0
 ---
 
 # Steward Review Skill

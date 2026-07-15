@@ -1,7 +1,7 @@
 ---
 name: steward-security
 description: Security-focused CodeSteward review — SAST adapters, secrets, auth-guard graph checks.
-version: 0.1.0
+version: 1.0.0
 ---
 
 # Steward Security Skill

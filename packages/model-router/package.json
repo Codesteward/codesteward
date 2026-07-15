@@ -1,6 +1,6 @@
 {
   "name": "@codesteward/model-router",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Multi-provider LLM router with role-based routing",
   "type": "module",
   "main": "./dist/index.js",

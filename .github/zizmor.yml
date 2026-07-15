@@ -1,0 +1,13 @@
+# zizmor configuration
+# Docs: https://docs.zizmor.sh/configuration/
+#
+# Policy: accept tag-based pins for now (e.g. actions/checkout@v4). Renovate is
+# configured with `pinDigests: true` and converts each tag to a full commit SHA
+# on its first run. Once Renovate has run against `main`, tighten every pattern
+# below to `hash-pin`.
+
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "*": ref-pin

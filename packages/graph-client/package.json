@@ -1,6 +1,6 @@
 {
   "name": "@codesteward/graph-client",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Client for Codesteward Graph MCP (HTTP/SSE/stdio)",
   "type": "module",
   "main": "./dist/index.js",

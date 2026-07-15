@@ -1,7 +1,7 @@
 {
   "name": "codesteward-review",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "CodeSteward Review \u2014 agentic PR gate + branch stewardship on Codesteward Graph",
   "packageManager": "pnpm@9.15.0",
   "engines": {
@@ -15,6 +15,7 @@
     "dev:ui": "pnpm --filter @codesteward/ui run dev",
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",
+    "test:unit": "node scripts/run-unit-tests.mjs",
     "lint": "pnpm -r run lint",
     "stew": "node packages/cli/dist/index.js",
     "compose:demo": "docker compose -f deploy/compose/docker-compose.demo.yml up -d",

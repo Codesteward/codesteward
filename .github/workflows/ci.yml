@@ -1,0 +1,451 @@
+# Codesteward Review — CI
+#
+# Runs on every push and pull request (excluding version tags, which go through
+# the release workflow).
+#
+# SHA PINNING:
+#   Actions below use version tags. Renovate is configured in renovate.json with
+#   `pinDigests: true` and will convert each tag to a full commit SHA on its
+#   first run. After that, the SHAs are Renovate-maintained.
+#
+# HARDENING:
+#   Every job starts with step-security/harden-runner (audit mode) and uses
+#   `persist-credentials: false` on checkout. Permissions are set to the minimum
+#   required per job.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "9.15.0"
+
+jobs:
+
+  # ── Build + unit tests ─────────────────────────────────────────────────────
+  test:
+    name: Build & test (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["22"]
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace
+        run: pnpm -r run build
+
+      - name: Typecheck
+        run: pnpm -r run typecheck
+
+      - name: Unit tests (node:test via tsx)
+        run: pnpm run test:unit
+        env:
+          GRAPH_MOCK: "1"
+          STEW_LICENSE_OPEN: "0"
+
+      - name: GA functional acceptance (static)
+        run: node scripts/ga-acceptance.mjs
+        continue-on-error: true
+
+  # ── Lint (workspace stubs are no-ops until eslint is wired) ────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    continue-on-error: true
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Package lint scripts
+        run: pnpm -r run lint
+
+  # ── Security: Semgrep + Hadolint ───────────────────────────────────────────
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Semgrep
+        run: python -m pip install --no-cache-dir semgrep
+
+      - name: Run Semgrep
+        run: |
+          semgrep scan \
+            --config p/javascript \
+            --config p/typescript \
+            --config p/security-audit \
+            --config p/owasp-top-ten \
+            --config p/docker \
+            --error \
+            --severity ERROR \
+            --metrics=off \
+            --disable-version-check \
+            --timeout 300 \
+            --exclude research \
+            --exclude node_modules \
+            --exclude '**/dist' \
+            .
+
+      - name: Hadolint (API/worker image)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: deploy/compose/Dockerfile.node
+          failure-threshold: warning
+
+      - name: Hadolint (UI image)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: deploy/compose/Dockerfile.ui
+          failure-threshold: warning
+
+      - name: Hadolint (SaaS billing)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: services/saas-billing/Dockerfile
+          failure-threshold: warning
+
+  # ── zizmor: GitHub Actions workflow static analysis ────────────────────────
+  workflow-security:
+    name: Workflow security (zizmor)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install zizmor
+        run: python -m pip install --no-cache-dir zizmor
+
+      - name: Run zizmor (SARIF)
+        run: zizmor --format sarif .github/workflows/ > zizmor.sarif
+        continue-on-error: true
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
+
+      - name: Run zizmor (fail on HIGH)
+        run: zizmor --min-severity high .github/workflows/
+
+  # ── Dependency review (PR only) ────────────────────────────────────────────
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+  # ── Conventional commits (PR only) ─────────────────────────────────────────
+  conventional-commits:
+    name: Conventional commits
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate commit messages
+        uses: webiny/action-conventional-commits@v1.3.0
+
+  # ── License headers (PR only) ──────────────────────────────────────────────
+  license-headers:
+    name: License headers
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Soft until all sources carry Apache 2.0 headers.
+    continue-on-error: true
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check Apache 2.0 headers
+        uses: apache/skywalking-eyes/header@v0.6.0
+        with:
+          mode: check
+
+  # ── Markdown lint (PR only) ────────────────────────────────────────────────
+  markdown-lint:
+    name: Markdown lint
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    continue-on-error: true
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: markdownlint
+        uses: DavidAnson/markdownlint-cli2-action@v18
+        with:
+          globs: |
+            *.md
+            docs/**/*.md
+            packages/**/*.md
+            services/**/*.md
+            .github/**/*.md
+            CHANGELOG.md
+            README.md
+
+  # ── CodeQL (push to main only) ─────────────────────────────────────────────
+  codeql:
+    name: CodeQL
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-extended,security-and-quality
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:javascript-typescript
+
+  # ── Dependency vulnerability scan (push to main only) ──────────────────────
+  vulncheck:
+    name: pnpm audit
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: pnpm audit (high+)
+        run: pnpm audit --audit-level=high
+        continue-on-error: true
+
+  # ── Container build + Trivy (push to main only, no registry push) ──────────
+  container-scan:
+    name: Container scan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build app image (amd64, local)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/compose/Dockerfile.node
+          push: false
+          load: true
+          tags: codesteward-review:scan
+          build-args: |
+            SERVICE=api
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin v0.69.3
+          trivy --version
+
+      - name: Trivy scan (fail on HIGH/CRITICAL)
+        run: |
+          trivy image \
+            --exit-code 1 \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --format json \
+            --output trivy-report.json \
+            codesteward-review:scan
+
+      - name: Install syft
+        if: always()
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Generate SBOM
+        if: always()
+        run: syft codesteward-review:scan -o cyclonedx-json > sbom.cdx.json
+
+      - name: Upload scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-scan-reports
+          path: |
+            trivy-report.json
+            sbom.cdx.json
+          if-no-files-found: error

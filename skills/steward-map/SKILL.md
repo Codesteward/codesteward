@@ -1,7 +1,7 @@
 ---
 name: steward-map
 description: Map cross-repo links, blast radius, and dependency edges via CodeSteward Graph + fan-out.
-version: 0.1.0
+version: 1.0.0
 ---
 
 # Steward Map Skill

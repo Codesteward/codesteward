@@ -1,0 +1,5 @@
+# Trivy ignore list (CVE IDs, one per line).
+# Prefer fixing or upgrading over ignoring. Document any exception with a date.
+#
+# Example:
+# CVE-2024-XXXXX  # waiting for upstream; re-check after 2026-08-01

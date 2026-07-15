@@ -1,0 +1,24 @@
+# Optional local SaaS control plane (private). Not part of public category stack.
+#   docker compose -f deploy/compose/docker-compose.saas-billing.yml up --build -d
+# Product:
+#   STEW_LICENSE_OPEN=0
+#   STEW_BILLING_URL=http://host.docker.internal:8095  # or saas-billing:8095 on same network
+#   STEW_BILLING_TOKEN=dev-billing-m2m-token-change-me
+name: codesteward-saas-billing
+
+services:
+  saas-billing:
+    build:
+      context: ../..
+      dockerfile: services/saas-billing/Dockerfile
+    ports:
+      - "8095:8095"
+    environment:
+      PORT: "8095"
+      SAAS_BILLING_DATA_DIR: /data
+      STEW_BILLING_TOKEN: ${STEW_BILLING_TOKEN:-dev-billing-m2m-token-change-me}
+    volumes:
+      - saas-billing-data:/data
+
+volumes:
+  saas-billing-data:

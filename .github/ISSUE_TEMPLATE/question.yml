@@ -1,0 +1,32 @@
+name: Question
+description: Ask a question about usage, configuration, or behavior
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question? We're happy to help. Please provide enough detail so we can give a useful answer.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What are you trying to do? Include your setup, configuration, or use case.
+    validations:
+      required: false
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What I've Tried
+      description: Any documentation, searches, or approaches you've already tried.
+    validations:
+      required: false

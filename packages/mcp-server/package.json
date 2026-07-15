@@ -1,6 +1,6 @@
 {
   "name": "@codesteward/mcp-server",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Thin MCP wrapper exposing CodeSteward review tools",
   "type": "module",
   "main": "./dist/index.js",
