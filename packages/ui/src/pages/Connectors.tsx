@@ -138,21 +138,25 @@ export function Connectors() {
   const [form, setForm] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [testResult, setTestResult] = useState<string>("");
-  const [ghStatus, setGhStatus] = useState<{
-    authMode: string;
-    githubAppConfigured: boolean;
-    installationReady?: boolean;
-    patConfigured: boolean;
-    patDevOnly?: boolean;
-    appId?: string | null;
-    enterpriseRecommendation: string;
-    installPath?: string;
-    docs: string;
-    detail?: string;
-    installations: Array<Record<string, unknown>>;
-  } | null>(null);
+  const [ghStatus, setGhStatus] = useState<Awaited<
+    ReturnType<typeof api.githubAppStatus>
+  > | null>(null);
   const [showAppAdvanced, setShowAppAdvanced] = useState(false);
   const [showPatBreakGlass, setShowPatBreakGlass] = useState(false);
+
+  /**
+   * Platform App enforce (API: orgCanConfigureApp=false when enforce+configured).
+   * Tenant UI: Install only — no Create Manifest, no PEM paste.
+   */
+  const platformEnforced = Boolean(
+    ghStatus &&
+      (ghStatus.orgCanConfigureApp === false ||
+        (ghStatus.platformGithubApp?.enforce && ghStatus.platformGithubApp.configured)),
+  );
+  const canConfigureOrgApp = !platformEnforced;
+  /** API sets patAllowed: !enforce || allowOrgPat */
+  const canUsePat = !ghStatus || ghStatus.patAllowed !== false;
+
   const [appForm, setAppForm] = useState({
     appId: "",
     privateKeyPem: "",
@@ -331,6 +335,12 @@ export function Connectors() {
 
   /** Happy path: create App via GitHub Manifest (no PEM paste). */
   async function createGitHubAppFromManifest() {
+    if (platformEnforced || !canConfigureOrgApp) {
+      toast.error(
+        "A platform GitHub App is enforced — install the shared App instead of creating a new one.",
+      );
+      return;
+    }
     setBusy(true);
     try {
       const res = await api.githubManifest();
@@ -414,13 +424,56 @@ export function Connectors() {
           <div>
             <h3 style={{ margin: "0 0 0.35rem" }}>
               GitHub App{" "}
+              {platformEnforced && (
+                <Badge tone="configured">platform</Badge>
+              )}{" "}
               {ghStatus?.githubAppConfigured && (
-                <Badge tone="configured">
-                  {ghStatus.installationReady ? "connected" : "app only"}
+                <Badge tone={ghStatus.installationReady ? "ok" : "warn"}>
+                  {ghStatus.installationReady
+                    ? "connected"
+                    : platformEnforced
+                      ? "install pending"
+                      : "app only"}
                 </Badge>
               )}
             </h3>
-            {ghStatus?.githubAppConfigured && !showAppAdvanced ? (
+            {platformEnforced ? (
+              <>
+                <p className="muted" style={{ margin: 0, fontSize: "0.85rem", maxWidth: 640, lineHeight: 1.5 }}>
+                  {ghStatus?.enterpriseRecommendation ??
+                    "This install uses a shared platform GitHub App. Install that App on your GitHub organization — do not create a new App or paste PEMs."}
+                </p>
+                {ghStatus?.detail && (
+                  <p className="muted" style={{ margin: "0.4rem 0 0", fontSize: "0.82rem" }}>
+                    {ghStatus.detail}
+                  </p>
+                )}
+                <p className="mono muted" style={{ marginTop: 8, fontSize: "0.75rem" }}>
+                  platform appId={ghStatus?.platformGithubApp?.appId ?? ghStatus?.appId ?? "—"}
+                  {ghStatus?.platformGithubApp?.slug
+                    ? ` · slug=${ghStatus.platformGithubApp.slug}`
+                    : ""}{" "}
+                  · installs=
+                  {ghStatus?.installations?.filter((i) =>
+                    /^\d+$/.test(String(i.installationId ?? "")),
+                  ).length ?? 0}
+                </p>
+                {(ghStatus?.installations?.length ?? 0) > 0 && (
+                  <ul
+                    className="muted"
+                    style={{ margin: "0.5rem 0 0", paddingLeft: "1.1rem", fontSize: "0.8rem" }}
+                  >
+                    {ghStatus!.installations
+                      .filter((i) => /^\d+$/.test(String(i.installationId ?? "")))
+                      .map((i) => (
+                        <li key={String(i.installationId)}>
+                          {String(i.accountLogin ?? "—")} · install {String(i.installationId)}
+                        </li>
+                      ))}
+                  </ul>
+                )}
+              </>
+            ) : ghStatus?.githubAppConfigured && !showAppAdvanced ? (
               <>
                 <p className="muted" style={{ margin: 0, fontSize: "0.85rem", maxWidth: 640 }}>
                   Connected for this Codesteward org. Setup steps are hidden — reconfigure only if you need to
@@ -458,9 +511,70 @@ export function Connectors() {
           )}
         </div>
 
-        {/* Configured: compact actions. Unconfigured: full setup path. */}
+        {/* Platform enforce: install-only. Else: compact connected or full create path. */}
         <div className="row" style={{ marginTop: "1rem", gap: 8, flexWrap: "wrap" }}>
-          {ghStatus?.githubAppConfigured && !showAppAdvanced ? (
+          {platformEnforced ? (
+            <>
+              <button
+                type="button"
+                className="primary"
+                disabled={busy}
+                onClick={() => void installGitHubApp()}
+              >
+                {busy
+                  ? "Redirecting…"
+                  : ghStatus?.installationReady
+                    ? "Re-install / add GitHub org"
+                    : "Install platform GitHub App"}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true);
+                  api
+                    .testGitHubApp()
+                    .then((r) => {
+                      setTestResult(JSON.stringify(r, null, 2));
+                      toast.success(
+                        (r as { ok?: boolean }).ok ? "GitHub App token OK" : "Test finished",
+                      );
+                    })
+                    .catch((e: Error) => toast.error(e.message))
+                    .finally(() => setBusy(false));
+                }}
+              >
+                Test installation token
+              </button>
+              {(ghStatus?.installations?.length ?? 0) > 0 && (
+                <button
+                  type="button"
+                  className="ghost sm"
+                  disabled={busy}
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        "Unlink GitHub App installations for this Codesteward org? The platform App stays configured — re-install to reconnect.",
+                      )
+                    ) {
+                      return;
+                    }
+                    setBusy(true);
+                    api
+                      .deleteGitHubApp()
+                      .then(() => {
+                        toast.info("Installations unlinked for this org");
+                        return refresh();
+                      })
+                      .catch((e: Error) => toast.error(e.message))
+                      .finally(() => setBusy(false));
+                  }}
+                >
+                  Unlink installations
+                </button>
+              )}
+            </>
+          ) : ghStatus?.githubAppConfigured && !showAppAdvanced ? (
             <>
               <button
                 type="button"
@@ -479,9 +593,11 @@ export function Connectors() {
               >
                 Test installation token
               </button>
-              <button type="button" className="ghost sm" onClick={() => setShowAppAdvanced(true)}>
-                Reconfigure…
-              </button>
+              {canConfigureOrgApp && (
+                <button type="button" className="ghost sm" onClick={() => setShowAppAdvanced(true)}>
+                  Reconfigure…
+                </button>
+              )}
               <button
                 type="button"
                 className="danger sm"
@@ -521,11 +637,22 @@ export function Connectors() {
             </>
           ) : (
             <>
-              <button type="button" className="primary" disabled={busy} onClick={() => void createGitHubAppFromManifest()}>
-                {busy ? "Working…" : "1. Create App (Manifest — no PEM)"}
-              </button>
+              {canConfigureOrgApp && (
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={busy}
+                  onClick={() => void createGitHubAppFromManifest()}
+                >
+                  {busy ? "Working…" : "1. Create App (Manifest — no PEM)"}
+                </button>
+              )}
               <button type="button" className="primary" disabled={busy} onClick={() => void installGitHubApp()}>
-                {busy ? "Redirecting…" : "2. Install GitHub App"}
+                {busy
+                  ? "Redirecting…"
+                  : canConfigureOrgApp
+                    ? "2. Install GitHub App"
+                    : "Install GitHub App"}
               </button>
               <button
                 type="button"
@@ -544,10 +671,12 @@ export function Connectors() {
               >
                 Test installation token
               </button>
-              <button type="button" className="ghost sm" onClick={() => setShowAppAdvanced((v) => !v)}>
-                {showAppAdvanced ? "Hide advanced config" : "Advanced: paste App credentials"}
-              </button>
-              {ghStatus?.githubAppConfigured && (
+              {canConfigureOrgApp && (
+                <button type="button" className="ghost sm" onClick={() => setShowAppAdvanced((v) => !v)}>
+                  {showAppAdvanced ? "Hide advanced config" : "Advanced: paste App credentials"}
+                </button>
+              )}
+              {ghStatus?.githubAppConfigured && canConfigureOrgApp && (
                 <button type="button" className="ghost sm" onClick={() => setShowAppAdvanced(false)}>
                   Done
                 </button>
@@ -556,7 +685,7 @@ export function Connectors() {
           )}
         </div>
 
-        {showAppAdvanced && (
+        {showAppAdvanced && canConfigureOrgApp && (
           <>
             <div className="grid cols-2" style={{ marginTop: "1rem", gap: 12 }}>
               <div className="field">
@@ -767,39 +896,48 @@ export function Connectors() {
 
         {ghStatus?.authMode === "pat_legacy" && (
           <p className="badge warn" style={{ marginTop: 12, display: "inline-block" }}>
-            PAT mode active — fine for local dev only; switch to GitHub App for enterprise.
+            {platformEnforced && !canUsePat
+              ? "PAT is ignored while the platform GitHub App is enforced."
+              : "PAT mode active — fine for local dev only; switch to GitHub App for enterprise."}
           </p>
         )}
 
-        <div style={{ marginTop: "1.25rem", borderTop: "1px solid var(--border)", paddingTop: "0.85rem" }}>
-          <button
-            type="button"
-            className="ghost sm"
-            onClick={() => setShowPatBreakGlass((v) => !v)}
-            aria-expanded={showPatBreakGlass}
-          >
-            {showPatBreakGlass ? "▾" : "▸"} Dev break-glass: Personal Access Token
-            {ghStatus?.patDevOnly !== false ? " (not for enterprise)" : ""}
-          </button>
-          {showPatBreakGlass && (
-            <div style={{ marginTop: 12 }}>
-              <p className="muted" style={{ margin: "0 0 0.75rem", fontSize: "0.82rem", maxWidth: 560 }}>
-                PATs are demoted on purpose. Prefer Install GitHub App. Use a PAT only for local smoke tests.
-              </p>
-              <button
-                type="button"
-                className="sm"
-                onClick={() => {
-                  const gh = connectors.find((c) => c.type === "github");
-                  if (gh) openConfigure(gh);
-                  else toast.info("GitHub connector not listed — check API connectors response");
-                }}
-              >
-                Configure PAT connector
-              </button>
-            </div>
-          )}
-        </div>
+        {canUsePat ? (
+          <div style={{ marginTop: "1.25rem", borderTop: "1px solid var(--border)", paddingTop: "0.85rem" }}>
+            <button
+              type="button"
+              className="ghost sm"
+              onClick={() => setShowPatBreakGlass((v) => !v)}
+              aria-expanded={showPatBreakGlass}
+            >
+              {showPatBreakGlass ? "▾" : "▸"} Dev break-glass: Personal Access Token
+              {ghStatus?.patDevOnly !== false ? " (not for enterprise)" : ""}
+            </button>
+            {showPatBreakGlass && (
+              <div style={{ marginTop: 12 }}>
+                <p className="muted" style={{ margin: "0 0 0.75rem", fontSize: "0.82rem", maxWidth: 560 }}>
+                  PATs are demoted on purpose. Prefer Install GitHub App. Use a PAT only for local smoke tests.
+                </p>
+                <button
+                  type="button"
+                  className="sm"
+                  onClick={() => {
+                    const gh = connectors.find((c) => c.type === "github");
+                    if (gh) openConfigure(gh);
+                    else toast.info("GitHub connector not listed — check API connectors response");
+                  }}
+                >
+                  Configure PAT connector
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="muted" style={{ marginTop: "1rem", fontSize: "0.82rem", lineHeight: 1.45 }}>
+            Personal Access Tokens are disabled for this install (platform GitHub App enforced). Use{" "}
+            <strong>Install platform GitHub App</strong> above.
+          </p>
+        )}
 
         {testResult && (
           <pre className="mono" style={{ fontSize: 11, maxHeight: 160, overflow: "auto", marginTop: 12 }}>

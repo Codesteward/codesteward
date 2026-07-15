@@ -11,7 +11,8 @@
  *   - claim "org" / "organization" / "org_id": single slug/id
  *   - claim "org_roles": { [orgSlug]: "admin"|"reviewer"|"viewer" }
  *
- * When no org claim is present, default org is "local".
+ * When no org claim is present, return no memberships — UI routes to org onboarding.
+ * (Do not auto-assign "local"; that breaks SaaS multi-tenant signup.)
  */
 import type { UserRole } from "../auth-file.js";
 import type { OrgRole } from "../tenancy/orgs.js";
@@ -147,10 +148,7 @@ export function mapOrgMemberships(
     if (k && !byKey.has(k)) byKey.set(k, defaultOrgRole);
   }
 
-  if (byKey.size === 0) {
-    byKey.set("local", defaultOrgRole);
-  }
-
+  // Empty → no org yet (create via onboarding or wait for admin invite)
   return [...byKey.entries()].map(([key, role]) => ({ key, role }));
 }
 

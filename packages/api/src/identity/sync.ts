@@ -83,23 +83,15 @@ export async function syncOidcLogin(claims: OidcClaims): Promise<SyncLoginResult
     resolved.push({ org, role: m.role });
   }
 
-  if (!resolved.length) {
-    const local =
-      (await tenancy.getOrg("local")) ??
-      (await tenancy.createOrg({ name: "Local", slug: "local" }));
-    resolved.push({
-      org: local,
-      role:
-        productRole === "admin" ? "admin" : productRole === "viewer" ? "viewer" : "reviewer",
-    });
-  }
+  // No org claims → no memberships. SaaS users create an org or wait for invite.
+  // Legacy self-host can still auto-join "local" via listOrgsForUser when STEW_AUTH_STRICT is off.
 
-  const primary = resolved[0]!;
+  const primaryOrgId = resolved[0]?.org.id;
   const { user, token, created } = await globalAuthStore.findOrCreateFromOidc({
     email,
     displayName,
     roleHint: productRole,
-    orgId: primary.org.id,
+    orgId: primaryOrgId,
     subject: claims.sub,
   });
 
@@ -121,7 +113,7 @@ export async function syncOidcLogin(claims: OidcClaims): Promise<SyncLoginResult
     try {
       await globalAuthStore.updateUser(user.id, {
         role: productRole,
-        orgId: primary.org.id,
+        ...(primaryOrgId ? { orgId: primaryOrgId } : {}),
         displayName: displayName ?? undefined,
       });
     } catch {
@@ -131,10 +123,10 @@ export async function syncOidcLogin(claims: OidcClaims): Promise<SyncLoginResult
 
   const orgs = resolved.map((r) => ({ ...r.org, role: r.role }));
   return {
-    user: { ...user, role: productRole, orgId: primary.org.id },
+    user: { ...user, role: productRole, orgId: primaryOrgId ?? user.orgId },
     token,
     created,
     orgs,
-    primaryOrgId: primary.org.id,
+    primaryOrgId: primaryOrgId ?? "",
   };
 }

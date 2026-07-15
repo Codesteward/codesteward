@@ -307,9 +307,33 @@ export function createApp() {
   });
 
   app.get("/v1/auth/me", async (c) => {
-    const user = c.get("user");
+    const user = c.get("user") as
+      | { id?: string; orgId?: string; email?: string; role?: string }
+      | undefined;
     if (user) {
-      return c.json({ user, authMode: c.get("authMode") ?? "session" });
+      let orgs: Array<{ id: string; name: string; slug?: string; role?: string }> = [];
+      try {
+        if (user.id && user.id !== "api_key") {
+          const { getTenancyStore } = await import("./tenancy/orgs.js");
+          const list = await getTenancyStore().listOrgsForUser(user.id);
+          orgs = list.map((o) => ({
+            id: o.id,
+            name: o.name,
+            slug: o.slug,
+            role: o.role,
+          }));
+        }
+      } catch {
+        /* ignore */
+      }
+      const needsOrg = orgs.length === 0 && user.id !== "api_key";
+      const primaryOrgId = orgs[0]?.id ?? (user.orgId?.trim() || undefined);
+      return c.json({
+        user: { ...user, orgId: primaryOrgId },
+        authMode: c.get("authMode") ?? "session",
+        orgs,
+        needsOrg,
+      });
     }
     if (c.get("authMode") === "dev_open") {
       return c.json({
@@ -324,9 +348,11 @@ export function createApp() {
           createdAt: new Date(0).toISOString(),
         },
         authMode: "dev_open",
+        orgs: [],
+        needsOrg: false,
       });
     }
-    return c.json({ user: null, authMode: "anonymous" });
+    return c.json({ user: null, authMode: "anonymous", orgs: [], needsOrg: false });
   });
 
   /**
@@ -378,13 +404,15 @@ export function createApp() {
     const body = await c.req.json();
     const orgId = c.get("orgId") ?? body.orgId;
     try {
-      const { requireEntitled } = await import("./license.js");
+      const { requireOrgEntitled } = await import("./license.js");
       if (body.riskTier === "thorough" || body.depth === "thorough") {
-        requireEntitled("thoroughDiscourse");
+        await requireOrgEntitled(String(orgId ?? "local"), "thoroughDiscourse");
       }
     } catch (err) {
-      const e = err as Error & { status?: number };
-      if (e.status === 402) return c.json({ error: e.message }, 402);
+      const e = err as Error & { status?: number; code?: string };
+      if (e.status === 402) {
+        return c.json({ error: e.message, code: e.code ?? "ORG_LICENSE_REQUIRED" }, 402);
+      }
       throw err;
     }
     // Normalize mode-specific fields before schema (hard gate vs stewardship split)
@@ -670,6 +698,18 @@ export function createApp() {
   app.post("/v1/reviews/gate", async (c) => {
     const body = await c.req.json();
     const orgId = c.get("orgId") ?? body.orgId;
+    try {
+      const { requireOrgEntitled } = await import("./license.js");
+      if (body.riskTier === "thorough" || body.depth === "thorough") {
+        await requireOrgEntitled(String(orgId ?? "local"), "thoroughDiscourse");
+      }
+    } catch (err) {
+      const e = err as Error & { status?: number; code?: string };
+      if (e.status === 402) {
+        return c.json({ error: e.message, code: e.code ?? "ORG_LICENSE_REQUIRED" }, 402);
+      }
+      throw err;
+    }
     // Gate is a PR merge check only — PR number required; base/head come from SCM PR.
     const prRaw = body.prNumber ?? body.pr;
     const prNumber =
@@ -719,6 +759,18 @@ export function createApp() {
   app.post("/v1/reviews/stewardship", async (c) => {
     const body = await c.req.json();
     const orgId = c.get("orgId") ?? body.orgId;
+    try {
+      const { requireOrgEntitled } = await import("./license.js");
+      if (body.riskTier === "thorough" || body.depth === "thorough") {
+        await requireOrgEntitled(String(orgId ?? "local"), "thoroughDiscourse");
+      }
+    } catch (err) {
+      const e = err as Error & { status?: number; code?: string };
+      if (e.status === 402) {
+        return c.json({ error: e.message, code: e.code ?? "ORG_LICENSE_REQUIRED" }, 402);
+      }
+      throw err;
+    }
     // Hard separation: stewardship never accepts a PR (branch compare = open a PR + gate)
     if (body.prNumber != null || body.pr != null) {
       return c.json(
@@ -944,6 +996,16 @@ export function createApp() {
   app.put("/v1/org/repo-links", async (c) => {
     const body = await c.req.json();
     const orgId = c.get("orgId") ?? body.orgId ?? "local";
+    try {
+      const { requireOrgEntitled } = await import("./license.js");
+      await requireOrgEntitled(String(orgId), "crossRepo");
+    } catch (err) {
+      const e = err as Error & { status?: number; code?: string };
+      if (e.status === 402) {
+        return c.json({ error: e.message, code: e.code ?? "ORG_LICENSE_REQUIRED" }, 402);
+      }
+      throw err;
+    }
     const { CrossRepoLinkSchema } = await import("@codesteward/core");
     const partial = {
       orgId,
@@ -1382,6 +1444,16 @@ export function createApp() {
   /** Admin / SIEM audit log (who changed connectors, models, members, SCIM, …). */
   app.get("/v1/org/audit", async (c) => {
     const orgId = c.get("orgId") ?? "local";
+    try {
+      const { requireOrgEntitled } = await import("./license.js");
+      await requireOrgEntitled(String(orgId), "audit");
+    } catch (err) {
+      const e = err as Error & { status?: number; code?: string };
+      if (e.status === 402) {
+        return c.json({ error: e.message, code: e.code ?? "ORG_LICENSE_REQUIRED" }, 402);
+      }
+      throw err;
+    }
     const { listAuditEvents, countAuditEvents } = await import("./audit.js");
     const limit = Number(c.req.query("limit") ?? 100);
     const offset = Number(c.req.query("offset") ?? 0);
@@ -1450,37 +1522,212 @@ export function createApp() {
     return c.json({ ok: true, deleted });
   });
 
+  /** SaaS billing status + plan catalog (empty when control plane unset). */
+  app.get("/v1/billing/status", async (c) => {
+    const {
+      isBillingConfigured,
+      billingPublicUrl,
+      fetchBillingPlans,
+    } = await import("./billing-portal.js");
+    const configured = isBillingConfigured();
+    const plans = configured ? await fetchBillingPlans() : [];
+    return c.json({
+      configured,
+      saasMode: configured,
+      publicUrl: configured ? billingPublicUrl() : null,
+      portalPath: "/portal",
+      plans,
+      note: configured
+        ? "Cloud billing control plane is connected. Use Billing in the sidebar or Organization → Plan & billing."
+        : "Self-host / no STEW_BILLING_URL — install-wide license only.",
+    });
+  });
+
+  /**
+   * Open the private billing portal for the active org (signed short-lived URL).
+   * Browser navigates to STEW_BILLING_PUBLIC_URL/portal?token=…
+   */
+  app.post("/v1/org/billing/portal", async (c) => {
+    const {
+      isBillingConfigured,
+      signBillingPortalToken,
+      buildBillingPortalUrl,
+    } = await import("./billing-portal.js");
+    if (!isBillingConfigured()) {
+      return c.json(
+        {
+          error: "billing_not_configured",
+          message: "Billing portal requires STEW_BILLING_URL (SaaS mode).",
+        },
+        404,
+      );
+    }
+    const orgId = String(c.get("orgId") ?? "");
+    if (!orgId) {
+      return c.json(
+        { error: "org_required", message: "Select or create an organization first." },
+        400,
+      );
+    }
+    const user = c.get("user") as
+      | { id?: string; email?: string; role?: string }
+      | undefined;
+    if (!user?.id || user.id === "api_key") {
+      return c.json({ error: "session required" }, 401);
+    }
+    const orgRole = (c.get("orgRole") as string | undefined) ?? user.role ?? "member";
+    let orgName = orgId;
+    try {
+      const { getTenancyStore } = await import("./tenancy/orgs.js");
+      const org = await getTenancyStore().getOrg(orgId);
+      if (org?.name) orgName = org.name;
+    } catch {
+      /* ignore */
+    }
+    const body = (await c.req.json().catch(() => ({}))) as { returnTo?: string };
+    const returnTo =
+      body.returnTo?.trim() ||
+      process.env.STEW_PUBLIC_URL?.trim() ||
+      "http://localhost:9080";
+    try {
+      const token = signBillingPortalToken({
+        orgId,
+        orgName,
+        userId: user.id,
+        email: user.email,
+        role: orgRole,
+      });
+      const url = buildBillingPortalUrl(token, returnTo);
+      return c.json({
+        url,
+        orgId,
+        expiresInSeconds: 3600,
+        note: "Open this URL in the browser to manage plan and billing profile.",
+      });
+    } catch (err) {
+      const e = err as Error & { status?: number };
+      return c.json(
+        { error: e.message, code: (e as { code?: string }).code },
+        (e.status as 503) ?? 500,
+      );
+    }
+  });
+
   app.get("/v1/org/license", async (c) => {
     const {
       resolveLicenseAsync,
+      resolveOrgLicense,
       featureMatrix,
       FEATURE_CATALOG,
       licenseFilePath,
+      isLicenseOpenMode,
     } = await import("./license.js");
-    const license = await resolveLicenseAsync();
+    const orgId = c.get("orgId") ?? "local";
+    // Prefer org-scoped resolution (SaaS billing later); open mode short-circuits
+    const license = await resolveOrgLicense(String(orgId));
+    const open = isLicenseOpenMode() || Boolean(license.openMode);
+    const billingConfigured = Boolean(process.env.STEW_BILLING_URL?.trim());
+    let plan: {
+      id?: string;
+      status?: string;
+      seats?: number;
+      maxSeats?: number;
+      customerName?: string;
+      source: "billing" | "license" | "open";
+    } | null = null;
+    if (billingConfigured) {
+      try {
+        const billingUrl = process.env.STEW_BILLING_URL!.replace(/\/$/, "");
+        const res = await fetch(
+          `${billingUrl}/v1/orgs/${encodeURIComponent(String(orgId))}/subscription`,
+          {
+            headers: {
+              Accept: "application/json",
+              ...(process.env.STEW_BILLING_TOKEN
+                ? { Authorization: `Bearer ${process.env.STEW_BILLING_TOKEN}` }
+                : {}),
+            },
+            signal: AbortSignal.timeout(
+              Number(process.env.STEW_BILLING_TIMEOUT_MS ?? 3000),
+            ),
+          },
+        );
+        if (res.ok) {
+          const body = (await res.json()) as {
+            subscription?: {
+              planId?: string;
+              status?: string;
+              seats?: number;
+              customerName?: string;
+            };
+          };
+          const sub = body.subscription;
+          plan = {
+            id: sub?.planId ?? license.tier,
+            status: sub?.status,
+            /** Purchased / included seats (enforced as maxSeats on invites) */
+            seats: sub?.seats ?? license.maxSeats,
+            maxSeats: license.maxSeats,
+            customerName: sub?.customerName ?? license.customer,
+            source: "billing",
+          };
+        }
+      } catch {
+        plan = { id: license.tier, source: "billing" };
+      }
+    } else if (open) {
+      plan = { id: "open", source: "open" };
+    } else {
+      plan = { id: license.tier, source: "license", customerName: license.customer };
+    }
     return c.json({
       license,
+      plan,
+      billingConfigured,
       features: featureMatrix(license),
       catalog: FEATURE_CATALOG.map(({ id, label, description }) => ({
         id,
         label,
         description,
       })),
-      upload: {
-        path: "PUT /v1/org/license",
-        formats: [
-          "base64url(JSON) with tier, features[], maxSeats, validUntil, …",
-          "body.sig when STEW_LICENSE_HMAC is set (signed commercial)",
-        ],
-        note:
-          "Not related to STEW_API_KEY (API auth). Upload a license key string from your vendor or self-issue when HMAC is unset.",
-        filePath: licenseFilePath(),
-      },
+      openMode: open,
+      hideLicenseUi: open || Boolean(license.hideLicenseUi) || billingConfigured,
+      upload: open || billingConfigured
+        ? {
+            path: "PUT /v1/org/license",
+            formats: [] as string[],
+            note: billingConfigured
+              ? "Plan is managed by the cloud control plane (Organization → Plan & billing)."
+              : "License management is not available for this install.",
+            disabled: true,
+          }
+        : {
+            path: "PUT /v1/org/license",
+            formats: [
+              "base64url(JSON) with tier, features[], maxSeats, validUntil, …",
+              "body.sig when STEW_LICENSE_HMAC is set (signed commercial)",
+            ],
+            note:
+              "Not related to STEW_API_KEY (API auth). Upload a license key string from your vendor or self-issue when HMAC is unset.",
+            filePath: licenseFilePath(),
+          },
     });
   });
 
   /** Install / replace license key (admin). Stored under STEW_LICENSE_FILE / .steward-data/license.key */
   app.put("/v1/org/license", async (c) => {
+    {
+      const { isLicenseOpenMode } = await import("./license.js");
+      if (isLicenseOpenMode()) {
+        return c.json(
+          {
+            error: "license_unavailable",
+            message: "License install is not available for this install.",
+          },
+          409,
+        );
+      }
+    }
     // Platform operator only — not tenant org admin
     {
       const authMode = c.get("authMode") as string | undefined;
@@ -1572,6 +1819,52 @@ export function createApp() {
       body.config && typeof body.config === "object" && !Array.isArray(body.config)
         ? (body.config as Record<string, unknown>)
         : undefined;
+    // GitHub App (not PAT) and non-GitHub SCM → enterprise_connectors (Pro+)
+    const authMode = String(nested?.authMode ?? body.authMode ?? "");
+    const wantsApp =
+      type === "github" &&
+      (authMode === "github_app" ||
+        Boolean(nested?.appId || nested?.privateKeyPem || body.appId));
+    const multiScm = ["gitlab", "bitbucket", "azure_devops", "gitea", "azure-devops"].includes(
+      type,
+    );
+    if (wantsApp || multiScm) {
+      try {
+        const { requireOrgEntitled } = await import("./license.js");
+        await requireOrgEntitled(String(orgId), "enterpriseConnectors");
+      } catch (err) {
+        const e = err as Error & { status?: number; code?: string };
+        if (e.status === 402) {
+          return c.json({ error: e.message, code: e.code ?? "ORG_LICENSE_REQUIRED" }, 402);
+        }
+        throw err;
+      }
+    }
+    // Platform-enforced GitHub App: block org PEMs and optional PATs
+    if (type === "github") {
+      try {
+        const {
+          assertOrgMayConfigureGithubApp,
+          assertOrgMayUseGithubPat,
+        } = await import("./platform-github-app-store.js");
+        if (wantsApp || nested?.privateKeyPem || body.privateKeyPem) {
+          await assertOrgMayConfigureGithubApp();
+        }
+        const hasPat = Boolean(
+          (typeof body.token === "string" && body.token) ||
+            (typeof nested?.token === "string" && nested.token),
+        );
+        if (hasPat && !wantsApp) {
+          await assertOrgMayUseGithubPat();
+        }
+      } catch (err) {
+        const e = err as Error & { status?: number; code?: string };
+        if (e.status === 403) {
+          return c.json({ error: e.message, code: e.code }, 403);
+        }
+        throw err;
+      }
+    }
     const cfg = await globalConnectorsStore.upsert(
       type,
       {
@@ -2223,6 +2516,18 @@ export function createApp() {
           };
         },
         enqueueGate: async ({ session, job }) => {
+          let riskTier = session.riskTier;
+          let depth = session.depth;
+          // Webhook path must honor org plan (thorough = Pro+)
+          if (riskTier === "thorough" || depth === "thorough") {
+            try {
+              const { requireOrgEntitled } = await import("./license.js");
+              await requireOrgEntitled(String(session.orgId ?? "local"), "thoroughDiscourse");
+            } catch {
+              riskTier = "full";
+              depth = depth === "thorough" ? "normal" : depth;
+            }
+          }
           // Persist session with fixed id
           const created = globalSessionStore.create({
             mode: "gate",
@@ -2237,19 +2542,24 @@ export function createApp() {
             prNumber: session.prNumber,
             scmProvider: "github",
             scmFullName: session.scmFullName,
-            riskTier: session.riskTier,
-            depth: session.depth,
+            riskTier,
+            depth,
             trigger: "webhook",
             paths: session.paths,
             metadata: {
               webhook: true,
               ...(session.metadata ?? {}),
+              ...(riskTier !== session.riskTier
+                ? { thoroughBlocked: true, thoroughBlockReason: "org_license_required" }
+                : {}),
             },
           });
           // overwrite id if store generated different — use created.id
           const enqueued = await globalQueue.enqueue({
             ...job,
             sessionId: created.id,
+            riskTier,
+            depth,
           });
           return { sessionId: created.id, jobId: enqueued.id };
         },
@@ -3063,6 +3373,118 @@ export function createApp() {
     });
   });
 
+  /**
+   * Install-wide GitHub App — optional enforce so all tenants share one App.
+   * Orgs only attach installation IDs; they cannot upload PEMs/PATs when enforce=true.
+   */
+  app.get("/v1/platform/github-app", async (c) => {
+    const authMode = c.get("authMode") as string | undefined;
+    const user = c.get("user") as import("./auth-store.js").PublicAuthUser | undefined;
+    try {
+      const { requirePlatformAdmin } = await import("./platform-admin.js");
+      requirePlatformAdmin(user ?? null, authMode);
+    } catch (err) {
+      const e = err as Error & { status?: number };
+      return c.json({ error: "forbidden", message: e.message }, 403);
+    }
+    const {
+      getPlatformGithubApp,
+      maskPlatformGithubApp,
+      resolvePlatformGithubAppPolicy,
+    } = await import("./platform-github-app-store.js");
+    const stored = await getPlatformGithubApp();
+    const policy = await resolvePlatformGithubAppPolicy();
+    return c.json({
+      config: maskPlatformGithubApp(stored),
+      policy: {
+        enforce: policy.enforce,
+        allowOrgPat: policy.allowOrgPat,
+        configured: policy.configured,
+        source: policy.source,
+        appId: policy.appId ?? null,
+        slug: policy.slug ?? null,
+      },
+      envBootstrap: {
+        STEW_PLATFORM_GITHUB_APP_ENFORCE: process.env.STEW_PLATFORM_GITHUB_APP_ENFORCE ?? null,
+        GITHUB_APP_ID: process.env.GITHUB_APP_ID ? "set" : null,
+        GITHUB_APP_SLUG: process.env.GITHUB_APP_SLUG ?? null,
+      },
+      note:
+        "When enforce is on, every org must install this shared GitHub App. Tenants cannot paste their own App PEM or (by default) a PAT.",
+    });
+  });
+
+  app.put("/v1/platform/github-app", async (c) => {
+    const authMode = c.get("authMode") as string | undefined;
+    const user = c.get("user") as import("./auth-store.js").PublicAuthUser | undefined;
+    try {
+      const { requirePlatformAdmin } = await import("./platform-admin.js");
+      requirePlatformAdmin(user ?? null, authMode);
+    } catch (err) {
+      const e = err as Error & { status?: number };
+      return c.json({ error: "forbidden", message: e.message }, 403);
+    }
+    const body = (await c.req.json().catch(() => ({}))) as {
+      enforce?: boolean;
+      allowOrgPat?: boolean;
+      appId?: string;
+      clientId?: string;
+      privateKeyPem?: string;
+      privateKeyRef?: string;
+      webhookSecret?: string;
+      baseUrl?: string;
+      slug?: string;
+      clear?: boolean;
+    };
+    const { putPlatformGithubApp, maskPlatformGithubApp } = await import(
+      "./platform-github-app-store.js"
+    );
+    if (body.enforce && !body.clear) {
+      const hasCreds = Boolean(
+        (body.appId || body.privateKeyPem || body.privateKeyRef) ||
+          process.env.GITHUB_APP_ID,
+      );
+      // Allow enabling enforce when store already has appId from previous save
+      const prev = await import("./platform-github-app-store.js").then((m) =>
+        m.getPlatformGithubApp(),
+      );
+      if (!hasCreds && !prev?.appId && !prev?.privateKeyPem && !prev?.privateKeyRef) {
+        return c.json(
+          {
+            error:
+              "Provide appId + privateKeyPem (or privateKeyRef) before enabling enforce, or set GITHUB_APP_* env.",
+          },
+          400,
+        );
+      }
+    }
+    const saved = await putPlatformGithubApp(body.clear ? { clear: true } : body);
+    try {
+      const { auditLog, auditContextFromRequest } = await import("./audit.js");
+      await auditLog({
+        action: "github_app.platform.update",
+        ...auditContextFromRequest(c),
+        resourceType: "github_app",
+        resourceId: "platform",
+        metadata: {
+          enforce: saved?.enforce,
+          allowOrgPat: saved?.allowOrgPat,
+          appId: saved?.appId,
+          clear: Boolean(body.clear),
+        },
+      });
+    } catch {
+      /* optional */
+    }
+    return c.json({
+      ok: true,
+      config: maskPlatformGithubApp(saved),
+      note: saved?.enforce
+        ? "Platform GitHub App enforced — tenants can only install this App on their GitHub orgs."
+        : "Platform GitHub App saved (not enforced).",
+    });
+  });
+
   /** Install-wide Langfuse project (platform operator). Optional; dual-writes with org when both set. */
   app.get("/v1/platform/langfuse", async (c) => {
     const authMode = c.get("authMode") as string | undefined;
@@ -3151,11 +3573,14 @@ export function createApp() {
    */
   app.get("/v1/org/scim", async (c) => {
     const orgId = c.get("orgId") ?? "local";
-    const { isEntitled } = await import("./license.js");
+    const { isOrgEntitled } = await import("./license.js");
     const { getTenancyStore } = await import("./tenancy/orgs.js");
     const { orgScimBaseUrl, publicApiBase } = await import("./scim/tenant.js");
     const { listScimTokens, orgHasScimToken } = await import("./scim/tokens-store.js");
-    const entitled = isEntitled("scim");
+    // Org plan (SaaS billing / license) — not process-wide open mode
+    const entitled =
+      process.env.STEW_SCIM_ALLOW_WITHOUT_LICENSE === "1" ||
+      (await isOrgEntitled(String(orgId), "scim"));
     const org = (await getTenancyStore().getOrg(orgId)) ?? {
       id: orgId,
       slug: orgId,
@@ -3172,6 +3597,7 @@ export function createApp() {
       orgSlug: org.slug,
       multiTenant: true,
       entitled,
+      planRequired: entitled ? null : "enterprise",
       tokenConfigured,
       tokens: activeTokens.map((t) => ({
         id: t.id,
@@ -3208,15 +3634,28 @@ export function createApp() {
     if (role !== "admin" && c.get("authMode") !== "api_key" && c.get("authMode") !== "dev_open") {
       return c.json({ error: "forbidden", message: "admin role required" }, 403);
     }
-    const { isEntitled } = await import("./license.js");
-    if (
-      !isEntitled("scim") &&
-      process.env.STEW_SCIM_ALLOW_WITHOUT_LICENSE !== "1" &&
-      (process.env.STEW_LICENSE_ENFORCE === "1" || process.env.NODE_ENV === "production")
-    ) {
-      return c.json({ error: "license", message: "SCIM not entitled" }, 402);
-    }
     const orgId = c.get("orgId") ?? "local";
+    // Always org-scoped (SaaS Free/Pro must not mint). Escape hatch: STEW_SCIM_ALLOW_WITHOUT_LICENSE=1
+    if (process.env.STEW_SCIM_ALLOW_WITHOUT_LICENSE !== "1") {
+      try {
+        const { requireOrgEntitled } = await import("./license.js");
+        await requireOrgEntitled(String(orgId), "scim");
+      } catch (err) {
+        const e = err as Error & { status?: number; code?: string };
+        if (e.status === 402) {
+          return c.json(
+            {
+              error: e.message,
+              message: e.message,
+              code: e.code ?? "ORG_LICENSE_REQUIRED",
+              feature: "scim",
+            },
+            402,
+          );
+        }
+        throw err;
+      }
+    }
     const body = (await c.req.json().catch(() => ({}))) as { label?: string };
     const { mintScimToken } = await import("./scim/tokens-store.js");
     const { token, meta } = await mintScimToken({
@@ -3279,6 +3718,16 @@ export function createApp() {
   // Address-rate analytics (real — no fake series)
   app.get("/v1/analytics/address-rate", async (c) => {
     const orgId = c.get("orgId") ?? "local";
+    try {
+      const { requireOrgEntitled } = await import("./license.js");
+      await requireOrgEntitled(String(orgId), "analytics");
+    } catch (err) {
+      const e = err as Error & { status?: number; code?: string };
+      if (e.status === 402) {
+        return c.json({ error: e.message, code: e.code ?? "ORG_LICENSE_REQUIRED" }, 402);
+      }
+      throw err;
+    }
     const findings = await findingsStore.list({ orgId });
     const sessions = globalSessionStore.list({ orgId });
     const floor = c.req.query("minSeverity"); // optional

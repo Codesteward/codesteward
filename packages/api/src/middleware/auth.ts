@@ -106,20 +106,34 @@ function mapOrgRoleToProduct(orgRole: OrgRole): UserRole {
   return "viewer";
 }
 
+/** Paths usable before the user belongs to any org (onboarding / invite accept). */
+function isNoOrgAllowedPath(path: string, method: string): boolean {
+  const m = method.toUpperCase();
+  if (path === "/v1/auth/me" || path === "/v1/auth/logout" || path === "/v1/auth/me/password") {
+    return true;
+  }
+  if (path.startsWith("/v1/auth/me")) return true;
+  if (path === "/v1/identity/status") return true;
+  if (path === "/v1/orgs" && (m === "GET" || m === "POST")) return true;
+  if (path === "/v1/orgs/invitations/accept" && m === "POST") return true;
+  // Plan catalog for onboarding before org exists
+  if (path === "/v1/billing/status" && m === "GET") return true;
+  return false;
+}
+
 async function bindOrgContext(c: Context): Promise<Response | null> {
   const path = c.req.path;
+  const method = c.req.method.toUpperCase();
   // Skip membership for health/auth/webhooks (already exempt mostly)
   if (isAuthExempt(path)) return null;
-
-  const requested =
-    c.req.header("X-Org-Id") ??
-    c.req.header("x-org-id") ??
-    (c.get("user") as PublicAuthUser | undefined)?.orgId ??
-    "local";
 
   const user = c.get("user") as PublicAuthUser | undefined;
   const authMode = c.get("authMode") as string | undefined;
   const store = getTenancyStore();
+  const headerOrg =
+    c.req.header("X-Org-Id") ?? c.req.header("x-org-id") ?? undefined;
+  const homeOrg = (user as PublicAuthUser | undefined)?.orgId?.trim() || undefined;
+  const requested = headerOrg || homeOrg || "local";
 
   try {
     const membership = await store.assertMembership(user?.id, requested, {
@@ -143,18 +157,7 @@ async function bindOrgContext(c: Context): Promise<Response | null> {
     }
     return null;
   } catch (err) {
-    const status = (err as { status?: number })?.status ?? 403;
-    // If user sent a spoofed X-Org-Id, hard fail
-    if (c.req.header("X-Org-Id") || c.req.header("x-org-id")) {
-      return c.json(
-        {
-          error: "forbidden",
-          message: err instanceof Error ? err.message : "org access denied",
-        },
-        status as 403,
-      );
-    }
-    // No header — fall back to first membership or local if allowed
+    // Session/OIDC: prefer real memberships over a stale browser X-Org-Id (e.g. cached "local")
     if (user?.id && (authMode === "session" || authMode === "oidc_jwt")) {
       const orgs = await store.listOrgsForUser(user.id);
       if (orgs[0]) {
@@ -163,17 +166,33 @@ async function bindOrgContext(c: Context): Promise<Response | null> {
         c.set("role", mapOrgRoleToProduct(orgs[0].role));
         return null;
       }
+      // Zero memberships — allow onboarding routes only
+      if (isNoOrgAllowedPath(path, method)) {
+        c.set("orgId", undefined);
+        c.set("needsOrg", true);
+        return null;
+      }
+      return c.json(
+        {
+          error: "org_required",
+          code: "ORG_REQUIRED",
+          message:
+            "You are not a member of any organization yet. Create one or ask an org admin to invite you.",
+        },
+        403,
+      );
     }
     if (authMode === "dev_open" || authMode === "api_key") {
       c.set("orgId", requested);
       return null;
     }
+    const status = (err as { status?: number })?.status ?? 403;
     return c.json(
       {
         error: "forbidden",
         message: err instanceof Error ? err.message : "org access denied",
       },
-      403,
+      status as 403,
     );
   }
 }
@@ -314,8 +333,9 @@ async function enforceRbac(
       );
     }
     if (isAdminWritePath(path) && role !== "admin") {
-      // Allow creating orgs for authenticated reviewers
-      if (path === "/v1/orgs" && method === "POST" && (role === "reviewer" || role === "admin")) {
+      // Self-service org create (SaaS onboarding) — any authenticated non-viewer write role
+      // Viewers may also create their first org (new IdP signups default to reviewer, but be open)
+      if (path === "/v1/orgs" && method === "POST") {
         return next();
       }
       // Allow renaming own org when org membership is admin/owner
@@ -345,6 +365,8 @@ declare module "hono" {
     orgId?: string;
     orgIdRequested?: string;
     orgRole?: OrgRole | string;
+    /** True when the user is authenticated but has zero org memberships */
+    needsOrg?: boolean;
     user?: PublicAuthUser;
     role?: UserRole | string;
     authMode?: "api_key" | "session" | "dev_open" | "oidc_jwt";

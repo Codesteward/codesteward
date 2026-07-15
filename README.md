@@ -278,7 +278,9 @@ See [`.env.example`](.env.example) for the full template.
 
 ## Status
 
-Self-hosted dual-mode review platform with product UI, Keycloak identity, multi-tenant orgs, webhooks, and horizontal workers. Hosted multi-tenant SaaS packaging is ongoing product work.
+Self-hosted dual-mode review platform with product UI, Keycloak identity, multi-tenant orgs, webhooks, and horizontal workers.
+
+**This release** is free to run under Apache-2.0 (self-host with your own models, keys, and infra). A hosted **SaaS** product and optional **commercial support** are planned; those are separate offerings and are not promised as free forever or as “enterprise included in OSS for life.”
 
 Further reading in-repo:
 
@@ -290,9 +292,14 @@ Further reading in-repo:
 
 ## License
 
-This project is licensed under the **Apache License, Version 2.0** ([`LICENSE`](LICENSE)).
+**Codesteward Review** is licensed under the **Apache License, Version 2.0** — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
-Copyright and attribution details live in [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) — not repeated throughout this README.
+| | |
+|--|--|
+| **This release** | Free under Apache-2.0: use, modify, and self-host. |
+| **What that means** | You get the rights the Apache License grants for **this** codebase as published. |
+| **What we are not promising** | That every future product surface (hosted SaaS, branded enterprise packages, paid support) will always be free or identical to this release. |
+| **Planned (separate)** | Commercial **SaaS** and optional **support** — details later; not required to run this OSS self-host path. |
 
 Codesteward Graph (when used as a dependency or service) is separately distributed under Apache-2.0.
 

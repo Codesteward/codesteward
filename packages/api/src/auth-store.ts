@@ -484,7 +484,8 @@ export class AuthStore {
         passwordHash,
         displayName: input.displayName,
         role: (input.roleHint ?? "reviewer") as DbRole,
-        orgId: input.orgId ?? "local",
+        // Empty home org until onboarding / invite (SaaS multi-tenant)
+        orgId: input.orgId?.trim() || "",
       });
       created = true;
     }

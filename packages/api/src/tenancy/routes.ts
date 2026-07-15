@@ -112,14 +112,87 @@ export function registerTenancyRoutes(app: Hono) {
 
   app.post("/v1/orgs", async (c) => {
     try {
-      const body = (await c.req.json()) as { name?: string; slug?: string };
+      const body = (await c.req.json()) as {
+        name?: string;
+        slug?: string;
+        /** SaaS: free | pro | enterprise (default free) */
+        planId?: string;
+        seats?: number;
+        billingEmail?: string;
+      };
       if (!body.name?.trim()) return c.json({ error: "name required" }, 400);
-      const user = c.get("user") as { id?: string } | undefined;
+      const user = c.get("user") as { id?: string; email?: string } | undefined;
+      // Free plan: multi_org false — block creating a second org without Pro+
+      if (user?.id && user.id !== "api_key") {
+        const existing = await store.listOrgsForUser(user.id);
+        if (existing.length > 0) {
+          const { isOrgEntitled } = await import("../license.js");
+          let allowed = false;
+          for (const o of existing) {
+            if (await isOrgEntitled(o.id, "multiOrg")) {
+              allowed = true;
+              break;
+            }
+          }
+          if (!allowed) {
+            return c.json(
+              {
+                error:
+                  "Multiple organizations require a Pro or Enterprise plan. Upgrade under Billing, or use your existing org.",
+                code: "ORG_LICENSE_REQUIRED",
+                feature: "multi_org",
+              },
+              402,
+            );
+          }
+        }
+      }
       const org = await store.createOrg({
         name: body.name.trim(),
         slug: body.slug,
         ownerUserId: user?.id,
       });
+      // Home org for the creator (shadow user)
+      if (user?.id) {
+        try {
+          await globalAuthStore.updateUser(user.id, { orgId: org.id });
+        } catch {
+          /* non-fatal */
+        }
+      }
+      // SaaS control plane: seed chosen plan (default free)
+      let planId = "free";
+      {
+        const { isBillingConfigured, putOrgSubscription } = await import(
+          "../billing-portal.js"
+        );
+        if (isBillingConfigured()) {
+          const requested = (body.planId ?? "free").toLowerCase().trim();
+          planId =
+            requested === "pro" || requested === "enterprise" || requested === "free"
+              ? requested
+              : "free";
+          const seats =
+            typeof body.seats === "number" && body.seats > 0
+              ? body.seats
+              : planId === "enterprise"
+                ? 50
+                : planId === "pro"
+                  ? 10
+                  : 5;
+          const ok = await putOrgSubscription(org.id, {
+            planId,
+            seats,
+            customerName: org.name,
+            billingEmail: body.billingEmail?.trim() || user?.email,
+            status: planId === "free" ? "active" : "trialing",
+          });
+          if (!ok) {
+            console.warn("[orgs] billing plan seed failed for", org.id, planId);
+            planId = "free";
+          }
+        }
+      }
       // Keycloak SoT: mirror product org as /orgs/{slug} group (required in keycloak mode)
       {
         const { isKeycloakIdentityMode } = await import("../identity/mode.js");
@@ -158,7 +231,18 @@ export function registerTenancyRoutes(app: Hono) {
       } catch {
         /* ignore */
       }
-      return c.json({ org }, 201);
+      return c.json(
+        {
+          org,
+          plan: process.env.STEW_BILLING_URL ? planId : undefined,
+          note: process.env.STEW_BILLING_URL
+            ? planId === "free"
+              ? "Organization created on Free. Manage plans under Billing."
+              : `Organization created on ${planId} (trialing until checkout is wired). Manage under Billing.`
+            : undefined,
+        },
+        201,
+      );
     } catch (err) {
       return orgErrorResponse(c, err);
     }
@@ -240,6 +324,23 @@ export function registerTenancyRoutes(app: Hono) {
         authMode: c.get("authMode") as string,
         minRole: "admin",
       });
+      // New member (not already in org) counts against seat limit
+      const existingMember = await store.getMembership(orgId, userId);
+      if (!existingMember) {
+        try {
+          const { requireOrgSeatAvailable } = await import("../license.js");
+          await requireOrgSeatAvailable(orgId, 1);
+        } catch (err) {
+          const e = err as Error & { status?: number; code?: string };
+          if (e.status === 402) {
+            return c.json(
+              { error: e.message, code: e.code ?? "SEAT_LIMIT" },
+              402,
+            );
+          }
+          throw err;
+        }
+      }
       const body = (await c.req.json()) as { role?: OrgRole };
       if (!body.role) return c.json({ error: "role required" }, 400);
       // Keycloak SoT: mirror role to realm roles first (login/RBAC SoT)
@@ -327,6 +428,19 @@ export function registerTenancyRoutes(app: Hono) {
         authMode: c.get("authMode") as string,
         minRole: "admin",
       });
+      try {
+        const { requireOrgSeatAvailable } = await import("../license.js");
+        await requireOrgSeatAvailable(orgId, 1);
+      } catch (err) {
+        const e = err as Error & { status?: number; code?: string };
+        if (e.status === 402) {
+          return c.json(
+            { error: e.message, code: e.code ?? "SEAT_LIMIT" },
+            402,
+          );
+        }
+        throw err;
+      }
       const body = (await c.req.json()) as {
         email?: string;
         role?: OrgRole;
@@ -516,8 +630,11 @@ export function registerTenancyRoutes(app: Hono) {
   app.get("/v1/scm/github/install", async (c) => {
     const orgId = c.req.query("orgId") ?? c.get("orgId") ?? "local";
     const cfg = await store.getGitHubAppConfig(orgId);
-    const appId = cfg?.appId ?? process.env.GITHUB_APP_ID;
-    const slug = cfg?.slug ?? process.env.GITHUB_APP_SLUG;
+    const platform = await import("../platform-github-app-store.js").then((m) =>
+      m.resolvePlatformGithubAppPolicy(),
+    );
+    const appId = platform.appId ?? cfg?.appId ?? process.env.GITHUB_APP_ID;
+    const slug = platform.slug ?? cfg?.slug ?? process.env.GITHUB_APP_SLUG;
     const { signState } = await import("../signed-state.js");
     const user = c.get("user") as { id?: string } | undefined;
     const state = signState({ orgId, userId: user?.id ?? null, n: Math.random().toString(36).slice(2) });
@@ -680,16 +797,60 @@ export function registerTenancyRoutes(app: Hono) {
         orgId?: string;
         slug?: string;
       };
-      if (!body.appId) return c.json({ error: "appId required" }, 400);
-      if (!body.privateKeyPem && !body.privateKeyRef) {
-        return c.json({ error: "privateKeyPem or privateKeyRef required" }, 400);
-      }
       const orgId = body.orgId ?? c.get("orgId") ?? "local";
       const user = c.get("user") as { id?: string } | undefined;
       await store.assertMembership(user?.id, orgId, {
         authMode: c.get("authMode") as string,
         minRole: "admin",
       });
+      // Platform-enforced App: orgs may only register installation IDs, not upload PEMs
+      try {
+        const { assertOrgMayConfigureGithubApp, resolvePlatformGithubAppPolicy } =
+          await import("../platform-github-app-store.js");
+        const platform = await resolvePlatformGithubAppPolicy();
+        if (platform.enforce && platform.configured) {
+          if (body.privateKeyPem || body.privateKeyRef || body.appId) {
+            // Allow installation-only upserts without PEM when platform App is set
+            if (!body.installationId) {
+              await assertOrgMayConfigureGithubApp();
+            }
+            // installation-only path below uses platform credentials
+            if (body.installationId && !body.privateKeyPem && !body.privateKeyRef) {
+              await store.upsertInstallation({
+                tenantId: "local",
+                orgId: String(orgId),
+                provider: "github",
+                installationId: String(body.installationId),
+                accountLogin: body.accountLogin || "unknown",
+                accountType: "Organization",
+                baseUrl: body.baseUrl || platform.baseUrl,
+                status: "active",
+                authMode: "github_app",
+              });
+              return c.json({
+                ok: true,
+                authMode: "github_app",
+                configured: true,
+                installationReady: true,
+                platformEnforced: true,
+                note: "Installation linked to the platform GitHub App.",
+                installUrl: `/v1/scm/github/install?orgId=${encodeURIComponent(String(orgId))}`,
+              });
+            }
+            await assertOrgMayConfigureGithubApp();
+          }
+        }
+      } catch (err) {
+        const e = err as Error & { status?: number; code?: string };
+        if (e.status === 403) {
+          return c.json({ error: e.message, code: e.code }, 403);
+        }
+        throw err;
+      }
+      if (!body.appId) return c.json({ error: "appId required" }, 400);
+      if (!body.privateKeyPem && !body.privateKeyRef) {
+        return c.json({ error: "privateKeyPem or privateKeyRef required" }, 400);
+      }
       await store.saveGitHubAppConfig(
         {
           appId: body.appId,
@@ -803,6 +964,10 @@ export function registerTenancyRoutes(app: Hono) {
     const ghInstalls = installs.filter((i) => i.provider === "github");
     const { orgHasGithubAuth } = await import("../org-scm.js");
     const auth = await orgHasGithubAuth(String(orgId));
+    const { resolvePlatformGithubAppPolicy, maskPlatformGithubApp, getPlatformGithubApp } =
+      await import("../platform-github-app-store.js");
+    const platform = await resolvePlatformGithubAppPolicy();
+    const platformStored = await getPlatformGithubApp();
     // PAT may live in connector store (not process.env) after UI save
     let patInConnector = false;
     try {
@@ -823,12 +988,28 @@ export function registerTenancyRoutes(app: Hono) {
             : "none",
       githubAppConfigured:
         Boolean(appCfg?.privateKeyConfigured || appCfg?.appId) ||
+        platform.configured ||
         auth.mode === "github_app" ||
         auth.mode === "app_pending_install",
       installationReady: auth.mode === "github_app",
       patConfigured: patInConnector || Boolean(process.env.GITHUB_TOKEN),
       patDevOnly: true,
-      appId: (appCfg?.appId as string) ?? process.env.GITHUB_APP_ID ?? null,
+      patAllowed: !platform.enforce || platform.allowOrgPat,
+      orgCanConfigureApp: !(platform.enforce && platform.configured),
+      platformGithubApp: {
+        enforce: platform.enforce,
+        configured: platform.configured,
+        source: platform.source,
+        appId: platform.appId ?? null,
+        slug: platform.slug ?? null,
+        allowOrgPat: platform.allowOrgPat,
+        public: maskPlatformGithubApp(platformStored),
+      },
+      appId:
+        platform.appId ??
+        (appCfg?.appId as string) ??
+        process.env.GITHUB_APP_ID ??
+        null,
       installations: ghInstalls.map((i) => ({
         id: i.id,
         installationId: i.installationId,
@@ -837,8 +1018,9 @@ export function registerTenancyRoutes(app: Hono) {
         status: i.status,
       })),
       detail: auth.detail,
-      enterpriseRecommendation:
-        "Use a GitHub App with installation tokens. Personal Access Tokens are for local dev only.",
+      enterpriseRecommendation: platform.enforce
+        ? "This install enforces a shared platform GitHub App. Install that App on your GitHub org — do not paste PEMs or PATs."
+        : "Use a GitHub App with installation tokens. Personal Access Tokens are for local dev only.",
       installPath: `/v1/scm/github/install?orgId=${encodeURIComponent(String(orgId))}`,
       docs: "https://docs.github.com/en/apps/creating-github-apps/about-creating-github-apps/deciding-when-to-build-a-github-app",
     });

@@ -758,7 +758,9 @@ label {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.nav a {
+/* Links + external actions (e.g. Billing portal button) share the same geometry */
+.nav a,
+.nav button.nav-item {
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -768,14 +770,26 @@ label {
   text-decoration: none;
   font-size: 0.875rem;
   font-weight: 500;
+  font-family: inherit;
+  line-height: inherit;
   transition:
     background 0.15s var(--ease),
     color 0.15s var(--ease);
   border: 1px solid transparent;
   min-height: 2.5rem;
+  width: 100%;
+  box-sizing: border-box;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  margin: 0;
+  /* Reset UA button padding so label lines up with <a> items */
+  appearance: none;
+  -webkit-appearance: none;
 }
 /* Lucide nav glyphs — large enough to read stroke detail at a glance */
-.nav a .nav-icon {
+.nav a .nav-icon,
+.nav button.nav-item .nav-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -785,16 +799,19 @@ label {
   color: var(--text-secondary);
   opacity: 1;
 }
-.nav a .nav-icon svg {
+.nav a .nav-icon svg,
+.nav button.nav-item .nav-icon svg {
   width: 1.375rem;
   height: 1.375rem;
   display: block;
 }
 .nav a:hover .nav-icon,
-.nav a.active .nav-icon {
+.nav a.active .nav-icon,
+.nav button.nav-item:hover .nav-icon {
   color: var(--accent);
 }
-.nav a:hover {
+.nav a:hover,
+.nav button.nav-item:hover {
   background: var(--bg-hover);
   color: var(--text);
   text-decoration: none;

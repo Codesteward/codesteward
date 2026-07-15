@@ -4,6 +4,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   api,
   getOrgId,
+  isPlatformOperator,
   ORG_CHANGED_EVENT,
   setOrgId,
   setSessionToken,
@@ -29,55 +30,110 @@ type NavItem = {
   mode?: string;
 };
 
-const groups: { label: string; items: NavItem[] }[] = [
-  {
-    label: "Overview",
-    items: [
-      { to: "/dashboard", label: "Dashboard", icon: "dashboard", end: true },
-      { to: "/analytics", label: "Analytics", icon: "analytics" },
-    ],
-  },
-  {
-    label: "Review",
-    items: [
-      { to: "/sessions?mode=gate", label: "Gate", icon: "gate", mode: "gate" },
-      { to: "/sessions?mode=steward", label: "Steward", icon: "steward", mode: "steward" },
-      { to: "/findings", label: "Findings", icon: "findings" },
-      { to: "/reports", label: "Reports", icon: "reports" },
-      { to: "/prs", label: "PRs", icon: "prs" },
-      { to: "/cross-repo", label: "Cross-Repo", icon: "crossRepo" },
-    ],
-  },
-  {
-    label: "Trust",
-    items: [{ to: "/learnings", label: "Learnings", icon: "learnings" }],
-  },
-  {
-    label: "Tenant",
-    items: [
-      { to: "/connectors", label: "Connectors", icon: "connectors" },
-      { to: "/members", label: "Members", icon: "members" },
-      { to: "/models", label: "Models", icon: "models" },
-      { to: "/prompts", label: "Prompts", icon: "prompts" },
-      { to: "/policy", label: "Policy", icon: "policy" },
-      { to: "/settings/organization", label: "Organization", icon: "org" },
-    ],
-  },
-  {
-    label: "You & install",
-    items: [
-      { to: "/settings/account", label: "Account", icon: "account" },
-      { to: "/settings/platform", label: "Platform", icon: "platform" },
-      // end: true — otherwise /settings is a prefix match and stays active on
-      // /settings/platform, /settings/account, /settings/organization
-      { to: "/settings", label: "Settings hub", icon: "settings", end: true },
-    ],
-  },
-];
+function buildNavGroups(opts: {
+  saasBilling: boolean;
+  platformOk: boolean;
+}): { label: string; items: NavItem[] }[] {
+  const tenantItems: NavItem[] = [
+    { to: "/connectors", label: "Connectors", icon: "connectors" },
+    { to: "/members", label: "Members", icon: "members" },
+    { to: "/models", label: "Models", icon: "models" },
+    { to: "/prompts", label: "Prompts", icon: "prompts" },
+    { to: "/policy", label: "Policy", icon: "policy" },
+    { to: "/settings/organization", label: "Organization", icon: "org" },
+  ];
+  if (opts.saasBilling) {
+    // External portal — handled specially in NavItems (not a router path)
+    tenantItems.push({ to: "__billing_portal__", label: "Billing", icon: "billing" });
+  }
+  const youItems: NavItem[] = [
+    { to: "/settings/account", label: "Account", icon: "account" },
+  ];
+  // Hide Platform from non-operators (do not show a locked/warning entry)
+  if (opts.platformOk) {
+    youItems.push({ to: "/settings/platform", label: "Platform", icon: "platform" });
+  }
+  youItems.push({
+    // end: true — otherwise /settings is a prefix match and stays active on
+    // /settings/platform, /settings/account, /settings/organization
+    to: "/settings",
+    label: "Settings hub",
+    icon: "settings",
+    end: true,
+  });
+  return [
+    {
+      label: "Overview",
+      items: [
+        { to: "/dashboard", label: "Dashboard", icon: "dashboard", end: true },
+        { to: "/analytics", label: "Analytics", icon: "analytics" },
+      ],
+    },
+    {
+      label: "Review",
+      items: [
+        { to: "/sessions?mode=gate", label: "Gate", icon: "gate", mode: "gate" },
+        { to: "/sessions?mode=steward", label: "Steward", icon: "steward", mode: "steward" },
+        { to: "/findings", label: "Findings", icon: "findings" },
+        { to: "/reports", label: "Reports", icon: "reports" },
+        { to: "/prs", label: "PRs", icon: "prs" },
+        { to: "/cross-repo", label: "Cross-Repo", icon: "crossRepo" },
+      ],
+    },
+    {
+      label: "Trust",
+      items: [{ to: "/learnings", label: "Learnings", icon: "learnings" }],
+    },
+    {
+      label: "Tenant",
+      items: tenantItems,
+    },
+    {
+      label: "You & install",
+      items: youItems,
+    },
+  ];
+}
 
 function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   const location = useLocation();
   const modeParam = new URLSearchParams(location.search).get("mode");
+  const toast = useToast();
+  const [saasBilling, setSaasBilling] = useState(false);
+  const [platformOk, setPlatformOk] = useState(false);
+
+  useEffect(() => {
+    void api
+      .billingStatus()
+      .then((s) => setSaasBilling(Boolean(s.configured)))
+      .catch(() => setSaasBilling(false));
+    void api
+      .authMe()
+      .then((r) => setPlatformOk(isPlatformOperator(r.user, r.authMode)))
+      .catch(() => setPlatformOk(false));
+  }, []);
+
+  async function openBillingPortal() {
+    onNavigate?.();
+    try {
+      // Same tab so “Back to app” returns here instead of stacking another platform tab
+      const returnTo =
+        typeof window !== "undefined"
+          ? `${window.location.origin}${window.location.pathname}${window.location.search || ""}` ||
+            `${window.location.origin}/settings/organization`
+          : undefined;
+      const res = await api.openBillingPortal({ returnTo });
+      if (res.url) {
+        window.location.assign(res.url);
+        return;
+      }
+      toast.error("Billing portal URL unavailable");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  const groups = buildNavGroups({ saasBilling, platformOk });
 
   return (
     <>
@@ -85,30 +141,45 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
         <div key={g.label}>
           <div className="nav-section">{g.label}</div>
           <nav className="nav" style={{ flex: "unset", overflow: "visible" }}>
-            {g.items.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                onClick={onNavigate}
-                className={({ isActive }) => {
-                  if (item.mode) {
-                    const pathOk = location.pathname === "/sessions";
-                    return pathOk && modeParam === item.mode ? "active" : undefined;
-                  }
-                  // Avoid both Gate/Steward and plain /sessions lighting up
-                  if (item.to === "/sessions" || item.to.startsWith("/sessions?")) {
-                    return undefined;
-                  }
-                  return isActive ? "active" : undefined;
-                }}
-              >
-                <span className="nav-icon" aria-hidden>
-                  <NavIcon name={item.icon} size={22} />
-                </span>
-                {item.label}
-              </NavLink>
-            ))}
+            {g.items.map((item) =>
+              item.to === "__billing_portal__" ? (
+                <button
+                  key={item.to}
+                  type="button"
+                  className="nav-item"
+                  onClick={() => void openBillingPortal()}
+                  title="Open cloud billing portal"
+                >
+                  <span className="nav-icon" aria-hidden>
+                    <NavIcon name={item.icon} size={22} />
+                  </span>
+                  {item.label}
+                </button>
+              ) : (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  onClick={onNavigate}
+                  className={({ isActive }) => {
+                    if (item.mode) {
+                      const pathOk = location.pathname === "/sessions";
+                      return pathOk && modeParam === item.mode ? "active" : undefined;
+                    }
+                    // Avoid both Gate/Steward and plain /sessions lighting up
+                    if (item.to === "/sessions" || item.to.startsWith("/sessions?")) {
+                      return undefined;
+                    }
+                    return isActive ? "active" : undefined;
+                  }}
+                >
+                  <span className="nav-icon" aria-hidden>
+                    <NavIcon name={item.icon} size={22} />
+                  </span>
+                  {item.label}
+                </NavLink>
+              ),
+            )}
           </nav>
         </div>
       ))}
@@ -124,15 +195,19 @@ function OrgSwitcher() {
   function applyOrgList(list: OrgSummary[], preferId?: string | null) {
     setOrgs(list);
     const stored = preferId ?? getOrgId();
+    if (list.length === 0) {
+      setCurrent("");
+      if (stored) setOrgId(null);
+      return;
+    }
     if (stored && list.some((o) => o.id === stored)) {
       setCurrent(stored);
       return;
     }
-    if (list.length > 0) {
-      const first = list[0]!.id;
-      setCurrent(first);
-      if (!stored) setOrgId(first);
-    }
+    // Stale cache (e.g. "local") — switch to first real membership
+    const first = list[0]!.id;
+    setCurrent(first);
+    setOrgId(first);
   }
 
   useEffect(() => {

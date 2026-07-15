@@ -15,7 +15,6 @@
  */
 import type { Context, Hono } from "hono";
 import { globalAuthStore } from "../auth-store.js";
-import { isEntitled } from "../license.js";
 import {
   createScimGroup,
   deleteScimGroup,
@@ -70,51 +69,11 @@ function pageParams(c: Context): { startIndex: number; count: number } {
   return { startIndex, count };
 }
 
-function licenseGate(): AuthFail | null {
-  const enforced =
-    process.env.STEW_LICENSE_ENFORCE === "1" || process.env.NODE_ENV === "production";
-  if (enforced && !isEntitled("scim")) {
-    return {
-      ok: false,
-      status: 402,
-      body: scimError(402, "SCIM requires enterprise license entitlement", "invalidValue"),
-    };
-  }
-  if (!isEntitled("scim") && process.env.STEW_SCIM_ALLOW_WITHOUT_LICENSE !== "1") {
-    // Still allow when tokens can be minted under entitled license; without entitlement block
-    // soft: allow if not production unless explicitly denied
-  }
-  return null;
-}
-
 /**
  * Authenticate SCIM request and bind to a single org.
  * @param pathOrgKey — from /scim/v2/orgs/:orgKey/… (preferred multi-tenant)
  */
 async function scimAuth(c: Context, pathOrgKey?: string): Promise<AuthOk | AuthFail> {
-  const lic = licenseGate();
-  if (lic && process.env.STEW_SCIM_ALLOW_WITHOUT_LICENSE !== "1") {
-    if (!isEntitled("scim")) {
-      // Non-enforced dev: continue only if token present later; still 402 when enforced handled above
-      if (
-        process.env.STEW_LICENSE_ENFORCE === "1" ||
-        process.env.NODE_ENV === "production"
-      ) {
-        return lic;
-      }
-    }
-  }
-  if (
-    (process.env.STEW_LICENSE_ENFORCE === "1" || process.env.NODE_ENV === "production") &&
-    !isEntitled("scim")
-  ) {
-    return {
-      ok: false,
-      status: 402,
-      body: scimError(402, "SCIM requires enterprise license entitlement"),
-    };
-  }
-
   const auth = c.req.header("Authorization") ?? c.req.header("authorization") ?? "";
   const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   if (!bearer) {
@@ -179,6 +138,22 @@ async function scimAuth(c: Context, pathOrgKey?: string): Promise<AuthOk | AuthF
     const org = await resolveOrgKey(resolved.orgId);
     orgKey = org?.slug || resolved.orgId;
     orgId = org?.id || resolved.orgId;
+  }
+
+  // Org plan gate (SaaS Free/Pro must not provision). Escape: STEW_SCIM_ALLOW_WITHOUT_LICENSE=1
+  if (process.env.STEW_SCIM_ALLOW_WITHOUT_LICENSE !== "1") {
+    const { isOrgEntitled } = await import("../license.js");
+    if (!(await isOrgEntitled(String(orgId), "scim"))) {
+      return {
+        ok: false,
+        status: 402,
+        body: scimError(
+          402,
+          "SCIM provisioning requires an Enterprise plan for this organization",
+          "invalidValue",
+        ),
+      };
+    }
   }
 
   const locationBase = `${publicApiBase()}/scim/v2/orgs/${encodeURIComponent(orgKey)}`;

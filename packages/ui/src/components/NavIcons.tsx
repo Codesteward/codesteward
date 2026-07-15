@@ -5,6 +5,7 @@ import {
   Brain,
   BrainCircuit,
   Building2,
+  CreditCard,
   FileDiff,
   GitBranchPlus,
   GitFork,
@@ -57,6 +58,7 @@ const MAP: Record<string, LucideIcon> = {
   policy: ScrollText,
   settings: Settings,
   org: Building2,
+  billing: CreditCard,
   account: UserRound,
   platform: Server,
   /** Diff viewer */

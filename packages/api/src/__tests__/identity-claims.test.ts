@@ -40,10 +40,9 @@ describe("identity claims", () => {
     assert.ok(m.some((x) => x.key === "local"));
   });
 
-  it("defaults to local when no org claims", () => {
+  it("returns no memberships when no org claims (SaaS onboarding)", () => {
     const m = mapOrgMemberships({ sub: "1", email: "a@b.com" });
-    assert.equal(m.length, 1);
-    assert.equal(m[0]!.key, "local");
+    assert.equal(m.length, 0);
   });
 
   it("reads email", () => {

@@ -2,7 +2,11 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useToast } from "../../components/Toast";
 import { Badge } from "../../components/ui";
-import { api, type RuntimeConfigEntry } from "../../lib/api";
+import {
+  api,
+  describePlanGate,
+  type RuntimeConfigEntry,
+} from "../../lib/api";
 import {
   getThemePreference,
   setThemePreference,
@@ -235,6 +239,7 @@ export function RuntimeConfigPanel() {
 }
 
 export function OrgAuditLog() {
+  const toast = useToast();
   const [events, setEvents] = useState<
     Array<{
       id: string;
@@ -250,10 +255,12 @@ export function OrgAuditLog() {
   >([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [planGate, setPlanGate] = useState<ReturnType<typeof describePlanGate>>(null);
   const [actionPrefix, setActionPrefix] = useState("");
   const [total, setTotal] = useState(0);
   const [retentionDays, setRetentionDays] = useState(365);
   const [offset, setOffset] = useState(0);
+  const [portalBusy, setPortalBusy] = useState(false);
   const limit = 50;
 
   function load(nextOffset = offset) {
@@ -272,8 +279,14 @@ export function OrgAuditLog() {
         setRetentionDays(r.retentionDays ?? 365);
         setOffset(nextOffset);
         setErr(null);
+        setPlanGate(null);
       })
-      .catch((e: Error) => setErr(e.message))
+      .catch((e: Error) => {
+        const gate = describePlanGate(e);
+        setPlanGate(gate);
+        setErr(gate ? null : e.message);
+        setEvents([]);
+      })
       .finally(() => setLoading(false));
   }
 
@@ -281,6 +294,65 @@ export function OrgAuditLog() {
     load(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- initial
   }, []);
+
+  async function openBilling() {
+    setPortalBusy(true);
+    try {
+      const res = await api.openBillingPortal({
+        returnTo:
+          typeof window !== "undefined"
+            ? `${window.location.origin}/settings/organization`
+            : undefined,
+      });
+      if (res.url) window.location.assign(res.url);
+      else toast.error("Billing portal unavailable");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPortalBusy(false);
+    }
+  }
+
+  // Plan-gated: friendly empty card (never show raw 402 JSON)
+  if (planGate) {
+    const badge =
+      planGate.planRequired === "enterprise"
+        ? "Enterprise"
+        : planGate.planRequired === "pro"
+          ? "Pro+"
+          : "Upgrade";
+    return (
+      <div className="card stack">
+        <div className="card-header">
+          <h3>Admin audit log</h3>
+          <Badge tone="nit">{badge}</Badge>
+        </div>
+        <p style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600, lineHeight: 1.4 }}>
+          {planGate.title}
+        </p>
+        <p className="muted" style={{ margin: 0, fontSize: "0.9rem", lineHeight: 1.55 }}>
+          {planGate.body}
+        </p>
+        <p className="muted" style={{ margin: 0, fontSize: "0.85rem", lineHeight: 1.5 }}>
+          Durable admin audit trails (who changed members, connectors, SCIM, and more) are included
+          on Pro and Enterprise. Open Billing to upgrade this organization.
+        </p>
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="primary sm"
+            disabled={portalBusy}
+            onClick={() => void openBilling()}
+          >
+            {portalBusy ? "Opening…" : "Upgrade in Billing"}
+          </button>
+          <button type="button" className="ghost sm" onClick={() => load(0)}>
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card stack">
@@ -311,8 +383,9 @@ export function OrgAuditLog() {
                   a.download = `audit-${r.orgId}.ndjson`;
                   a.click();
                   URL.revokeObjectURL(url);
-                } catch {
-                  /* ignore */
+                } catch (ex) {
+                  const gate = describePlanGate(ex);
+                  if (gate) toast.error(gate.body);
                 }
               })();
             }}
@@ -330,7 +403,11 @@ export function OrgAuditLog() {
                   load(0);
                   if (r.deleted === 0) setErr("No events past retention to prune");
                 })
-                .catch((e: Error) => setErr(e.message));
+                .catch((e: Error) => {
+                  const gate = describePlanGate(e);
+                  if (gate) setPlanGate(gate);
+                  else setErr(e.message);
+                });
             }}
           >
             Prune old
@@ -442,6 +519,7 @@ export function OrgScimPanel() {
   const [freshToken, setFreshToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [portalBusy, setPortalBusy] = useState(false);
 
   function load() {
     setLoading(true);
@@ -459,7 +537,29 @@ export function OrgScimPanel() {
     void load();
   }, []);
 
+  async function openBilling() {
+    setPortalBusy(true);
+    try {
+      const res = await api.openBillingPortal({
+        returnTo:
+          typeof window !== "undefined"
+            ? `${window.location.origin}/settings/organization`
+            : undefined,
+      });
+      if (res.url) window.location.assign(res.url);
+      else toast.error("Billing portal unavailable");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPortalBusy(false);
+    }
+  }
+
   async function mint() {
+    if (status && !status.entitled) {
+      toast.error("SCIM requires an Enterprise plan");
+      return;
+    }
     setBusy(true);
     setFreshToken(null);
     try {
@@ -468,7 +568,8 @@ export function OrgScimPanel() {
       toast.success("SCIM token minted — copy it now; it won’t be shown again");
       await load();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const gate = describePlanGate(e);
+      const msg = gate?.body ?? (e instanceof Error ? e.message : String(e));
       setErr(msg);
       toast.error(msg);
     } finally {
@@ -502,6 +603,43 @@ export function OrgScimPanel() {
   }
 
   const tokens = status?.tokens ?? [];
+  const entitled = status?.entitled === true;
+
+  // Plan-gated: no mint UI (Enterprise only)
+  if (!loading && status && !entitled) {
+    return (
+      <div className="card stack">
+        <div className="card-header">
+          <h3>SCIM directory provisioning</h3>
+          <Badge tone="nit">Enterprise</Badge>
+        </div>
+        <p style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600, lineHeight: 1.4 }}>
+          Enterprise plan required
+        </p>
+        <p className="muted" style={{ margin: 0, fontSize: "0.9rem", lineHeight: 1.55 }}>
+          SCIM provisioning requires an Enterprise plan. Directory sync (Okta, Entra, and other
+          IdPs) is not available on Free or Pro.
+        </p>
+        <p className="muted" style={{ margin: 0, fontSize: "0.85rem", lineHeight: 1.5 }}>
+          Upgrade under Billing to unlock per-org SCIM base URLs and bearer tokens for this
+          organization.
+        </p>
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="primary sm"
+            disabled={portalBusy}
+            onClick={() => void openBilling()}
+          >
+            {portalBusy ? "Opening…" : "Upgrade in Billing"}
+          </button>
+          <button type="button" className="ghost sm" onClick={() => void load()}>
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card stack">
@@ -591,7 +729,7 @@ export function OrgScimPanel() {
               <button
                 type="button"
                 className="primary sm"
-                disabled={busy}
+                disabled={busy || !entitled}
                 onClick={() => void mint()}
               >
                 {busy ? "Working…" : "Mint token"}
@@ -957,6 +1095,219 @@ export function OrgLangfusePanel() {
 }
 
 /** Install-wide Langfuse — Platform settings only. Dual-writes with org when both set. */
+/** Install-wide GitHub App — enforce shared App for all tenants (SaaS / enterprise self-host). */
+export function PlatformGithubAppPanel() {
+  const toast = useToast();
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [enforce, setEnforce] = useState(false);
+  const [allowOrgPat, setAllowOrgPat] = useState(false);
+  const [appId, setAppId] = useState("");
+  const [slug, setSlug] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [privateKeyPem, setPrivateKeyPem] = useState("");
+  const [privateKeyRef, setPrivateKeyRef] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [configured, setConfigured] = useState(false);
+  const [source, setSource] = useState("none");
+  const [note, setNote] = useState<string | null>(null);
+  const [pemSet, setPemSet] = useState(false);
+
+  function load() {
+    setLoading(true);
+    return api
+      .platformGithubApp()
+      .then((r) => {
+        setEnforce(Boolean(r.policy.enforce || r.config?.enforce));
+        setAllowOrgPat(Boolean(r.policy.allowOrgPat || r.config?.allowOrgPat));
+        setAppId(r.config?.appId ?? r.policy.appId ?? "");
+        setSlug(r.config?.slug ?? r.policy.slug ?? "");
+        setClientId(r.config?.clientId ?? "");
+        setBaseUrl(r.config?.baseUrl ?? "");
+        setPrivateKeyRef(r.config?.privateKeyRef ?? "");
+        setPemSet(Boolean(r.config?.privateKeyConfigured));
+        setConfigured(r.policy.configured);
+        setSource(r.policy.source);
+        setNote(r.note ?? null);
+        setPrivateKeyPem("");
+        setWebhookSecret("");
+      })
+      .catch((e: Error) => toast.error(e.message))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  async function save() {
+    setBusy(true);
+    try {
+      const res = await api.putPlatformGithubApp({
+        enforce,
+        allowOrgPat,
+        appId: appId.trim() || undefined,
+        slug: slug.trim() || undefined,
+        clientId: clientId.trim() || undefined,
+        baseUrl: baseUrl.trim() || undefined,
+        privateKeyRef: privateKeyRef.trim() || undefined,
+        privateKeyPem: privateKeyPem.trim() || undefined,
+        webhookSecret: webhookSecret.trim() || undefined,
+      });
+      toast.success(res.note ?? "Platform GitHub App saved");
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clear() {
+    if (!confirm("Remove platform GitHub App config and turn off enforce?")) return;
+    setBusy(true);
+    try {
+      await api.putPlatformGithubApp({ clear: true });
+      toast.success("Platform GitHub App cleared");
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card stack">
+      <h3>GitHub App — platform (optional enforce)</h3>
+      <p className="muted" style={{ margin: 0, fontSize: "0.88rem", lineHeight: 1.55 }}>
+        SaaS and enterprise self-host: configure one GitHub App for the whole install. When{" "}
+        <strong>Enforce</strong> is on, every org must install <em>this</em> App on their GitHub
+        account — they cannot upload their own App PEM or (by default) a personal access token.
+      </p>
+      {loading ? (
+        <p className="muted">Loading…</p>
+      ) : (
+        <>
+          <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+            <Badge tone={enforce ? "ok" : "nit"}>{enforce ? "enforced" : "optional"}</Badge>
+            <Badge tone={configured ? "ok" : "warn"}>
+              {configured ? `credentials (${source})` : "not configured"}
+            </Badge>
+            {pemSet && <Badge tone="ok">PEM stored</Badge>}
+          </div>
+          {note && (
+            <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>
+              {note}
+            </p>
+          )}
+          <label className="row" style={{ gap: 8, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={enforce}
+              onChange={(e) => setEnforce(e.target.checked)}
+            />
+            <span>
+              <strong>Enforce</strong> platform GitHub App for all orgs
+            </span>
+          </label>
+          <label className="row" style={{ gap: 8, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={allowOrgPat}
+              onChange={(e) => setAllowOrgPat(e.target.checked)}
+              disabled={!enforce}
+            />
+            <span className="muted" style={{ fontSize: "0.88rem" }}>
+              Allow org PATs while enforced (break-glass; off by default)
+            </span>
+          </label>
+          <div className="grid cols-2">
+            <div className="field" style={{ margin: 0 }}>
+              <label>App ID</label>
+              <input
+                className="mono"
+                value={appId}
+                onChange={(e) => setAppId(e.target.value)}
+                placeholder="123456"
+              />
+            </div>
+            <div className="field" style={{ margin: 0 }}>
+              <label>App slug</label>
+              <input
+                className="mono"
+                value={slug}
+                onChange={(e) => setSlug(e.target.value)}
+                placeholder="codesteward"
+              />
+            </div>
+            <div className="field" style={{ margin: 0 }}>
+              <label>Client ID (optional)</label>
+              <input
+                className="mono"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+              />
+            </div>
+            <div className="field" style={{ margin: 0 }}>
+              <label>API base URL (optional)</label>
+              <input
+                className="mono"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="https://api.github.com"
+              />
+            </div>
+          </div>
+          <div className="field">
+            <label>Private key PEM (leave blank to keep existing)</label>
+            <textarea
+              className="mono"
+              rows={4}
+              value={privateKeyPem}
+              onChange={(e) => setPrivateKeyPem(e.target.value)}
+              placeholder={"-----BEGIN RSA PRIVATE KEY-----\\n…"}
+            />
+          </div>
+          <div className="field">
+            <label>Or private key ref (env:VAR)</label>
+            <input
+              className="mono"
+              value={privateKeyRef}
+              onChange={(e) => setPrivateKeyRef(e.target.value)}
+              placeholder="env:GITHUB_APP_PRIVATE_KEY"
+            />
+          </div>
+          <div className="field">
+            <label>Webhook secret (optional)</label>
+            <input
+              type="password"
+              className="mono"
+              value={webhookSecret}
+              onChange={(e) => setWebhookSecret(e.target.value)}
+              placeholder="leave blank to keep"
+              autoComplete="off"
+            />
+          </div>
+          <div className="row" style={{ gap: 8 }}>
+            <button type="button" className="primary sm" disabled={busy} onClick={() => void save()}>
+              {busy ? "Saving…" : "Save platform GitHub App"}
+            </button>
+            <button type="button" className="ghost sm" disabled={busy} onClick={() => void clear()}>
+              Clear
+            </button>
+          </div>
+          <p className="muted" style={{ margin: 0, fontSize: "0.8rem" }}>
+            Env bootstrap: <span className="mono">STEW_PLATFORM_GITHUB_APP_ENFORCE=1</span> with{" "}
+            <span className="mono">GITHUB_APP_ID</span> + PEM when the file store is empty.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function PlatformLangfusePanel() {
   const toast = useToast();
   const [cfg, setCfg] = useState<LangfuseCfg | null>(null);

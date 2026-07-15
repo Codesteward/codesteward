@@ -14,7 +14,7 @@ import { findingsStore, learningStore } from "./shared-stores.js";
 import { globalQueue } from "./queue.js";
 import { globalSessionStore } from "./store.js";
 import { createOrgScmProvider } from "./org-scm.js";
-import { isEntitled, resolveLicense } from "./license.js";
+import { isOrgEntitled, resolveOrgLicense } from "./license.js";
 import { globalConnectorsStore } from "./connectors-store.js";
 
 export type RunJobLog = (msg: string, ...args: unknown[]) => void;
@@ -280,10 +280,39 @@ export async function runReviewJob(
     ? await loadPolicyFromDir(job.repoPath).catch(() => DEFAULT_POLICY)
     : DEFAULT_POLICY;
 
-  // License gates for optional stages / tracing (deny-by-default when enforced)
-  const license = resolveLicense();
-  const allowProve = isEntitled("prove");
-  const allowLangfuse = isEntitled("langfuse");
+  // Org-scoped license gates (SaaS control plane when STEW_BILLING_URL is set)
+  const license = await resolveOrgLicense(orgId);
+  const allowProve = await isOrgEntitled(orgId, "prove");
+  const allowLangfuse = await isOrgEntitled(orgId, "langfuse");
+  const allowThorough = await isOrgEntitled(orgId, "thoroughDiscourse");
+  const allowCrossRepo = await isOrgEntitled(orgId, "crossRepo");
+  // Defense in depth: free plans must not run dual-pass discourse even if the job slipped through
+  if (
+    (job.riskTier === "thorough" || job.depth === "thorough") &&
+    !allowThorough
+  ) {
+    log(
+      `thorough/discourse not entitled for org=${orgId} (tier=${license.tier}); downgrading riskTier to full`,
+    );
+    job = {
+      ...job,
+      riskTier: "full",
+      depth: job.depth === "thorough" ? "normal" : job.depth,
+    };
+    globalSessionStore.update(job.sessionId, {
+      riskTier: "full",
+      depth: job.depth,
+      metadata: {
+        ...(globalSessionStore.get(job.sessionId)?.metadata ?? {}),
+        thoroughBlocked: true,
+        thoroughBlockReason: "org_license_required",
+      },
+    });
+  }
+  if (job.crossRepo && !allowCrossRepo) {
+    log(`cross-repo not entitled for org=${orgId}; disabling fan-out`);
+    job = { ...job, crossRepo: false };
+  }
   // Org + platform Langfuse can both be set → dual-write to both projects
   let langfuseDestinations: import("@codesteward/model-router").LangfuseCredentials[] =
     [];
@@ -338,9 +367,11 @@ export async function runReviewJob(
     job.scm?.provider ?? process.env.SCM_PROVIDER ?? "github";
   const scm = await createOrgScmProvider(orgId, scmProvider);
 
-  const crossRepoLinks = globalSessionStore
-    .listLinks()
-    .filter((l) => l.enabled && ((l as { orgId?: string }).orgId ?? "local") === orgId);
+  const crossRepoLinks = allowCrossRepo
+    ? globalSessionStore
+        .listLinks()
+        .filter((l) => l.enabled && ((l as { orgId?: string }).orgId ?? "local") === orgId)
+    : [];
 
   let promptPack = null as import("@codesteward/agents").OrgPromptPack | null;
   try {

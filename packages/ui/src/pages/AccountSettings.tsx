@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useToast } from "../components/Toast";
 import { Badge, PageHero } from "../components/ui";
-import { api, type AuthUser } from "../lib/api";
+import { api, isPlatformOperator, type AuthUser } from "../lib/api";
 import { AppearancePicker } from "./settings/panels";
 
 export function AccountSettings() {
   const toast = useToast();
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [authMode, setAuthMode] = useState<string | undefined>();
   const [profileName, setProfileName] = useState("");
   const [profileEmail, setProfileEmail] = useState("");
   const [profileBusy, setProfileBusy] = useState(false);
@@ -28,6 +29,7 @@ export function AccountSettings() {
       .authMe()
       .then((r) => {
         setUser(r.user);
+        setAuthMode(r.authMode);
         if (r.user) {
           setProfileName(r.user.displayName || r.user.name || "");
           setProfileEmail(r.user.email || "");
@@ -210,8 +212,13 @@ export function AccountSettings() {
         <div className="card stack">
           <h3>Browser preferences</h3>
           <p className="muted" style={{ fontSize: "0.85rem", margin: "0 0 0.75rem", lineHeight: 1.5 }}>
-            Local reminders only — they do <strong>not</strong> change the API or worker. Use{" "}
-            <Link to="/settings/platform">Platform</Link> for real runtime knobs.
+            Local reminders only — they do <strong>not</strong> change the API or worker.
+            {isPlatformOperator(user, authMode) ? (
+              <>
+                {" "}
+                Use <Link to="/settings/platform">Platform</Link> for real runtime knobs.
+              </>
+            ) : null}
           </p>
           {(
             [

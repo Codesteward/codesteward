@@ -176,7 +176,7 @@ const RISK_TIER_INFO: Record<
   thorough: {
     label: "thorough — deepest + discourse",
     summary:
-      "Maximum depth: more specialist roles, dual-correctness discourse (AGREE/CHALLENGE/CONNECT/SURFACE), and may require a healthy graph / license for thorough discourse.",
+      "Maximum depth: more specialist roles, dual-correctness discourse (AGREE/CHALLENGE/CONNECT/SURFACE). Requires Pro or Enterprise plan (thorough discourse entitlement).",
     specialists: "correctness, security, performance, testing, rules, requirements, discourse",
     extras: "Slowest/costliest. Use for critical paths, regulated releases, or when you need the full audit trail.",
   },
@@ -215,6 +215,9 @@ export function Sessions() {
   const [baseBranch, setBaseBranch] = useState(() => searchParams.get("base") ?? "main");
   const [headBranch, setHeadBranch] = useState(() => searchParams.get("head") ?? "");
   const [showForm, setShowForm] = useState(true);
+  /** Plan entitlements — thorough requires thorough_discourse (Pro+) */
+  const [allowThorough, setAllowThorough] = useState(true);
+  const [planLabel, setPlanLabel] = useState<string | null>(null);
 
   useEffect(() => {
     setMode(modeFromParam(searchParams.get("mode")));
@@ -233,6 +236,32 @@ export function Sessions() {
       setShowForm(false);
     }
   }, [searchParams, location.state]);
+
+  useEffect(() => {
+    const refreshEntitlements = () => {
+      void api
+        .license()
+        .then((r) => {
+          const thorough =
+            r.features?.find((f) => f.id === "thorough_discourse")?.enabled ??
+            Boolean(r.license?.thoroughDiscourse);
+          // When open mode / not enforced, featureMatrix still marks enabled; honor plan when billing is on
+          const open = Boolean(r.openMode || r.license?.openMode);
+          const ok = open || thorough;
+          setAllowThorough(ok);
+          setPlanLabel(r.plan?.id ?? r.license?.tier ?? null);
+          if (!ok) {
+            setRiskTier((cur) => (cur === "thorough" ? "full" : cur));
+          }
+        })
+        .catch(() => {
+          /* keep default; API will 402 if blocked */
+        });
+    };
+    refreshEntitlements();
+    window.addEventListener("cs:org-changed", refreshEntitlements);
+    return () => window.removeEventListener("cs:org-changed", refreshEntitlements);
+  }, []);
 
   const refresh = async () => {
     try {
@@ -547,6 +576,13 @@ export function Sessions() {
       if (mode === "stewardship" && prNumber.trim()) {
         toast.error(
           "Stewardship does not take a PR. Switch to Gate after opening a PR, or clear the PR field for a branch audit.",
+        );
+        setBusy(false);
+        return;
+      }
+      if (riskTier === "thorough" && !allowThorough) {
+        toast.error(
+          `Thorough (dual-pass discourse) requires a Pro or Enterprise plan${planLabel ? ` (current: ${planLabel})` : ""}. Upgrade under Billing.`,
         );
         setBusy(false);
         return;
@@ -879,10 +915,26 @@ export function Sessions() {
               </label>
               <Select
                 value={riskTier}
-                onChange={setRiskTier}
+                onChange={(v) => {
+                  if (v === "thorough" && !allowThorough) {
+                    toast.error(
+                      `Thorough requires Pro/Enterprise${planLabel ? ` (current plan: ${planLabel})` : ""}. Open Billing to upgrade.`,
+                    );
+                    return;
+                  }
+                  setRiskTier(v);
+                }}
                 aria-label="Risk tier"
                 options={(Object.keys(RISK_TIER_INFO) as Array<keyof typeof RISK_TIER_INFO>).map(
-                  (k) => ({ value: k, label: RISK_TIER_INFO[k].label }),
+                  (k) => ({
+                    value: k,
+                    label:
+                      k === "thorough" && !allowThorough
+                        ? `${RISK_TIER_INFO[k].label} (Pro+)`
+                        : RISK_TIER_INFO[k].label,
+                    disabled: k === "thorough" && !allowThorough,
+                    text: RISK_TIER_INFO[k].label,
+                  }),
                 )}
               />
               {RISK_TIER_INFO[riskTier] && (
@@ -892,6 +944,16 @@ export function Sessions() {
                 >
                   {RISK_TIER_INFO[riskTier].summary}{" "}
                   <span className="mono">Specialists: {RISK_TIER_INFO[riskTier].specialists}</span>
+                </p>
+              )}
+              {!allowThorough && (
+                <p
+                  className="muted"
+                  style={{ fontSize: "0.75rem", margin: "0.35rem 0 0", lineHeight: 1.45 }}
+                >
+                  Thorough / dual-pass discourse is a <strong>Pro+</strong> feature
+                  {planLabel ? ` (your plan: ${planLabel})` : ""}. Upgrade under{" "}
+                  <span className="mono">Billing</span>.
                 </p>
               )}
             </div>

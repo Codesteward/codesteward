@@ -130,16 +130,16 @@ export function connectorConfigToScmOpts(
   return opts;
 }
 
-/** Resolve GitHub App credentials from tenancy store (primary enterprise path). */
+/**
+ * Resolve GitHub App credentials for an org.
+ * Prefer platform-enforced App (shared PEM) + org installation; else per-org tenancy.
+ */
 async function githubAppOptsFromTenancy(
   orgId: string,
 ): Promise<CreateScmOptions | null> {
   try {
     const { getTenancyStore } = await import("./tenancy/orgs.js");
     const store = getTenancyStore();
-    const cfg = await store.getGitHubAppConfig(orgId);
-    const creds = store.resolveGitHubAppCredentials(cfg);
-    if (!creds) return null;
     const installs = await store.listInstallations(orgId);
     // Prefer real numeric installation IDs; skip pending/state placeholders
     const gh =
@@ -160,6 +160,34 @@ async function githubAppOptsFromTenancy(
       );
     const installationId =
       gh?.installationId ?? process.env.GITHUB_APP_INSTALLATION_ID;
+
+    // Platform-enforced / shared App credentials
+    const { resolvePlatformGithubAppPolicy } = await import(
+      "./platform-github-app-store.js"
+    );
+    const platform = await resolvePlatformGithubAppPolicy();
+    if (platform.configured && platform.appId && platform.privateKey) {
+      if (!installationId) {
+        return {
+          provider: "github",
+          baseUrl: platform.baseUrl,
+        };
+      }
+      return {
+        provider: "github",
+        baseUrl: platform.baseUrl,
+        githubApp: {
+          appId: platform.appId,
+          privateKeyPem: platform.privateKey,
+          installationId,
+          baseUrl: platform.baseUrl,
+        },
+      };
+    }
+
+    const cfg = await store.getGitHubAppConfig(orgId);
+    const creds = store.resolveGitHubAppCredentials(cfg);
+    if (!creds) return null;
     if (!installationId) {
       // App credentials without installation — cannot mint token yet
       return {
@@ -217,11 +245,39 @@ export async function createOrgScmProvider(
 
   let opts: CreateScmOptions = { provider };
 
-  if (row?.enabled !== false && row?.config && Object.keys(row.config).length > 0) {
-    opts = { ...opts, ...connectorConfigToScmOpts(provider, row.config) };
+  // Platform enforce: strip org PAT unless explicitly allowed
+  let platformPolicy: Awaited<
+    ReturnType<
+      typeof import("./platform-github-app-store.js").resolvePlatformGithubAppPolicy
+    >
+  > | null = null;
+  if (provider === "github" || provider === "github_enterprise") {
+    try {
+      const { resolvePlatformGithubAppPolicy } = await import(
+        "./platform-github-app-store.js"
+      );
+      platformPolicy = await resolvePlatformGithubAppPolicy();
+    } catch {
+      platformPolicy = null;
+    }
   }
 
-  // GitHub App from tenancy is the enterprise SoT — prefer over connector PAT when complete
+  if (row?.enabled !== false && row?.config && Object.keys(row.config).length > 0) {
+    const fromConnector = connectorConfigToScmOpts(provider, row.config);
+    if (
+      platformPolicy?.enforce &&
+      !platformPolicy.allowOrgPat &&
+      fromConnector.token &&
+      !fromConnector.githubApp
+    ) {
+      // Drop PAT under enforced platform App
+      opts = { ...opts, ...fromConnector, token: undefined };
+    } else {
+      opts = { ...opts, ...fromConnector };
+    }
+  }
+
+  // GitHub App (platform-enforced or org tenancy) — prefer over connector PAT when complete
   if (provider === "github" || provider === "github_enterprise") {
     const appOpts = await githubAppOptsFromTenancy(orgId);
     if (appOpts?.githubApp) {
@@ -276,12 +332,71 @@ export async function orgHasGithubAuth(orgId: string): Promise<{
   configured: boolean;
   mode: "github_app" | "pat" | "app_pending_install" | "none";
   detail?: string;
+  platformEnforced?: boolean;
 }> {
   await globalConnectorsStore.ensureLoaded();
+  let platformEnforced = false;
+  try {
+    const { resolvePlatformGithubAppPolicy } = await import(
+      "./platform-github-app-store.js"
+    );
+    const platform = await resolvePlatformGithubAppPolicy();
+    platformEnforced = platform.enforce && platform.configured;
+    if (platform.configured && platform.appId && platform.privateKey) {
+      const { getTenancyStore } = await import("./tenancy/orgs.js");
+      const installs = await getTenancyStore().listInstallations(orgId);
+      const active = installs.find(
+        (i) =>
+          i.provider === "github" &&
+          i.status !== "suspended" &&
+          /^\d+$/.test(String(i.installationId ?? "")),
+      );
+      if (active?.installationId || process.env.GITHUB_APP_INSTALLATION_ID) {
+        return {
+          configured: true,
+          mode: "github_app",
+          platformEnforced,
+          detail: platform.enforce
+            ? "Platform GitHub App + org installation"
+            : undefined,
+        };
+      }
+      return {
+        configured: true,
+        mode: "app_pending_install",
+        platformEnforced,
+        detail: platform.enforce
+          ? "Platform GitHub App is configured — install it on your GitHub org/account"
+          : "GitHub App credentials saved — install the app on an org/account",
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+
   const row = await globalConnectorsStore.getAsync("github", orgId);
   const plain = row?.config ? decryptConfigSecrets(row.config) : {};
   if (typeof plain.token === "string" && plain.token) {
-    return { configured: true, mode: "pat" };
+    if (platformEnforced) {
+      // PAT present but platform App enforced without allowOrgPat — treat as none for product path
+      try {
+        const { resolvePlatformGithubAppPolicy } = await import(
+          "./platform-github-app-store.js"
+        );
+        const p = await resolvePlatformGithubAppPolicy();
+        if (p.enforce && !p.allowOrgPat) {
+          return {
+            configured: false,
+            mode: "none",
+            platformEnforced: true,
+            detail: "PAT ignored — platform GitHub App is enforced",
+          };
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+    return { configured: true, mode: "pat", platformEnforced };
   }
   try {
     const { getTenancyStore } = await import("./tenancy/orgs.js");
@@ -297,24 +412,27 @@ export async function orgHasGithubAuth(orgId: string): Promise<{
           /^\d+$/.test(String(i.installationId ?? "")),
       );
       if (active?.installationId || process.env.GITHUB_APP_INSTALLATION_ID) {
-        return { configured: true, mode: "github_app" };
+        return { configured: true, mode: "github_app", platformEnforced };
       }
       return {
         configured: true,
         mode: "app_pending_install",
+        platformEnforced,
         detail: "GitHub App credentials saved — install the app on an org/account",
       };
     }
   } catch {
     /* ignore */
   }
-  if (process.env.GITHUB_TOKEN) return { configured: true, mode: "pat" };
+  if (process.env.GITHUB_TOKEN) {
+    return { configured: true, mode: "pat", platformEnforced };
+  }
   if (
     process.env.GITHUB_APP_ID &&
     process.env.GITHUB_APP_INSTALLATION_ID &&
     (process.env.GITHUB_APP_PRIVATE_KEY || process.env.GITHUB_APP_PRIVATE_KEY_REF)
   ) {
-    return { configured: true, mode: "github_app" };
+    return { configured: true, mode: "github_app", platformEnforced };
   }
-  return { configured: false, mode: "none" };
+  return { configured: false, mode: "none", platformEnforced };
 }

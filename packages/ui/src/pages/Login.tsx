@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { ThemeToggle } from "../components/Layout";
 import { Logo } from "../components/Logo";
 import { useToast } from "../components/Toast";
-import { api, setOrgId, setSessionToken, getSessionToken } from "../lib/api";
+import { api, resolveActiveOrg, setSessionToken, getSessionToken } from "../lib/api";
 import { getAccessToken, oidcReady, startOidcLogin } from "../lib/oidc";
 
 /**
@@ -52,8 +52,8 @@ export function Login() {
           try {
             const me = await api.authMe();
             if (me.user && alive) {
-              if (me.user.orgId) setOrgId(me.user.orgId);
-              navigate("/dashboard", { replace: true });
+              const { needsOrg } = await resolveActiveOrg();
+              navigate(needsOrg ? "/onboarding" : "/dashboard", { replace: true });
               return;
             }
           } catch {
@@ -69,7 +69,8 @@ export function Login() {
         try {
           const me = await api.authMe();
           if (me.user && alive) {
-            navigate("/dashboard", { replace: true });
+            const { needsOrg } = await resolveActiveOrg();
+            navigate(needsOrg ? "/onboarding" : "/dashboard", { replace: true });
             return;
           }
         } catch {

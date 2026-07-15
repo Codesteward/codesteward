@@ -2,17 +2,16 @@
  * License / entitlement SoT (server).
  *
  * Resolution order:
+ *   0. Open mode when STEW_LICENSE_OPEN is not "0" (all features; gates off)
  *   1. Uploaded license file (STEW_LICENSE_FILE or .steward-data/license.key)
  *   2. STEW_LICENSE_KEY env
  *   3. STEW_LICENSE_TIER env defaults
  *   4. oss defaults
  *
- * License key formats:
- *   - base64url(JSON entitlements)
- *   - body.sig  (HMAC-SHA256 base64url) when STEW_LICENSE_HMAC is set — fail-closed if unsigned
- *   - raw JSON (dev / self-host when HMAC unset)
+ * Key formats: base64url(JSON), body.sig when STEW_LICENSE_HMAC set, or raw JSON.
+ * STEW_LICENSE_ENFORCE=1 or NODE_ENV=production → fail closed (when open mode is off).
  *
- * STEW_LICENSE_ENFORCE=1 or NODE_ENV=production → fail closed on gated features
+ * Org-scoped SaaS: resolveOrgLicense(orgId) may call STEW_BILLING_URL control plane.
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, writeFile, unlink } from "node:fs/promises";
@@ -38,12 +37,19 @@ export interface LicenseEntitlements {
   orgId?: string;
   customer?: string;
   validUntil?: string;
-  source: "file" | "env" | "key" | "default";
+  source: "file" | "env" | "key" | "default" | "open";
   enforced: boolean;
   signatureRequired: boolean;
   signatureValid?: boolean;
   /** Human-readable parse status for UI */
   status?: string;
+  /**
+   * Community / Apache release: all features enabled, gates off.
+   * UI should hide install-wide license upload when true.
+   */
+  openMode?: boolean;
+  /** Hint for product UI — hide license management surfaces */
+  hideLicenseUi?: boolean;
 }
 
 /** Catalog of features a license may enable — shown in Settings + gating. */
@@ -287,12 +293,40 @@ export function expandFeatures(
   };
 }
 
+/** Open mode ON unless STEW_LICENSE_OPEN is explicitly false. */
+export function isLicenseOpenMode(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = (env.STEW_LICENSE_OPEN ?? "").trim().toLowerCase();
+  if (v === "0" || v === "false" || v === "off" || v === "no") return false;
+  if (v === "1" || v === "true" || v === "on" || v === "yes") return true;
+  return true;
+}
+
+export function openModeLicense(
+  env: NodeJS.ProcessEnv = process.env,
+): LicenseEntitlements {
+  const ent = TIER_DEFAULTS.enterprise;
+  return {
+    ...ent,
+    tier: "enterprise",
+    source: "open",
+    enforced: false,
+    signatureRequired: false,
+    signatureValid: true,
+    status: "open_mode",
+    openMode: true,
+    hideLicenseUi: true,
+    customer: env.STEW_LICENSE_CUSTOMER?.trim() || "community",
+  };
+}
+
 function fromParsed(
   fromKey: Partial<LicenseEntitlements>,
   env: NodeJS.ProcessEnv,
   source: LicenseEntitlements["source"],
   signatureValid: boolean,
 ): LicenseEntitlements {
+  if (isLicenseOpenMode(env)) return openModeLicense(env);
+
   const enforced =
     env.STEW_LICENSE_ENFORCE === "1" || env.NODE_ENV === "production";
   const signatureRequired = Boolean(env.STEW_LICENSE_HMAC?.trim());
@@ -326,11 +360,14 @@ function fromParsed(
     customer: fromKey.customer,
     orgId: fromKey.orgId,
     status: "active",
+    openMode: false,
+    hideLicenseUi: false,
   };
 }
 
 /** Synchronous resolve using only env (no file IO). Prefer resolveLicenseAsync. */
 export function resolveLicense(env: NodeJS.ProcessEnv = process.env): LicenseEntitlements {
+  if (isLicenseOpenMode(env)) return openModeLicense(env);
   return resolveLicenseFromKey(env.STEW_LICENSE_KEY, env, "key");
 }
 
@@ -339,6 +376,8 @@ function resolveLicenseFromKey(
   env: NodeJS.ProcessEnv,
   sourceIfKey: LicenseEntitlements["source"],
 ): LicenseEntitlements {
+  if (isLicenseOpenMode(env)) return openModeLicense(env);
+
   const tier = (env.STEW_LICENSE_TIER as LicenseTier) || "oss";
   const enforced =
     env.STEW_LICENSE_ENFORCE === "1" || env.NODE_ENV === "production";
@@ -350,6 +389,8 @@ function resolveLicenseFromKey(
     enforced,
     signatureRequired,
     status: "active",
+    openMode: false,
+    hideLicenseUi: false,
   };
 
   const parsed = parseLicenseKey(key, env);
@@ -396,15 +437,75 @@ export async function readLicenseFile(
 export async function resolveLicenseAsync(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<LicenseEntitlements> {
+  if (isLicenseOpenMode(env)) return openModeLicense(env);
+
   const fileKey = await readLicenseFile(env);
   if (fileKey) {
     const lic = resolveLicenseFromKey(fileKey, env, "file");
     return {
       ...lic,
       source: lic.source === "default" ? "file" : lic.source === "key" ? "file" : lic.source,
+      openMode: false,
+      hideLicenseUi: false,
     };
   }
   return resolveLicense(env);
+}
+
+/**
+ * Org-scoped entitlements. When STEW_BILLING_URL is set, prefers control-plane
+ * response for that org; otherwise install-wide license / open mode.
+ */
+export async function resolveOrgLicense(
+  orgId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<LicenseEntitlements> {
+  // SaaS control plane takes precedence when configured (even if open mode is default)
+  const billingUrl = env.STEW_BILLING_URL?.trim();
+  if (billingUrl) {
+    try {
+      const res = await fetch(
+        `${billingUrl.replace(/\/$/, "")}/v1/orgs/${encodeURIComponent(orgId)}/entitlements`,
+        {
+          headers: {
+            Accept: "application/json",
+            ...(env.STEW_BILLING_TOKEN
+              ? { Authorization: `Bearer ${env.STEW_BILLING_TOKEN}` }
+              : {}),
+          },
+          signal: AbortSignal.timeout(Number(env.STEW_BILLING_TIMEOUT_MS ?? 3000)),
+        },
+      );
+      if (res.ok) {
+        const body = (await res.json()) as {
+          entitlements?: Partial<LicenseEntitlements> & Record<string, unknown>;
+        };
+        if (body.entitlements) {
+          // Temporarily disable open mode so fromParsed applies plan payload
+          const envNoOpen = { ...env, STEW_LICENSE_OPEN: "0" };
+          const lic = fromParsed(body.entitlements, envNoOpen, "key", true);
+          return {
+            ...lic,
+            orgId,
+            source: "key",
+            status: lic.status ?? "active",
+            openMode: false,
+            hideLicenseUi: true, // SaaS: no install-wide license UI
+            enforced: true,
+          };
+        }
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  if (isLicenseOpenMode(env)) {
+    return { ...openModeLicense(env), orgId };
+  }
+
+  const platform = await resolveLicenseAsync(env);
+  return { ...platform, orgId };
 }
 
 export async function installLicenseKey(
@@ -441,7 +542,7 @@ export function assertEntitled(
   license: LicenseEntitlements,
   feature: string,
 ): boolean {
-  if (!license.enforced) return true;
+  if (license.openMode || !license.enforced) return true;
   const bag = license as unknown as Record<string, unknown>;
   if (feature in bag && typeof bag[feature] === "boolean") {
     return Boolean(bag[feature]);
@@ -459,7 +560,9 @@ export function assertEntitled(
 
 export function requireEntitled(feature: string, env?: NodeJS.ProcessEnv): void {
   // Sync path — uses env/process STEW_LICENSE_KEY (set on install)
-  const lic = resolveLicense(env);
+  const e = env ?? process.env;
+  if (isLicenseOpenMode(e)) return;
+  const lic = resolveLicense(e);
   if (!assertEntitled(lic, feature)) {
     throw Object.assign(
       new Error(`license does not include feature: ${feature} (tier=${lic.tier})`),
@@ -469,7 +572,102 @@ export function requireEntitled(feature: string, env?: NodeJS.ProcessEnv): void 
 }
 
 export function isEntitled(feature: string, env?: NodeJS.ProcessEnv): boolean {
-  return assertEntitled(resolveLicense(env), feature);
+  const e = env ?? process.env;
+  if (isLicenseOpenMode(e)) return true;
+  return assertEntitled(resolveLicense(e), feature);
+}
+
+/**
+ * Async gate for org-scoped checks (SaaS multi-tenant + self-host).
+ * Always resolves via resolveOrgLicense — never short-circuits open mode here,
+ * so STEW_BILLING_URL plans are enforced even when open mode is the install default.
+ * resolveOrgLicense itself returns an openMode license when billing is unset.
+ */
+export async function requireOrgEntitled(
+  orgId: string,
+  feature: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<void> {
+  const e = env ?? process.env;
+  const lic = await resolveOrgLicense(orgId, e);
+  if (!assertEntitled(lic, feature)) {
+    const friendly: Record<string, string> = {
+      thoroughDiscourse:
+        "Thorough dual-pass discourse requires a Pro or Enterprise plan",
+      thorough_discourse:
+        "Thorough dual-pass discourse requires a Pro or Enterprise plan",
+      prove: "Prove (LLM test generation) requires a Pro or Enterprise plan",
+      crossRepo: "Cross-repo fan-out requires a Pro or Enterprise plan",
+      cross_repo: "Cross-repo fan-out requires a Pro or Enterprise plan",
+      enterpriseConnectors:
+        "GitHub App / enterprise connectors require a Pro or Enterprise plan",
+      enterprise_connectors:
+        "GitHub App / enterprise connectors require a Pro or Enterprise plan",
+      scim: "SCIM provisioning requires an Enterprise plan",
+      langfuse: "Langfuse tracing requires a Pro or Enterprise plan",
+      multiOrg: "Multiple organizations require a Pro or Enterprise plan",
+      multi_org: "Multiple organizations require a Pro or Enterprise plan",
+      analytics: "Analytics requires a Pro or Enterprise plan",
+      audit: "Audit log requires a Pro or Enterprise plan",
+    };
+    const msg =
+      friendly[feature] ??
+      `org license does not include feature: ${feature} (org=${orgId}, tier=${lic.tier})`;
+    throw Object.assign(new Error(`${msg} (org=${orgId}, plan/tier=${lic.tier})`), {
+      status: 402,
+      code: "ORG_LICENSE_REQUIRED",
+      feature,
+      tier: lic.tier,
+      orgId,
+    });
+  }
+}
+
+export async function isOrgEntitled(
+  orgId: string,
+  feature: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<boolean> {
+  const e = env ?? process.env;
+  return assertEntitled(await resolveOrgLicense(orgId, e), feature);
+}
+
+/**
+ * Seat cap from org license (SaaS maxSeats). Returns null when not enforced (open mode).
+ */
+export async function getOrgMaxSeats(
+  orgId: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<number | null> {
+  const lic = await resolveOrgLicense(orgId, env);
+  if (lic.openMode || !lic.enforced) return null;
+  return typeof lic.maxSeats === "number" && lic.maxSeats > 0 ? lic.maxSeats : null;
+}
+
+/** Throw 402 if adding `delta` members would exceed maxSeats. */
+export async function requireOrgSeatAvailable(
+  orgId: string,
+  delta = 1,
+  env?: NodeJS.ProcessEnv,
+): Promise<void> {
+  const max = await getOrgMaxSeats(orgId, env);
+  if (max == null) return;
+  const { getTenancyStore } = await import("./tenancy/orgs.js");
+  const members = await getTenancyStore().listMembers(orgId);
+  if (members.length + delta > max) {
+    throw Object.assign(
+      new Error(
+        `Seat limit reached for this organization (${members.length}/${max}). Upgrade plan or free a seat under Members / Billing.`,
+      ),
+      {
+        status: 402,
+        code: "SEAT_LIMIT",
+        orgId,
+        seatsUsed: members.length,
+        maxSeats: max,
+      },
+    );
+  }
 }
 
 /** Build a signed commercial license key (vendor tooling / tests). */

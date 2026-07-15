@@ -3,11 +3,108 @@ const API_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\
 export class ApiError extends Error {
   status: number;
   body: string;
+  /** Parsed JSON body when the API returned structured error */
+  payload?: {
+    error?: string;
+    message?: string;
+    code?: string;
+    feature?: string;
+  };
   constructor(status: number, body: string) {
-    super(`${status} ${body || "request failed"}`);
+    let payload: ApiError["payload"];
+    try {
+      payload = JSON.parse(body) as ApiError["payload"];
+    } catch {
+      payload = undefined;
+    }
+    const friendly =
+      payload?.message ||
+      payload?.error ||
+      (body && !body.startsWith("{") ? body : null) ||
+      "request failed";
+    super(friendly);
     this.status = status;
     this.body = body;
+    this.payload = payload;
+    this.name = "ApiError";
   }
+
+  get code(): string | undefined {
+    return this.payload?.code;
+  }
+
+  get isPlanGate(): boolean {
+    return (
+      this.status === 402 ||
+      this.code === "ORG_LICENSE_REQUIRED" ||
+      this.code === "LICENSE_REQUIRED" ||
+      this.code === "SEAT_LIMIT"
+    );
+  }
+}
+
+/** Human copy for plan/seat gates (UI banners). */
+export function describePlanGate(err: unknown): {
+  title: string;
+  body: string;
+  planRequired: "pro" | "enterprise" | "paid" | null;
+  isSeatLimit: boolean;
+} | null {
+  if (!(err instanceof ApiError) || !err.isPlanGate) {
+    // Also accept raw Error messages that still look like 402 JSON dumps
+    if (err instanceof Error) {
+      const m = err.message;
+      if (m.includes("ORG_LICENSE_REQUIRED") || m.startsWith("402 ")) {
+        try {
+          const jsonStart = m.indexOf("{");
+          const parsed = jsonStart >= 0 ? JSON.parse(m.slice(jsonStart)) : null;
+          return describePlanGate(
+            Object.assign(new ApiError(402, JSON.stringify(parsed ?? { message: m })), {}),
+          );
+        } catch {
+          return {
+            title: "Upgrade required",
+            body: m.replace(/^402\s*/, "").slice(0, 280),
+            planRequired: "paid",
+            isSeatLimit: false,
+          };
+        }
+      }
+    }
+    return null;
+  }
+  const code = err.code;
+  const msg = err.message;
+  if (code === "SEAT_LIMIT" || /seat limit/i.test(msg)) {
+    return {
+      title: "Seat limit reached",
+      body:
+        msg ||
+        "Your organization has used all purchased seats. Buy more seats under Billing before inviting members.",
+      planRequired: null,
+      isSeatLimit: true,
+    };
+  }
+  const lower = msg.toLowerCase();
+  let planRequired: "pro" | "enterprise" | "paid" = "paid";
+  if (lower.includes("enterprise") && !lower.includes("pro or enterprise")) {
+    planRequired = "enterprise";
+  } else if (lower.includes("pro")) {
+    planRequired = "pro";
+  }
+  // Clean server message: drop trailing (org=…, plan/tier=…)
+  const body = msg.replace(/\s*\(org=[^)]+\)\s*$/i, "").trim() || msg;
+  return {
+    title:
+      planRequired === "enterprise"
+        ? "Enterprise plan required"
+        : planRequired === "pro"
+          ? "Pro plan required"
+          : "Upgrade required",
+    body,
+    planRequired,
+    isSeatLimit: false,
+  };
 }
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -52,10 +149,76 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
         /* ignore */
       }
     }
+    // Stale X-Org-Id (e.g. cached "local") or brand-new user with no memberships
+    if (res.status === 403) {
+      try {
+        const parsed = JSON.parse(text) as { code?: string; message?: string; error?: string };
+        const msg = `${parsed.message ?? ""} ${parsed.error ?? ""} ${text}`.toLowerCase();
+        if (
+          parsed.code === "ORG_REQUIRED" ||
+          msg.includes("not a member of org") ||
+          msg.includes("org_required")
+        ) {
+          const bad = localStorage.getItem("cs-org-id");
+          if (bad) localStorage.removeItem("cs-org-id");
+          window.dispatchEvent(
+            new CustomEvent("cs:org-required", {
+              detail: { message: parsed.message, code: parsed.code },
+            }),
+          );
+        }
+      } catch {
+        /* not json */
+      }
+    }
     throw new ApiError(res.status, text || res.statusText);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
+}
+
+/** After login / me: pick a valid org or clear a stale cached id (e.g. leftover "local"). */
+export async function resolveActiveOrg(): Promise<{
+  orgs: OrgSummary[];
+  needsOrg: boolean;
+  orgId: string | null;
+}> {
+  // Clear stale header first so listOrgs is not blocked by X-Org-Id: local
+  const cached = getOrgId();
+  try {
+    const me = await api.authMe();
+    const orgs =
+      me.orgs ??
+      (await api.listOrgs().then((r) => r.orgs).catch(() => [] as OrgSummary[]));
+    if (!orgs.length) {
+      if (cached) setOrgId(null);
+      return { orgs: [], needsOrg: Boolean(me.needsOrg ?? true), orgId: null };
+    }
+    if (cached && orgs.some((o) => o.id === cached)) {
+      return { orgs, needsOrg: false, orgId: cached };
+    }
+    const next = me.user?.orgId && orgs.some((o) => o.id === me.user!.orgId)
+      ? me.user.orgId
+      : orgs[0]!.id;
+    setOrgId(next);
+    return { orgs, needsOrg: false, orgId: next };
+  } catch {
+    try {
+      const r = await api.listOrgs();
+      if (!r.orgs.length) {
+        if (cached) setOrgId(null);
+        return { orgs: [], needsOrg: true, orgId: null };
+      }
+      if (cached && r.orgs.some((o) => o.id === cached)) {
+        return { orgs: r.orgs, needsOrg: false, orgId: cached };
+      }
+      setOrgId(r.orgs[0]!.id);
+      return { orgs: r.orgs, needsOrg: false, orgId: r.orgs[0]!.id };
+    } catch {
+      if (cached) setOrgId(null);
+      return { orgs: [], needsOrg: true, orgId: null };
+    }
+  }
 }
 
 export const api = {
@@ -110,7 +273,12 @@ export const api = {
       body: JSON.stringify(body),
     }),
   authMe: () =>
-    req<{ user: AuthUser | null; authMode?: string }>("/v1/auth/me"),
+    req<{
+      user: AuthUser | null;
+      authMode?: string;
+      orgs?: OrgSummary[];
+      needsOrg?: boolean;
+    }>("/v1/auth/me"),
   authLogout: (body?: { idToken?: string; postLogoutRedirectUri?: string }) =>
     req<{ ok: boolean; idpLogoutUrl?: string }>("/v1/auth/logout", {
       method: "POST",
@@ -154,10 +322,46 @@ export const api = {
   // Orgs & membership
   listOrgs: () =>
     req<{ orgs: OrgSummary[] }>("/v1/orgs"),
-  createOrg: (body: { name: string; slug?: string }) =>
-    req<{ org: OrgSummary }>("/v1/orgs", {
+  createOrg: (body: {
+    name: string;
+    slug?: string;
+    planId?: string;
+    seats?: number;
+    billingEmail?: string;
+  }) =>
+    req<{ org: OrgSummary; plan?: string; note?: string }>("/v1/orgs", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  billingStatus: () =>
+    req<{
+      configured: boolean;
+      saasMode?: boolean;
+      publicUrl?: string | null;
+      plans: Array<{
+        id: string;
+        label: string;
+        description?: string;
+        priceLabel?: string;
+        highlights?: string[];
+        pricing?: string;
+        requiresSeatPurchase?: boolean;
+        minSeats?: number;
+        maxSeats?: number;
+        defaultSeats?: number;
+        pricePerSeatCents?: number | null;
+      }>;
+      note?: string;
+    }>("/v1/billing/status"),
+  openBillingPortal: (body?: { returnTo?: string }) =>
+    req<{
+      url: string;
+      orgId: string;
+      expiresInSeconds?: number;
+      note?: string;
+    }>("/v1/org/billing/portal", {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
     }),
   listMembers: (orgId: string) =>
     req<{ members: OrgMember[] }>(`/v1/orgs/${encodeURIComponent(orgId)}/members`),
@@ -320,12 +524,54 @@ export const api = {
         baseUrl?: string;
       };
     }>("/v1/platform/langfuse", { method: "PUT", body: JSON.stringify(body) }),
+  platformGithubApp: () =>
+    req<{
+      config: {
+        enforce?: boolean;
+        allowOrgPat?: boolean;
+        appId?: string | null;
+        clientId?: string | null;
+        baseUrl?: string | null;
+        slug?: string | null;
+        privateKeyConfigured?: boolean;
+        privateKeyRef?: string | null;
+        webhookSecretConfigured?: boolean;
+        updatedAt?: string | null;
+      } | null;
+      policy: {
+        enforce: boolean;
+        allowOrgPat: boolean;
+        configured: boolean;
+        source: string;
+        appId?: string | null;
+        slug?: string | null;
+      };
+      envBootstrap?: Record<string, string | null>;
+      note?: string;
+    }>("/v1/platform/github-app"),
+  putPlatformGithubApp: (body: {
+    enforce?: boolean;
+    allowOrgPat?: boolean;
+    appId?: string;
+    clientId?: string;
+    privateKeyPem?: string;
+    privateKeyRef?: string;
+    webhookSecret?: string;
+    baseUrl?: string;
+    slug?: string;
+    clear?: boolean;
+  }) =>
+    req<{ ok: boolean; config: unknown; note?: string }>("/v1/platform/github-app", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   scimStatus: () =>
     req<{
       orgId: string;
       orgSlug?: string;
       multiTenant?: boolean;
       entitled: boolean;
+      planRequired?: "enterprise" | string | null;
       tokenConfigured: boolean;
       tokens?: Array<{ id: string; label?: string; last4: string; createdAt: string; lastUsedAt?: string }>;
       hardDelete: boolean;
@@ -498,9 +744,25 @@ export const api = {
   license: () =>
     req<{
       license: LicenseInfo;
+      plan?: {
+        id?: string;
+        status?: string;
+        seats?: number;
+        customerName?: string;
+        source: "billing" | "license" | "open";
+      } | null;
+      billingConfigured?: boolean;
       features?: Array<{ id: string; label: string; description: string; enabled: boolean }>;
       catalog?: Array<{ id: string; label: string; description: string }>;
-      upload?: { path: string; formats: string[]; note: string; filePath?: string };
+      openMode?: boolean;
+      hideLicenseUi?: boolean;
+      upload?: {
+        path: string;
+        formats: string[];
+        note: string;
+        filePath?: string;
+        disabled?: boolean;
+      };
     }>("/v1/org/license"),
   installLicense: (key: string) =>
     req<{
@@ -600,6 +862,17 @@ export const api = {
       installationReady?: boolean;
       patConfigured: boolean;
       patDevOnly?: boolean;
+      /** False when platform GitHub App is enforced — tenant cannot upload PEMs / create their own App */
+      patAllowed?: boolean;
+      orgCanConfigureApp?: boolean;
+      platformGithubApp?: {
+        enforce: boolean;
+        configured: boolean;
+        source: string;
+        appId?: string | null;
+        slug?: string | null;
+        allowOrgPat?: boolean;
+      };
       appId: string | null;
       installations: Array<Record<string, unknown>>;
       detail?: string;
@@ -811,12 +1084,25 @@ export interface AuthUser {
   platformAdmin?: boolean;
 }
 
+/** Whether the current auth session may open Platform settings (install-wide). */
+export function isPlatformOperator(
+  user: AuthUser | null | undefined,
+  authMode?: string | null,
+): boolean {
+  if (authMode === "api_key" || authMode === "dev_open") return true;
+  if (!user) return false;
+  if (user.id === "api_key" || user.id === "dev") return true;
+  return Boolean(user.platformAdmin);
+}
+
 export interface OrgSummary {
   id: string;
   name: string;
   slug?: string;
   tenantId?: string;
   createdAt?: string;
+  /** Membership role when listed via listOrgsForUser / authMe.orgs */
+  role?: string;
 }
 
 export interface OrgMember {
@@ -1123,6 +1409,9 @@ export interface LicenseInfo {
   validUntil?: string;
   customer?: string;
   status?: string;
+  /** Community open mode — all features, no commercial gate */
+  openMode?: boolean;
+  hideLicenseUi?: boolean;
 }
 
 export interface ModelProfile {

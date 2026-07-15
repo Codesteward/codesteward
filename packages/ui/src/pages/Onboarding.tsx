@@ -6,7 +6,7 @@ import { api, getOrgId, setOrgId, type OrgSummary } from "../lib/api";
 
 /**
  * Guided setup: (1) create org → (2) install GitHub App → (3) first review.
- * Never auto-skip past step 1 on load; GitHub status only unlocks later steps after org is chosen.
+ * Users with zero memberships land here (SaaS signup / no IdP org groups).
  */
 export function Onboarding() {
   const toast = useToast();
@@ -18,23 +18,61 @@ export function Onboarding() {
   const [createdOrg, setCreatedOrg] = useState<OrgSummary | null>(null);
   const [ghConfigured, setGhConfigured] = useState<boolean | null>(null);
   const [installCount, setInstallCount] = useState(0);
+  const [platformEnforced, setPlatformEnforced] = useState(false);
+  const [needsOrg, setNeedsOrg] = useState(false);
+  const [saasBilling, setSaasBilling] = useState(false);
+  const [plans, setPlans] = useState<
+    Array<{
+      id: string;
+      label: string;
+      description?: string;
+      priceLabel?: string;
+      highlights?: string[];
+      pricing?: string;
+      requiresSeatPurchase?: boolean;
+      minSeats?: number;
+      maxSeats?: number;
+      defaultSeats?: number;
+      pricePerSeatCents?: number | null;
+    }>
+  >([]);
+  const [selectedPlan, setSelectedPlan] = useState("free");
+  const [purchaseSeats, setPurchaseSeats] = useState(5);
 
   useEffect(() => {
     void api
       .listOrgs()
       .then((r) => {
         setOrgs(r.orgs);
+        setNeedsOrg(r.orgs.length === 0);
         const cur = getOrgId();
         const match = r.orgs.find((o) => o.id === cur) ?? null;
         // Preselect current org for “continue” — do not change step
         if (match) setCreatedOrg(match);
+        else if (r.orgs.length === 0) setOrgId(null);
       })
-      .catch(() => undefined);
+      .catch(() => {
+        setNeedsOrg(true);
+        setOrgId(null);
+      });
+    void api
+      .billingStatus()
+      .then((s) => {
+        setSaasBilling(Boolean(s.configured));
+        setPlans(s.plans ?? []);
+        const pro = (s.plans ?? []).find((p) => p.id === "pro");
+        if (pro?.defaultSeats) setPurchaseSeats(pro.defaultSeats);
+      })
+      .catch(() => setSaasBilling(false));
     void api
       .githubAppStatus()
       .then((s) => {
         setGhConfigured(s.githubAppConfigured);
         setInstallCount(s.installations?.length ?? 0);
+        setPlatformEnforced(
+          s.orgCanConfigureApp === false ||
+            Boolean(s.platformGithubApp?.enforce && s.platformGithubApp?.configured),
+        );
         // Never force step 3 here — that skipped “create org” before the form was filled
       })
       .catch(() => setGhConfigured(false));
@@ -65,18 +103,34 @@ export function Onboarding() {
     }
     setBusy(true);
     try {
+      const planMeta = plans.find((p) => p.id === selectedPlan);
+      const seats =
+        planMeta?.requiresSeatPurchase || planMeta?.pricing === "per_seat"
+          ? purchaseSeats
+          : planMeta?.defaultSeats ?? (selectedPlan === "free" ? 5 : 5);
       const res = await api.createOrg({
         name: orgName.trim(),
         slug: orgSlug.trim() || undefined,
+        ...(saasBilling
+          ? {
+              planId: selectedPlan,
+              seats,
+            }
+          : {}),
       });
       setCreatedOrg(res.org);
       // Updates localStorage + notifies Layout OrgSwitcher (cs:org-changed)
       setOrgId(res.org.id);
+      setNeedsOrg(false);
       setOrgs((prev) => {
         if (prev.some((o) => o.id === res.org.id)) return prev;
         return [...prev, res.org];
       });
-      toast.success(`Org “${res.org.name}” created — now active`);
+      toast.success(
+        res.note
+          ? `Org “${res.org.name}” created — ${res.note}`
+          : `Org “${res.org.name}” created — now active`,
+      );
       setStep(2);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
@@ -109,9 +163,24 @@ export function Onboarding() {
     <div>
       <PageHero
         kicker="Get started"
-        title="Onboarding"
-        subtitle="Three steps: create an organization, install the GitHub App, run your first review."
+        title={needsOrg ? "Welcome — set up your organization" : "Onboarding"}
+        subtitle={
+          needsOrg
+            ? "You are signed in but not a member of any organization yet. Create yours below, or wait for an admin invite."
+            : "Three steps: create an organization, install the GitHub App, run your first review."
+        }
       />
+
+      {needsOrg && (
+        <div className="card stack" style={{ maxWidth: 560, marginBottom: "1rem" }}>
+          <h3 style={{ margin: 0 }}>Join an existing organization?</h3>
+          <p className="muted" style={{ margin: 0, fontSize: "0.88rem", lineHeight: 1.55 }}>
+            You cannot self-join an existing org. Ask an <strong>organization admin</strong> to invite
+            your email from <span className="mono">Members</span>. After they invite you, sign out and
+            back in (or refresh) — your org will appear in the sidebar switcher.
+          </p>
+        </div>
+      )}
 
       <div className="onboarding-steps">
         {[1, 2, 3].map((n) => {
@@ -138,9 +207,100 @@ export function Onboarding() {
         <div className="card stack" style={{ maxWidth: 520 }}>
           <h3 style={{ margin: 0 }}>1 · Create organization</h3>
           <p className="muted" style={{ margin: 0, fontSize: "0.88rem" }}>
-            Orgs isolate members, connectors, policy, and learnings. You can switch orgs anytime from
-            the sidebar.
+            Orgs isolate members, connectors, policy, and learnings. You become the owner.
+            {saasBilling
+              ? " Pick a plan below — you can change it anytime from Billing."
+              : " Self-host installs do not use cloud plans."}
           </p>
+          {saasBilling && plans.length > 0 && (
+            <div className="stack" style={{ gap: 8 }}>
+              <div className="muted" style={{ fontSize: "0.78rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                Plan
+              </div>
+              <div className="grid cols-3" style={{ gap: 10 }}>
+                {plans.map((p) => {
+                  const active = selectedPlan === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={active ? "card interactive" : "card"}
+                      style={{
+                        margin: 0,
+                        textAlign: "left",
+                        cursor: "pointer",
+                        borderColor: active ? "var(--accent, #5b9fd4)" : undefined,
+                        boxShadow: active ? "0 0 0 1px var(--accent, #5b9fd4)" : undefined,
+                      }}
+                      onClick={() => {
+                        setSelectedPlan(p.id);
+                        if (p.defaultSeats) setPurchaseSeats(p.defaultSeats);
+                      }}
+                    >
+                      <div style={{ fontWeight: 650 }}>{p.label}</div>
+                      <div className="muted" style={{ fontSize: "0.85rem", marginTop: 4 }}>
+                        {p.priceLabel ?? ""}
+                      </div>
+                      <p className="muted" style={{ margin: "0.4rem 0 0", fontSize: "0.8rem", lineHeight: 1.4 }}>
+                        {p.description}
+                      </p>
+                      {p.highlights && p.highlights.length > 0 && (
+                        <ul
+                          className="muted"
+                          style={{ margin: "0.45rem 0 0", paddingLeft: "1.1rem", fontSize: "0.78rem" }}
+                        >
+                          {p.highlights.slice(0, 3).map((h) => (
+                            <li key={h}>{h}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              {(() => {
+                const p = plans.find((x) => x.id === selectedPlan);
+                if (!p?.requiresSeatPurchase && p?.pricing !== "per_seat" && p?.pricing !== "custom") {
+                  return null;
+                }
+                const min = p.minSeats ?? 1;
+                const max = p.maxSeats ?? 50;
+                const cents = p.pricePerSeatCents;
+                return (
+                  <div className="field" style={{ marginTop: 4 }}>
+                    <label htmlFor="onboarding-seats">
+                      Seats to purchase (required before inviting members)
+                    </label>
+                    <input
+                      id="onboarding-seats"
+                      type="number"
+                      min={min}
+                      max={max}
+                      value={purchaseSeats}
+                      onChange={(e) => {
+                        const n = Number(e.target.value);
+                        if (!Number.isFinite(n)) return;
+                        setPurchaseSeats(Math.max(min, Math.min(max, Math.floor(n))));
+                      }}
+                    />
+                    <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.8rem" }}>
+                      {purchaseSeats} seat{purchaseSeats === 1 ? "" : "s"}
+                      {cents
+                        ? ` · ~$${((purchaseSeats * cents) / 100).toFixed(0)}/mo demo estimate`
+                        : ""}
+                      . Invites stop when all seats are used — buy more under Billing.
+                    </p>
+                  </div>
+                );
+              })()}
+              {selectedPlan !== "free" && (
+                <p className="muted" style={{ margin: 0, fontSize: "0.8rem" }}>
+                  Demo: paid plans apply immediately without a card. Production will collect payment
+                  via the Billing portal (Stripe).
+                </p>
+              )}
+            </div>
+          )}
           {displayOrg && (
             <div
               className="row"
@@ -197,9 +357,12 @@ export function Onboarding() {
         <div className="card stack" style={{ maxWidth: 560 }}>
           <h3 style={{ margin: 0 }}>2 · Install GitHub App</h3>
           <p className="muted" style={{ margin: 0, fontSize: "0.88rem" }}>
-            Enterprise-ready path uses short-lived installation tokens — not personal access tokens.
+            {platformEnforced
+              ? "This install uses a shared platform GitHub App. Install it on your GitHub organization — you do not create or paste your own App credentials."
+              : "Enterprise-ready path uses short-lived installation tokens — not personal access tokens."}
           </p>
           <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+            {platformEnforced && <Badge tone="configured">platform app</Badge>}
             <Badge tone={ghConfigured ? "ok" : "warn"}>
               app {ghConfigured ? "configured" : "not configured"}
             </Badge>
@@ -213,11 +376,24 @@ export function Onboarding() {
             )}
           </div>
           <button type="button" className="primary" disabled={busy} onClick={() => void installGitHub()}>
-            {busy ? "Redirecting…" : "Install GitHub App"}
+            {busy
+              ? "Redirecting…"
+              : platformEnforced
+                ? "Install platform GitHub App"
+                : "Install GitHub App"}
           </button>
           <p className="muted" style={{ margin: 0, fontSize: "0.8rem" }}>
-            Opens GitHub to authorize the app for your org. Advanced PEM paste lives under{" "}
-            <Link to="/connectors">Connectors</Link> (dev break-glass).
+            {platformEnforced ? (
+              <>
+                Opens GitHub to install the shared App for your org. Manage connection under{" "}
+                <Link to="/connectors">Connectors</Link>.
+              </>
+            ) : (
+              <>
+                Opens GitHub to authorize the app for your org. Advanced PEM paste lives under{" "}
+                <Link to="/connectors">Connectors</Link> (dev break-glass).
+              </>
+            )}
           </p>
           {ghConfigured && installCount > 0 && (
             <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>

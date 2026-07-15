@@ -1,14 +1,19 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { useToast } from "../components/Toast";
 import { Badge, PageHero } from "../components/ui";
 import {
   api,
+  isPlatformOperator,
   type AuthUser,
   type GraphStatus,
   type LicenseInfo,
 } from "../lib/api";
-import { PlatformLangfusePanel, RuntimeConfigPanel } from "./settings/panels";
+import {
+  PlatformGithubAppPanel,
+  PlatformLangfusePanel,
+  RuntimeConfigPanel,
+} from "./settings/panels";
 
 export function PlatformSettings() {
   const toast = useToast();
@@ -20,6 +25,7 @@ export function PlatformSettings() {
   const [graph, setGraph] = useState<GraphStatus | null>(null);
   const [repoId, setRepoId] = useState("codesteward");
   const [license, setLicense] = useState<LicenseInfo | null>(null);
+  const [hideLicenseUi, setHideLicenseUi] = useState(false);
   const [licenseFeatures, setLicenseFeatures] = useState<
     Array<{ id: string; label: string; description: string; enabled: boolean }>
   >([]);
@@ -45,14 +51,7 @@ export function PlatformSettings() {
       .then((r) => {
         setUser(r.user);
         setAuthMode(r.authMode);
-        const u = r.user;
-        const ok =
-          r.authMode === "api_key" ||
-          r.authMode === "dev_open" ||
-          Boolean(u?.platformAdmin) ||
-          u?.id === "api_key" ||
-          u?.id === "dev";
-        setAllowed(ok);
+        setAllowed(isPlatformOperator(r.user, r.authMode));
       })
       .catch(() => {
         setUser(null);
@@ -80,10 +79,14 @@ export function PlatformSettings() {
         setLicense(r.license);
         setLicenseFeatures(r.features ?? []);
         setLicenseHint(r.upload?.note ?? null);
+        setHideLicenseUi(
+          Boolean(r.hideLicenseUi || r.openMode || r.license?.openMode || r.license?.hideLicenseUi),
+        );
       })
       .catch(() => {
         setLicense(null);
         setLicenseFeatures([]);
+        setHideLicenseUi(false);
       });
   }, []);
 
@@ -122,25 +125,9 @@ export function PlatformSettings() {
     }
   }
 
+  // No access: hide the surface entirely (nav already omits the link)
   if (allowed === false) {
-    return (
-      <div>
-        <PageHero
-          kicker="Install"
-          title="Platform"
-          subtitle="Install-wide operators only — tenant org admins cannot change these settings."
-        />
-        <div className="banner warn">
-          <strong>Platform operator required</strong>
-          <span>
-            Your account is a tenant user/admin, not a platform operator. Ask an operator to grant{" "}
-            <span className="mono">platformAdmin</span> or set{" "}
-            <span className="mono">STEW_PLATFORM_ADMIN_EMAILS</span> to your email. Org settings stay
-            under <Link to="/settings/organization">Organization</Link>.
-          </span>
-        </div>
-      </div>
-    );
+    return <Navigate to="/settings" replace />;
   }
 
   if (allowed === null) {
@@ -280,59 +267,64 @@ export function PlatformSettings() {
           </table>
         </div>
 
-        <div className="card stack" style={{ gridColumn: "1 / -1" }}>
-          <h3>License & features</h3>
-          <p className="muted" style={{ fontSize: "0.9rem", lineHeight: 1.55, margin: 0 }}>
-            Install-wide license (not <span className="mono">STEW_API_KEY</span>). Only platform
-            operators can upload. Tenant admins cannot install licenses.
-          </p>
-          {licenseHint && (
-            <p className="muted" style={{ fontSize: "0.8rem", margin: 0 }}>
-              {licenseHint}
+        {!hideLicenseUi && (
+          <div className="card stack" style={{ gridColumn: "1 / -1" }}>
+            <h3>License & features</h3>
+            <p className="muted" style={{ fontSize: "0.9rem", lineHeight: 1.55, margin: 0 }}>
+              Install-wide license (not <span className="mono">STEW_API_KEY</span>). Only platform
+              operators can upload. Tenant admins cannot install licenses.
             </p>
-          )}
-          {license && (
-            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-              <Badge tone="ok">{license.tier ?? license.status ?? "active"}</Badge>
-              {license.customer && <span className="muted">{license.customer}</span>}
+            {licenseHint && (
+              <p className="muted" style={{ fontSize: "0.8rem", margin: 0 }}>
+                {licenseHint}
+              </p>
+            )}
+            {license && (
+              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                <Badge tone="ok">{license.tier ?? license.status ?? "active"}</Badge>
+                {license.customer && <span className="muted">{license.customer}</span>}
+              </div>
+            )}
+            {licenseFeatures.length > 0 && (
+              <ul style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.85rem", lineHeight: 1.55 }}>
+                {licenseFeatures.map((f) => (
+                  <li key={f.id} title={f.description}>
+                    <Badge tone={f.enabled ? "ok" : "nit"}>{f.enabled ? "on" : "off"}</Badge>{" "}
+                    <strong>{f.label}</strong>
+                    {f.description && (
+                      <span className="muted" style={{ fontWeight: 400 }}>
+                        {" "}
+                        — {f.description}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="field">
+              <label>License key</label>
+              <textarea
+                value={licenseKeyInput}
+                onChange={(e) => setLicenseKeyInput(e.target.value)}
+                rows={3}
+                placeholder="Paste license key…"
+                className="mono"
+              />
             </div>
-          )}
-          {licenseFeatures.length > 0 && (
-            <ul style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.85rem", lineHeight: 1.55 }}>
-              {licenseFeatures.map((f) => (
-                <li key={f.id} title={f.description}>
-                  <Badge tone={f.enabled ? "ok" : "nit"}>{f.enabled ? "on" : "off"}</Badge>{" "}
-                  <strong>{f.label}</strong>
-                  {f.description && (
-                    <span className="muted" style={{ fontWeight: 400 }}>
-                      {" "}
-                      — {f.description}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="field">
-            <label>License key</label>
-            <textarea
-              value={licenseKeyInput}
-              onChange={(e) => setLicenseKeyInput(e.target.value)}
-              rows={3}
-              placeholder="Paste license key…"
-              className="mono"
-            />
+            <button
+              type="button"
+              className="primary sm"
+              disabled={licenseBusy || !licenseKeyInput.trim()}
+              onClick={() => void uploadLicense()}
+            >
+              {licenseBusy ? "Installing…" : "Install license"}
+            </button>
           </div>
-          <button
-            type="button"
-            className="primary sm"
-            disabled={licenseBusy || !licenseKeyInput.trim()}
-            onClick={() => void uploadLicense()}
-          >
-            {licenseBusy ? "Installing…" : "Install license"}
-          </button>
-        </div>
+        )}
 
+        <div style={{ gridColumn: "1 / -1" }}>
+          <PlatformGithubAppPanel />
+        </div>
         <div style={{ gridColumn: "1 / -1" }}>
           <PlatformLangfusePanel />
         </div>

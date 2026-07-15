@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Logo } from "../components/Logo";
 import { completeOidcLogin } from "../lib/oidc";
-import { api, setOrgId } from "../lib/api";
+import { api, resolveActiveOrg } from "../lib/api";
 import { useToast } from "../components/Toast";
 
 /**
@@ -19,7 +19,8 @@ export function AuthCallback() {
     (async () => {
       try {
         const { returnTo } = await completeOidcLogin();
-        // Warm /v1/auth/me so shadow user + org membership exist
+        // Warm /v1/auth/me + resolve orgs (clear stale cached "local")
+        let dest = returnTo.startsWith("/") ? returnTo : "/dashboard";
         try {
           const me = await api.authMe();
           if (me.user) {
@@ -28,15 +29,16 @@ export function AuthCallback() {
             } catch {
               /* ignore */
             }
-            if (me.user.orgId) setOrgId(me.user.orgId);
             toast.success(
               `Welcome, ${me.user.displayName || me.user.name || me.user.email}`,
             );
           }
+          const { needsOrg } = await resolveActiveOrg();
+          if (needsOrg) dest = "/onboarding";
         } catch {
           /* first me may still succeed later */
         }
-        if (alive) navigate(returnTo.startsWith("/") ? returnTo : "/dashboard", { replace: true });
+        if (alive) navigate(dest, { replace: true });
       } catch (err) {
         if (alive) {
           setError(err instanceof Error ? err.message : String(err));

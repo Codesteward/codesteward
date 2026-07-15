@@ -23,11 +23,12 @@ import { AccountSettings } from "./pages/AccountSettings";
 import { OrgSettings } from "./pages/OrgSettings";
 import { PlatformSettings } from "./pages/PlatformSettings";
 import { Settings } from "./pages/Settings";
-import { api, getSessionToken, setSessionToken } from "./lib/api";
+import { api, getSessionToken, resolveActiveOrg, setSessionToken } from "./lib/api";
 import { getAccessToken } from "./lib/oidc";
 
 /** Default post-login destination inside the authenticated app shell. */
 export const APP_HOME = "/dashboard";
+export const APP_ONBOARDING = "/onboarding";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -70,6 +71,15 @@ function RequireAuth({ children }: { children: ReactNode }) {
           navigate(loginPath, { replace: true });
           return;
         }
+        // Resolve org memberships; clear stale "local" and force onboarding when empty
+        const { needsOrg } = await resolveActiveOrg();
+        if (!alive) return;
+        const onOnboarding = location.pathname.startsWith("/onboarding");
+        if (needsOrg && !onOnboarding) {
+          setAllowed(true);
+          navigate(APP_ONBOARDING, { replace: true });
+          return;
+        }
         setAllowed(true);
       } catch {
         // API down — still allow shell so health shows offline
@@ -105,9 +115,18 @@ function RequireAuth({ children }: { children: ReactNode }) {
         navigate(`/login?returnTo=${encodeURIComponent(returnTo)}`, { replace: true });
       })();
     };
+    const onOrgRequired = () => {
+      if (!location.pathname.startsWith("/onboarding")) {
+        navigate(APP_ONBOARDING, { replace: true });
+      }
+    };
     window.addEventListener("cs:unauthorized", onUnauthorized);
-    return () => window.removeEventListener("cs:unauthorized", onUnauthorized);
-  }, [navigate]);
+    window.addEventListener("cs:org-required", onOrgRequired);
+    return () => {
+      window.removeEventListener("cs:unauthorized", onUnauthorized);
+      window.removeEventListener("cs:org-required", onOrgRequired);
+    };
+  }, [navigate, location.pathname]);
 
   if (checking) {
     return (
