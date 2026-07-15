@@ -20,6 +20,9 @@ x-stew-env: &stew-env
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   XAI_API_KEY: ${XAI_API_KEY:-}
   STEW_DATA_DIR: /data
+  # Clones must live on a path visible to graph-mcp (shared volume at /workspace).
+  # Codesteward Graph Python scans repo_path on the MCP host filesystem.
+  STEW_WORKSPACE_DIR: /workspace
   DATABASE_URL: postgres://steward:steward@postgres:5432/codesteward
   REPO_PATH: /repos/project
   # Clone target SCM repos for stewardship (never silently review REPO_PATH platform tree)
@@ -134,6 +137,7 @@ services:
       DEFAULT_TENANT_ID: "local"
       DEFAULT_REPO_ID: "demo"
       DEFAULT_REPO_PATH: "/repos/project"
+      # Same mount as API/worker clones (STEW_WORKSPACE_DIR=/workspace)
       WORKSPACE_BASE: "/workspace"
       LOG_LEVEL: "INFO"
     ports:
@@ -141,6 +145,8 @@ services:
     volumes:
       - graph-data:/data
       - ${REPO_PATH:-../..}:/repos/project:ro
+      # Shared with API/worker so graph_rebuild(repo_path=/workspace/...) can scan clones
+      - stew-workspaces:/workspace
 
   api:
     build:
@@ -154,6 +160,7 @@ services:
       - "8081:8081"
     volumes:
       - stew-data:/data
+      - stew-workspaces:/workspace
       - ${REPO_PATH:-../..}:/repos/project:ro
     depends_on:
       postgres:
@@ -173,6 +180,7 @@ services:
       <<: *stew-env
     volumes:
       - stew-data:/data
+      - stew-workspaces:/workspace
       - ${REPO_PATH:-../..}:/repos/project:ro
     depends_on:
       postgres:
@@ -191,5 +199,7 @@ services:
 
 volumes:
   stew-data:
+  # Session SCM clones (primary + cross-repo) — must be shared with graph-mcp
+  stew-workspaces:
   graph-data:
   pg-data:

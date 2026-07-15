@@ -47,13 +47,22 @@ spec:
             - name: GRAPHQLITE_PATH
               value: /data/graph.db
             {{- end }}
+            # Worker clones land under STEW_WORKSPACE_DIR (/workspace); graph_rebuild scans that path
+            - name: WORKSPACE_BASE
+              value: /workspace
           volumeMounts:
             - name: graph
               mountPath: /data
+            - name: workspaces
+              mountPath: /workspace
       volumes:
         - name: graph
           persistentVolumeClaim:
             claimName: {{ include "codesteward.name" . }}-graph
+        # Shared with API/worker so MCP can parse SCM clones (requires RWX or co-located pods)
+        - name: workspaces
+          persistentVolumeClaim:
+            claimName: {{ include "codesteward.name" . }}-data
 ---
 apiVersion: v1
 kind: Service

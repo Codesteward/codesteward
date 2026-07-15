@@ -11,14 +11,14 @@
 
 <p align="center">
   <a href="https://codesteward.ai">codesteward.ai</a> ·
-  <a href="research/design/05-full-product-architecture.md">Architecture</a> ·
   <a href="deploy/compose/docker-compose.category.yml">Category stack</a> ·
-  <a href="deploy/helm/codesteward">Helm</a>
+  <a href="deploy/helm/codesteward">Helm</a> ·
+  <a href="docs/ENTERPRISE_GAPS.md">Enterprise notes</a>
 </p>
 
 <p align="center">
   <code>Node ≥ 22</code> · <code>pnpm 9</code> · <code>TypeScript ESM</code> ·
-  <a href="LICENSE"><code>Apache-2.0</code></a> · <code>© bitkaio LLC</code>
+  <a href="LICENSE"><code>Apache-2.0</code></a>
 </p>
 
 ---
@@ -223,7 +223,7 @@ services/worker          # job consumer
 actions/review-action    # GitHub Action
 deploy/compose           # demo + category + keycloak + queue
 deploy/helm/codesteward  # production chart + HPA / KEDA
-research/design          # architecture ADRs
+docs/                    # enterprise notes & session audit
 ```
 
 | Script | Purpose |
@@ -278,32 +278,26 @@ See [`.env.example`](.env.example) for the full template.
 
 ## Status
 
-Self-hosted dual-mode review platform with product UI, Keycloak identity, multi-tenant orgs, webhooks, and horizontal workers. Treat hosted multi-tenant SaaS packaging as ongoing product work — see `research/gap-analysis/` for scored honesty notes.
+Self-hosted dual-mode review platform with product UI, Keycloak identity, multi-tenant orgs, webhooks, and horizontal workers. Hosted multi-tenant SaaS packaging is ongoing product work.
 
-Design references:
+Further reading in-repo:
 
-- [`research/design/05-full-product-architecture.md`](research/design/05-full-product-architecture.md)  
-- [`research/design/04-framework-decision.md`](research/design/04-framework-decision.md)  
+- [`docs/ENTERPRISE_GAPS.md`](docs/ENTERPRISE_GAPS.md) — enterprise gaps and hard edges  
+- [`docs/ENTERPRISE_SESSION_AUDIT.md`](docs/ENTERPRISE_SESSION_AUDIT.md) — session / audit notes  
+- [`deploy/helm/codesteward/README.md`](deploy/helm/codesteward/README.md) — production chart  
 
 ---
 
 ## License
 
-Licensed under the **Apache License, Version 2.0** — see [`LICENSE`](LICENSE).
+This project is licensed under the **Apache License, Version 2.0** ([`LICENSE`](LICENSE)).
 
-```text
-Copyright 2026 bitkaio LLC
-```
-
-You may not use this project except in compliance with the License. A copy is also summarized by the SPDX id **`Apache-2.0`**.
-
-Attribution and third-party notes: [`NOTICE`](NOTICE).
+Copyright and attribution details live in [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) — not repeated throughout this README.
 
 Codesteward Graph (when used as a dependency or service) is separately distributed under Apache-2.0.
 
 ---
 
 <p align="center">
-  <strong>Govern · Verify · Evolve</strong><br />
-  <sub>Built by bitkaio LLC · Apache-2.0</sub>
+  <strong>Govern · Verify · Evolve</strong>
 </p>

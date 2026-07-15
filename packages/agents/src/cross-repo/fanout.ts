@@ -6,6 +6,7 @@ import {
   unitId,
 } from "@codesteward/core";
 import type { GraphClient } from "@codesteward/graph-client";
+import type { MaterializedRepo } from "./materialize.js";
 
 export interface FanOutInput {
   sessionId: string;
@@ -17,6 +18,11 @@ export interface FanOutInput {
   tenantId?: string;
   /** Roles to assign on fan-out units */
   assignedRoles?: string[];
+  /**
+   * Pre-materialized paths (clone/mount) for linked repos.
+   * When set, unit metadata.repoPath is filled so specialists scan the real tree.
+   */
+  materialized?: Map<string, MaterializedRepo>;
 }
 
 export interface FanOutResult {
@@ -105,9 +111,28 @@ export async function planCrossRepoFanOut(input: FanOutInput): Promise<FanOutRes
       const toPaths =
         link.pathFilters.to.length > 0
           ? link.pathFilters.to
-          : link.toRepoPath
-            ? ["."]
-            : ["."];
+          : ["."];
+
+      const mat = input.materialized?.get(nextId);
+      const linkPath =
+        link.fromRepoId === nextId ? link.fromRepoPath : link.toRepoPath;
+      const repoPath = mat?.repoPath || linkPath;
+      if (!repoPath) {
+        skipped.push({
+          repoId: nextId,
+          reason: mat?.notes?.join("; ") || "linked repo not materialized (no clone/path)",
+        });
+        // Still emit a unit only when we have a path — otherwise specialists
+        // would silently scan the primary tree under the wrong repoId.
+        continue;
+      }
+      if (mat?.source === "missing") {
+        skipped.push({
+          repoId: nextId,
+          reason: mat.notes.join("; ") || "linked repo missing",
+        });
+        continue;
+      }
 
       units.push({
         id: unitId(),
@@ -121,10 +146,16 @@ export async function planCrossRepoFanOut(input: FanOutInput): Promise<FanOutRes
         metadata: {
           crossRepo: true,
           repoId: nextId,
-          repoPath: link.fromRepoId === nextId ? link.fromRepoPath : link.toRepoPath,
+          repoPath,
+          materializeSource: mat?.source ?? "link_path",
           edgeType: link.edgeType,
           linkId: link.id,
-          context: contextByRepo[nextId],
+          context: [
+            contextByRepo[nextId],
+            mat?.notes?.length ? `Materialize: ${mat.notes.join("; ")}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
         },
       });
     }

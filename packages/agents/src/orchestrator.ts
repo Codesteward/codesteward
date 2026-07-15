@@ -40,6 +40,11 @@ import {
 import type { OrgPromptPack } from "./prompt-pack.js";
 import { createLimiter, defaultMaxConcurrent } from "./concurrency.js";
 import { planCrossRepoFanOut } from "./cross-repo/fanout.js";
+import {
+  materializeCrossRepoWorkspaces,
+  type CloneAuth,
+} from "./cross-repo/materialize.js";
+import { seedCrossRepoGraphEdges } from "./cross-repo/graph-links.js";
 import { runDiscourse, shouldRunDiscourse } from "./discourse.js";
 import { packRepoContext } from "./code-context.js";
 import { packDiffContext } from "./diff-context.js";
@@ -84,6 +89,11 @@ export interface OrchestratorDeps {
   ) => void | Promise<void>;
   /** Org cross-repo links for fan-out */
   crossRepoLinks?: CrossRepoLink[];
+  /**
+   * SCM credentials for cloning linked repos during cross-repo fan-out
+   * (same token as primary workspace prepare).
+   */
+  cloneAuth?: CloneAuth | null;
   sandbox?: Sandbox;
   scm?: ScmProvider;
   learning?: LearningStore;
@@ -564,6 +574,131 @@ export class ReviewOrchestrator {
       });
 
       if (job.crossRepo !== false && this.deps.crossRepoLinks?.length) {
+        // 1) Discover linked repos (planning only — materialize paths next)
+        const preview = await planCrossRepoFanOut({
+          sessionId: session.id,
+          primaryRepoId: job.repoId,
+          primaryPaths: effectivePaths,
+          links: this.deps.crossRepoLinks,
+          budget: job.crossRepoBudget,
+          graph,
+          tenantId: job.tenantId,
+        });
+
+        // 2) Clone / mount each linked repo so specialists scan real trees
+        const materialized = await materializeCrossRepoWorkspaces({
+          sessionId: session.id,
+          primaryRepoId: job.repoId,
+          repoIds: preview.repos,
+          links: this.deps.crossRepoLinks,
+          cloneAuth: this.deps.cloneAuth,
+          provider:
+            this.deps.cloneAuth?.provider ??
+            job.scm?.provider ??
+            process.env.SCM_PROVIDER ??
+            "github",
+        });
+        // Primary path from prepared workspace
+        if (job.repoPath) {
+          materialized.set(job.repoId, {
+            repoId: job.repoId,
+            repoPath: job.repoPath,
+            source: "mount",
+            notes: ["primary session workspace"],
+          });
+        }
+
+        // 3) Rebuild graph for each linked repo that has a path (primary done earlier)
+        const readyForEdges: string[] = [];
+        if (job.repoPath) readyForEdges.push(job.repoId);
+        for (const [repoId, mat] of materialized) {
+          if (repoId === job.repoId) continue;
+          if (!mat.repoPath || mat.source === "missing") {
+            await this.emit({
+              type: "log",
+              sessionId: session.id,
+              level: "warn",
+              message: `Cross-repo ${repoId}: not available — ${mat.notes.join("; ") || "no path"}`,
+              ts: nowIso(),
+            });
+            continue;
+          }
+          await this.emit({
+            type: "log",
+            sessionId: session.id,
+            level: "info",
+            message: `Cross-repo ${repoId}: ${mat.source} → ${mat.repoPath}${mat.notes.length ? ` (${mat.notes.join("; ")})` : ""}`,
+            ts: nowIso(),
+          });
+          try {
+            await graph.rebuild({
+              repoPath: mat.repoPath,
+              tenantId: job.tenantId,
+              repoId,
+            });
+            readyForEdges.push(repoId);
+            this.deps.audit?.recordTool({
+              tool: "graph_rebuild",
+              name: "graph_rebuild",
+              summary: `cross-repo rebuild ${repoId}`,
+              ok: true,
+            });
+            await this.emit({
+              type: "log",
+              sessionId: session.id,
+              level: "info",
+              message: `Graph rebuilt for linked repo ${repoId}`,
+              ts: nowIso(),
+            });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.deps.audit?.recordTool({
+              tool: "graph_rebuild",
+              name: "graph_rebuild",
+              summary: `cross-repo rebuild ${repoId} failed: ${msg.slice(0, 120)}`,
+              ok: false,
+            });
+            await this.emit({
+              type: "log",
+              sessionId: session.id,
+              level: "warn",
+              message: `Graph rebuild failed for ${repoId}: ${msg}`,
+              ts: nowIso(),
+            });
+            // Still allow code scan if tree is present
+            readyForEdges.push(repoId);
+          }
+        }
+
+        // 4) Seed cross-repo edges in the graph (org links + package hints)
+        try {
+          const seeded = await seedCrossRepoGraphEdges({
+            graph,
+            tenantId: job.tenantId,
+            primaryRepoId: job.repoId,
+            links: this.deps.crossRepoLinks,
+            readyRepoIds: readyForEdges,
+          });
+          if (seeded.written || seeded.errors.length) {
+            await this.emit({
+              type: "log",
+              sessionId: session.id,
+              level: seeded.errors.length ? "warn" : "info",
+              message: `Cross-repo graph edges: written=${seeded.written} skipped=${seeded.skipped}${seeded.errors.length ? ` errors=${seeded.errors.join("; ")}` : ""}`,
+              ts: nowIso(),
+            });
+          }
+        } catch (err) {
+          await this.emit({
+            type: "log",
+            sessionId: session.id,
+            level: "warn",
+            message: `Cross-repo graph edge seed failed: ${err instanceof Error ? err.message : String(err)}`,
+            ts: nowIso(),
+          });
+        }
+
+        // 5) Re-plan units with materialized paths (skip repos we could not get)
         const fan = await planCrossRepoFanOut({
           sessionId: session.id,
           primaryRepoId: job.repoId,
@@ -572,6 +707,7 @@ export class ReviewOrchestrator {
           budget: job.crossRepoBudget,
           graph,
           tenantId: job.tenantId,
+          materialized,
         });
         crossRepoRepos = fan.repos;
         if (fan.units.length) {
@@ -581,6 +717,14 @@ export class ReviewOrchestrator {
             sessionId: session.id,
             level: "info",
             message: `Cross-repo fan-out: +${fan.units.length} units across ${fan.repos.join(", ")} (skipped ${fan.skipped.length})`,
+            ts: nowIso(),
+          });
+        } else if (fan.skipped.length) {
+          await this.emit({
+            type: "log",
+            sessionId: session.id,
+            level: "warn",
+            message: `Cross-repo: no linked units — ${fan.skipped.map((s) => `${s.repoId}: ${s.reason}`).join("; ")}`,
             ts: nowIso(),
           });
         }
@@ -703,10 +847,74 @@ export class ReviewOrchestrator {
 
       const unitRepoId =
         (unit.metadata?.repoId as string | undefined) ?? job.repoId;
-      const baseContext =
-        packedContext ??
+      const isCrossRepo = Boolean(unit.metadata?.crossRepo);
+      // Cross-repo units MUST use their own materialized path — never the primary tree
+      const unitRepoPath =
+        (typeof unit.metadata?.repoPath === "string" && unit.metadata.repoPath) ||
+        (isCrossRepo ? undefined : job.repoPath);
+
+      let baseContext =
         (unit.metadata?.context as string | undefined) ??
-        (job.mode === "gate" ? unit.paths.join("\n") : undefined);
+        (isCrossRepo ? undefined : packedContext) ??
+        (job.mode === "gate" && !isCrossRepo ? unit.paths.join("\n") : undefined);
+
+      // Pack source from the linked tree so specialists actually read that repo
+      if (isCrossRepo && unitRepoPath) {
+        try {
+          const charBudget = Number(process.env.STEW_CROSS_REPO_CONTEXT_CHARS ?? 24_000);
+          const packed = await packRepoContext({
+            repoPath: unitRepoPath,
+            paths: unit.paths?.length ? unit.paths : ["."],
+            tokenBudget: Math.max(2000, Math.floor(charBudget / 4)),
+          });
+          baseContext = [
+            `# Cross-repo unit: ${unitRepoId}`,
+            `Source path: ${unitRepoPath}`,
+            unit.metadata?.context ? String(unit.metadata.context) : "",
+            "",
+            packed.text,
+          ]
+            .filter(Boolean)
+            .join("\n");
+        } catch (err) {
+          await this.emit({
+            type: "log",
+            sessionId: session.id,
+            level: "warn",
+            message: `Cross-repo context pack failed for ${unitRepoId}: ${err instanceof Error ? err.message : String(err)}`,
+            ts: nowIso(),
+          });
+          baseContext = [
+            baseContext,
+            `WARNING: failed to pack ${unitRepoPath} — path may be unreadable`,
+          ]
+            .filter(Boolean)
+            .join("\n");
+        }
+      } else if (isCrossRepo && !unitRepoPath) {
+        await this.emit({
+          type: "log",
+          sessionId: session.id,
+          level: "error",
+          message: `Cross-repo unit ${unit.label} has no repoPath — skipping to avoid scanning primary tree as ${unitRepoId}`,
+          ts: nowIso(),
+        });
+        unit.status = "skipped";
+        unit.error = "linked repo not materialized";
+        unit.completedAt = nowIso();
+        unitIndex.set(unit.id, unit);
+        await this.emit({
+          type: "unit",
+          sessionId: session.id,
+          unitId: unit.id,
+          label: unit.label,
+          status: "skipped",
+          ts: nowIso(),
+        });
+        return;
+      } else if (!baseContext) {
+        baseContext = packedContext;
+      }
 
       const result = await runUnitWithHeal({
         sessionId: session.id,
@@ -751,7 +959,8 @@ export class ReviewOrchestrator {
               ...u,
               metadata: {
                 ...u.metadata,
-                repoPath: job.repoPath,
+                // Prefer unit's own path (cross-repo); fall back to primary only for primary units
+                repoPath: unitRepoPath ?? job.repoPath,
               },
             };
             const ctx = {

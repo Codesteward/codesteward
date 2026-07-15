@@ -368,6 +368,8 @@ export async function runReviewJob(
     promptPack,
     maxConcurrent: job.maxConcurrent,
     crossRepoLinks,
+    // Same SCM credentials used for primary clone — required so linked repos are checked out
+    cloneAuth,
     sandbox,
     scm,
     allowProve,

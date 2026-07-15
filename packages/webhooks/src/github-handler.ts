@@ -150,7 +150,18 @@ export async function handleGitHubWebhook(
     };
   }
 
-  return enqueueFromPr(deps, payload, delivery, action);
+  const result = await enqueueFromPr(deps, payload, delivery, action);
+  // SCM-only signal: react on the PR when a repo-triggered review was accepted
+  if (result.ok && result.status === 202) {
+    await ackWebhookReviewStarted(deps, {
+      owner: payload.repository.owner.login,
+      repo: payload.repository.name,
+      prNumber: payload.pull_request.number,
+      kind: "pull_request",
+      action,
+    });
+  }
+  return result;
 }
 
 async function handleIssueCommentMention(
@@ -306,10 +317,58 @@ async function handleIssueCommentMention(
     installation: payload.installation,
   };
 
-  return enqueueFromPr(deps, synthetic, delivery, "mentioned", {
+  const result = await enqueueFromPr(deps, synthetic, delivery, "mentioned", {
     reviewFocus: triage.reviewFocus,
     orgId: productOrgId,
   });
+  if (result.ok && result.status === 202) {
+    await ackWebhookReviewStarted(deps, {
+      owner,
+      repo,
+      prNumber,
+      kind: "mention",
+      commentId: payload.comment?.id,
+    });
+  }
+  return result;
+}
+
+/**
+ * Visible "we saw this" feedback on SCM-triggered reviews only.
+ * Never called for UI/API-started sessions (those never enter this webhook path).
+ *
+ * - @mention → 👀 on the triggering comment
+ * - PR open/sync/… → 👀 on the PR itself
+ */
+async function ackWebhookReviewStarted(
+  deps: GitHubWebhookDeps,
+  opts: {
+    owner: string;
+    repo: string;
+    prNumber: number;
+    kind: "mention" | "pull_request";
+    commentId?: number | string;
+    action?: string;
+  },
+): Promise<void> {
+  if (process.env.STEW_PR_REACT === "0" || process.env.STEW_PR_REACT === "false") {
+    return;
+  }
+  const react = deps.scm.createReaction?.bind(deps.scm);
+  if (!react) return;
+  try {
+    if (opts.kind === "mention" && opts.commentId != null) {
+      await react(opts.owner, opts.repo, { commentId: opts.commentId }, "eyes");
+    } else {
+      // PR-level reaction (GitHub treats PRs as issues for this API)
+      await react(opts.owner, opts.repo, { issueNumber: opts.prNumber }, "eyes");
+    }
+  } catch (err) {
+    console.warn(
+      "[webhooks] start reaction failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 async function enqueueFromPr(
@@ -446,7 +505,7 @@ interface GitHubPullRequestEvent {
 
 interface GitHubIssueCommentEvent {
   action: string;
-  comment?: { body?: string; user?: { login?: string } };
+  comment?: { id?: number; body?: string; user?: { login?: string } };
   issue: {
     number: number;
     pull_request?: { url?: string };

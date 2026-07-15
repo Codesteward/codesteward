@@ -81,6 +81,17 @@ export interface PostedCheckRun {
   conclusion?: string;
 }
 
+/** GitHub reaction content values (+ common aliases). */
+export type ScmReactionContent =
+  | "+1"
+  | "-1"
+  | "laugh"
+  | "confused"
+  | "heart"
+  | "hooray"
+  | "rocket"
+  | "eyes";
+
 export interface ScmProvider {
   readonly name: string;
   getPullRequest(owner: string, repo: string, number: number): Promise<PullRequest>;
@@ -99,6 +110,21 @@ export interface ScmProvider {
     number: number,
     body: string,
   ): Promise<PostedComment>;
+  /**
+   * Optional SCM reaction (GitHub: eyes/rocket/etc on issue/PR or issue comment).
+   * Used for "agent saw your request" feedback on webhook-triggered reviews only.
+   */
+  createReaction?(
+    owner: string,
+    repo: string,
+    target: {
+      /** PR / issue number (GitHub issues API covers PRs) */
+      issueNumber?: number;
+      /** Issue comment id (e.g. @mention that triggered review) */
+      commentId?: string | number;
+    },
+    content: ScmReactionContent,
+  ): Promise<{ id: string } | undefined>;
   listRepos(owner: string): Promise<Repository[]>;
   /** Authenticated user's repos (optional; falls back to listRepos). */
   listAuthenticatedRepos?(): Promise<Repository[]>;

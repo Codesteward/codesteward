@@ -50,6 +50,9 @@ spec:
               value: {{ .Values.env.MODEL_NAME | quote }}
             - name: STEW_DATA_DIR
               value: /data
+            # Must match graph-mcp WORKSPACE_BASE so graph_rebuild can scan clones
+            - name: STEW_WORKSPACE_DIR
+              value: /workspace
             - name: OTEL_ENABLED
               value: {{ .Values.env.OTEL_ENABLED | default "0" | quote }}
             - name: DATABASE_URL
@@ -74,7 +77,12 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: workspaces
+              mountPath: /workspace
       volumes:
         - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "codesteward.name" . }}-data
+        - name: workspaces
           persistentVolumeClaim:
             claimName: {{ include "codesteward.name" . }}-data

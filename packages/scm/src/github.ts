@@ -9,6 +9,7 @@ import type {
   Repository,
   ReviewComment,
   ScmProvider,
+  ScmReactionContent,
 } from "./types.js";
 
 export interface GitHubOptions {
@@ -198,6 +199,41 @@ export class GitHubScm implements ScmProvider {
       { method: "POST", body: JSON.stringify({ body }) },
     );
     return { id: String(res.id), htmlUrl: res.html_url };
+  }
+
+  /**
+   * React on a PR (as issue) or an issue comment — e.g. 👀 when a webhook review starts.
+   * Requires issues:write (or equivalent) on the GitHub App / token.
+   */
+  async createReaction(
+    owner: string,
+    repo: string,
+    target: { issueNumber?: number; commentId?: string | number },
+    content: ScmReactionContent = "eyes",
+  ): Promise<{ id: string } | undefined> {
+    const path = target.commentId
+      ? `/repos/${owner}/${repo}/issues/comments/${target.commentId}/reactions`
+      : target.issueNumber != null
+        ? `/repos/${owner}/${repo}/issues/${target.issueNumber}/reactions`
+        : null;
+    if (!path) return undefined;
+    try {
+      const res = await this.api<{ id: number }>(path, {
+        method: "POST",
+        body: JSON.stringify({ content }),
+        headers: {
+          // Reactions content-type (still accepted alongside github+json)
+          Accept: "application/vnd.github+json",
+        },
+      });
+      return { id: String(res.id) };
+    } catch (err) {
+      // Non-fatal: missing permission or duplicate reaction
+      console.warn(
+        `[scm/github] createReaction failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return undefined;
+    }
   }
 
   async listRepos(owner: string): Promise<Repository[]> {

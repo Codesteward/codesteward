@@ -93,4 +93,5 @@ pnpm stew -- findings export --sarif -s <sessionId>
 
 ## Architecture
 
-See `research/design/05-full-product-architecture.md` and `04-framework-decision.md`.
+See monorepo layout in root `README.md`, `docs/ENTERPRISE_GAPS.md`, and `deploy/helm/codesteward/README.md`.
+Local design notes may also live under `research/` when present (not always published).

@@ -48,6 +48,7 @@ services:
     volumes:
       - graph-data:/data
       - ${REPO_PATH:-../..}:/repos/project:ro
+      - stew-workspaces:/workspace
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/healthz"]
       interval: 15s
@@ -74,6 +75,7 @@ services:
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-dev-insecure}
       STEW_DATA_DIR: /data
+      STEW_WORKSPACE_DIR: /workspace
       DATABASE_URL: postgres://steward:steward@postgres:5432/codesteward
       REPO_PATH: /repos/project
       STEW_USE_DEEPAGENTS: ${STEW_USE_DEEPAGENTS:-1}
@@ -81,6 +83,7 @@ services:
       - "8081:8081"
     volumes:
       - stew-data:/data
+      - stew-workspaces:/workspace
       - ${REPO_PATH:-../..}:/repos/project:ro
     depends_on:
       postgres:
@@ -107,12 +110,14 @@ services:
       AGENT_MAX_CONCURRENT: ${AGENT_MAX_CONCURRENT:-8}
       STEW_MAX_CONCURRENT: ${STEW_MAX_CONCURRENT:-8}
       STEW_DATA_DIR: /data
+      STEW_WORKSPACE_DIR: /workspace
       DATABASE_URL: postgres://steward:steward@postgres:5432/codesteward
       REPO_PATH: /repos/project
       STEW_SANDBOX_PROVIDER: ${STEW_SANDBOX_PROVIDER:-null}
       STEW_USE_DEEPAGENTS: ${STEW_USE_DEEPAGENTS:-1}
     volumes:
       - stew-data:/data
+      - stew-workspaces:/workspace
       - ${REPO_PATH:-../..}:/repos/project:ro
       # optional docker.sock for LocalSandbox docker mode
       # - /var/run/docker.sock:/var/run/docker.sock
@@ -137,5 +142,6 @@ services:
 
 volumes:
   stew-data:
+  stew-workspaces:
   graph-data:
   pg-data:

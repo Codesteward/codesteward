@@ -9,6 +9,8 @@ export * from "./deep-agent-runner.js";
 export * from "./orchestrator.js";
 export * from "./self-heal.js";
 export * from "./cross-repo/fanout.js";
+export * from "./cross-repo/materialize.js";
+export * from "./cross-repo/graph-links.js";
 export * from "./tools/index.js";
 export * from "./discourse.js";
 export * from "./noise.js";
