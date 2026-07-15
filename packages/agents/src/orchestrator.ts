@@ -39,12 +39,8 @@ import {
 } from "@codesteward/findings";
 import type { OrgPromptPack } from "./prompt-pack.js";
 import { createLimiter, defaultMaxConcurrent } from "./concurrency.js";
-import { planCrossRepoFanOut } from "./cross-repo/fanout.js";
-import {
-  materializeCrossRepoWorkspaces,
-  type CloneAuth,
-} from "./cross-repo/materialize.js";
-import { seedCrossRepoGraphEdges } from "./cross-repo/graph-links.js";
+import { prepareCrossRepoReview } from "./cross-repo/prepare.js";
+import type { CloneAuth } from "./cross-repo/materialize.js";
 import { runDiscourse, shouldRunDiscourse } from "./discourse.js";
 import { packRepoContext } from "./code-context.js";
 import { packDiffContext } from "./diff-context.js";
@@ -574,159 +570,47 @@ export class ReviewOrchestrator {
       });
 
       if (job.crossRepo !== false && this.deps.crossRepoLinks?.length) {
-        // 1) Discover linked repos (planning only — materialize paths next)
-        const preview = await planCrossRepoFanOut({
+        const prepared = await prepareCrossRepoReview({
           sessionId: session.id,
           primaryRepoId: job.repoId,
+          primaryRepoPath: job.repoPath,
           primaryPaths: effectivePaths,
           links: this.deps.crossRepoLinks,
           budget: job.crossRepoBudget,
           graph,
           tenantId: job.tenantId,
-        });
-
-        // 2) Clone / mount each linked repo so specialists scan real trees
-        const materialized = await materializeCrossRepoWorkspaces({
-          sessionId: session.id,
-          primaryRepoId: job.repoId,
-          repoIds: preview.repos,
-          links: this.deps.crossRepoLinks,
           cloneAuth: this.deps.cloneAuth,
           provider:
             this.deps.cloneAuth?.provider ??
             job.scm?.provider ??
             process.env.SCM_PROVIDER ??
             "github",
-        });
-        // Primary path from prepared workspace
-        if (job.repoPath) {
-          materialized.set(job.repoId, {
-            repoId: job.repoId,
-            repoPath: job.repoPath,
-            source: "mount",
-            notes: ["primary session workspace"],
-          });
-        }
-
-        // 3) Rebuild graph for each linked repo that has a path (primary done earlier)
-        const readyForEdges: string[] = [];
-        if (job.repoPath) readyForEdges.push(job.repoId);
-        for (const [repoId, mat] of materialized) {
-          if (repoId === job.repoId) continue;
-          if (!mat.repoPath || mat.source === "missing") {
+          // Primary graph rebuild already ran in graph stage when needed
+          rebuildPrimary: false,
+          rebuildLinkedGraphs: true,
+          onLog: async ({ level, message }) => {
             await this.emit({
               type: "log",
               sessionId: session.id,
-              level: "warn",
-              message: `Cross-repo ${repoId}: not available — ${mat.notes.join("; ") || "no path"}`,
+              level,
+              message,
               ts: nowIso(),
             });
-            continue;
-          }
-          await this.emit({
-            type: "log",
-            sessionId: session.id,
-            level: "info",
-            message: `Cross-repo ${repoId}: ${mat.source} → ${mat.repoPath}${mat.notes.length ? ` (${mat.notes.join("; ")})` : ""}`,
-            ts: nowIso(),
-          });
-          try {
-            await graph.rebuild({
-              repoPath: mat.repoPath,
-              tenantId: job.tenantId,
-              repoId,
-            });
-            readyForEdges.push(repoId);
+          },
+          onRebuild: async ({ repoId, ok, error }) => {
             this.deps.audit?.recordTool({
               tool: "graph_rebuild",
               name: "graph_rebuild",
-              summary: `cross-repo rebuild ${repoId}`,
-              ok: true,
+              summary: ok
+                ? `cross-repo rebuild ${repoId}`
+                : `cross-repo rebuild ${repoId} failed: ${(error ?? "").slice(0, 120)}`,
+              ok,
             });
-            await this.emit({
-              type: "log",
-              sessionId: session.id,
-              level: "info",
-              message: `Graph rebuilt for linked repo ${repoId}`,
-              ts: nowIso(),
-            });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            this.deps.audit?.recordTool({
-              tool: "graph_rebuild",
-              name: "graph_rebuild",
-              summary: `cross-repo rebuild ${repoId} failed: ${msg.slice(0, 120)}`,
-              ok: false,
-            });
-            await this.emit({
-              type: "log",
-              sessionId: session.id,
-              level: "warn",
-              message: `Graph rebuild failed for ${repoId}: ${msg}`,
-              ts: nowIso(),
-            });
-            // Still allow code scan if tree is present
-            readyForEdges.push(repoId);
-          }
-        }
-
-        // 4) Seed cross-repo edges in the graph (org links + package hints)
-        try {
-          const seeded = await seedCrossRepoGraphEdges({
-            graph,
-            tenantId: job.tenantId,
-            primaryRepoId: job.repoId,
-            links: this.deps.crossRepoLinks,
-            readyRepoIds: readyForEdges,
-          });
-          if (seeded.written || seeded.errors.length) {
-            await this.emit({
-              type: "log",
-              sessionId: session.id,
-              level: seeded.errors.length ? "warn" : "info",
-              message: `Cross-repo graph edges: written=${seeded.written} skipped=${seeded.skipped}${seeded.errors.length ? ` errors=${seeded.errors.join("; ")}` : ""}`,
-              ts: nowIso(),
-            });
-          }
-        } catch (err) {
-          await this.emit({
-            type: "log",
-            sessionId: session.id,
-            level: "warn",
-            message: `Cross-repo graph edge seed failed: ${err instanceof Error ? err.message : String(err)}`,
-            ts: nowIso(),
-          });
-        }
-
-        // 5) Re-plan units with materialized paths (skip repos we could not get)
-        const fan = await planCrossRepoFanOut({
-          sessionId: session.id,
-          primaryRepoId: job.repoId,
-          primaryPaths: effectivePaths,
-          links: this.deps.crossRepoLinks,
-          budget: job.crossRepoBudget,
-          graph,
-          tenantId: job.tenantId,
-          materialized,
+          },
         });
-        crossRepoRepos = fan.repos;
-        if (fan.units.length) {
-          units = [...units, ...fan.units];
-          await this.emit({
-            type: "log",
-            sessionId: session.id,
-            level: "info",
-            message: `Cross-repo fan-out: +${fan.units.length} units across ${fan.repos.join(", ")} (skipped ${fan.skipped.length})`,
-            ts: nowIso(),
-          });
-        } else if (fan.skipped.length) {
-          await this.emit({
-            type: "log",
-            sessionId: session.id,
-            level: "warn",
-            message: `Cross-repo: no linked units — ${fan.skipped.map((s) => `${s.repoId}: ${s.reason}`).join("; ")}`,
-            ts: nowIso(),
-          });
+        crossRepoRepos = prepared.repos;
+        if (prepared.units.length) {
+          units = [...units, ...prepared.units];
         }
       }
       current = { ...current, units };

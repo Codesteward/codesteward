@@ -6,6 +6,7 @@ import { Badge, EmptyState, PageHero, formatRelative } from "../components/ui";
 import { Select } from "../components/Select";
 import {
   api,
+  downloadJson,
   type SessionReportIndexItem,
 } from "../lib/api";
 
@@ -72,6 +73,27 @@ export function Reports() {
         return ta - tb;
       });
   }, [reports, selected, mode]);
+
+  async function downloadAudit(sessionId: string) {
+    try {
+      const r = await api.sessionAudit(sessionId);
+      if (!r.audit) {
+        toast.error(
+          r.hint ??
+            "No review audit for this session. Open the session and re-run if needed.",
+        );
+        return;
+      }
+      downloadJson(`codesteward-audit-${sessionId}.json`, {
+        exportedAt: new Date().toISOString(),
+        sessionId,
+        audit: r.audit,
+      });
+      toast.success("Audit JSON download started");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   function downloadMd(r: SessionReportIndexItem) {
     if (!r.markdown) {
@@ -207,7 +229,7 @@ export function Reports() {
                     </h3>
                     <div className="row" style={{ gap: 8 }}>
                       <Link
-                        to={`/sessions?mode=${selected.mode === "stewardship" ? "steward" : "gate"}`}
+                        to={`/sessions?sessionId=${encodeURIComponent(selected.sessionId)}&mode=${selected.mode === "stewardship" ? "steward" : "gate"}`}
                         className="ghost sm"
                         state={{ openSessionId: selected.sessionId }}
                       >
@@ -219,6 +241,13 @@ export function Reports() {
                         onClick={() => downloadMd(selected)}
                       >
                         Download .md
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost sm"
+                        onClick={() => void downloadAudit(selected.sessionId)}
+                      >
+                        Download audit JSON
                       </button>
                     </div>
                   </div>

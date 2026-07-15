@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { useToast } from "../components/Toast";
 import {
@@ -15,6 +15,7 @@ import {
 import { Select } from "../components/Select";
 import {
   api,
+  downloadJson,
   type Finding,
   type FindingEvidence,
   type Job,
@@ -184,8 +185,15 @@ const RISK_TIER_INFO: Record<
 export function Sessions() {
   const toast = useToast();
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(() => {
+    const fromQuery =
+      searchParams.get("sessionId") ?? searchParams.get("id") ?? searchParams.get("session");
+    if (fromQuery) return fromQuery;
+    const st = location.state as { openSessionId?: string } | null;
+    return st?.openSessionId ?? null;
+  });
   const [detail, setDetail] = useState<Session | null>(null);
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [units, setUnits] = useState<ReviewUnit[]>([]);
@@ -214,7 +222,17 @@ export function Sessions() {
     if (pr) setPrNumber(pr);
     const rid = searchParams.get("repoId");
     if (rid) setRepoId(rid);
-  }, [searchParams]);
+    // Deep-link from Reports / external links: open session drawer
+    const openId =
+      searchParams.get("sessionId") ??
+      searchParams.get("id") ??
+      searchParams.get("session") ??
+      (location.state as { openSessionId?: string } | null)?.openSessionId;
+    if (openId) {
+      setSelectedId(openId);
+      setShowForm(false);
+    }
+  }, [searchParams, location.state]);
 
   const refresh = async () => {
     try {
@@ -1500,6 +1518,13 @@ function SessionReportPanel({
           <button type="button" className="sm ghost" onClick={download}>
             Download .md
           </button>
+          <button
+            type="button"
+            className="sm ghost"
+            onClick={() => void downloadSessionAudit(session)}
+          >
+            Download audit JSON
+          </button>
         </div>
       </div>
       {headline && (
@@ -1553,11 +1578,45 @@ function SessionReportPanel({
   );
 }
 
+async function downloadSessionAudit(
+  session: Session,
+  toast?: { success: (m: string) => void; error: (m: string) => void },
+): Promise<void> {
+  try {
+    let audit = resolveSessionAudit(session);
+    if (!audit) {
+      const r = await api.sessionAudit(session.id);
+      audit = r.audit;
+    }
+    if (!audit) {
+      toast?.error(
+        "No review audit for this session yet (older runs or incomplete worker). Re-run the review to generate one.",
+      );
+      return;
+    }
+    downloadJson(`codesteward-audit-${session.id}.json`, {
+      exportedAt: new Date().toISOString(),
+      sessionId: session.id,
+      repoId: session.repoId,
+      mode: session.mode,
+      status: session.status,
+      verdict: session.verdict,
+      tokenUsage: session.tokenUsage,
+      audit,
+    });
+    toast?.success("Audit JSON download started");
+  } catch (err) {
+    toast?.error(err instanceof Error ? err.message : String(err));
+  }
+}
+
 /** Manager-readable provenance: what code was bound and which specialists ran. */
 function ReviewAuditPanel({ session }: { session: Session }) {
+  const toast = useToast();
   const audit = resolveSessionAudit(session);
   const [remote, setRemote] = useState<SessionAudit | null>(null);
   const [hint, setHint] = useState<string | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
 
   useEffect(() => {
     if (audit) {
@@ -1582,15 +1641,33 @@ function ReviewAuditPanel({ session }: { session: Session }) {
   }, [session.id, audit]);
 
   const a = audit ?? remote;
+
+  const onExport = async () => {
+    setExportBusy(true);
+    try {
+      await downloadSessionAudit(session, toast);
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
   if (!a) {
     return (
       <div>
-        <h3 className="card-title" style={{ marginBottom: 10 }}>
-          Review audit
-        </h3>
+        <div className="card-header" style={{ marginBottom: 10 }}>
+          <h3 className="card-title">Review audit</h3>
+          <button
+            type="button"
+            className="sm ghost"
+            disabled={exportBusy}
+            onClick={() => void onExport()}
+          >
+            {exportBusy ? "…" : "Download audit JSON"}
+          </button>
+        </div>
         <p className="muted" style={{ fontSize: "0.85rem", margin: 0 }}>
           {hint ??
-            "No provenance for this session yet. New runs record code source, specialist runs, and a zero-findings rationale."}
+            "No provenance for this session yet. New runs record code source, specialist runs, and a zero-findings rationale. You can still try Download audit JSON if the API has a stored payload."}
         </p>
       </div>
     );
@@ -1610,7 +1687,17 @@ function ReviewAuditPanel({ session }: { session: Session }) {
     <div>
       <div className="card-header" style={{ marginBottom: 10 }}>
         <h3 className="card-title">Review audit</h3>
-        <Badge tone={sourceTone}>{ctx.source.replace(/_/g, " ")}</Badge>
+        <div className="row" style={{ gap: 8 }}>
+          <Badge tone={sourceTone}>{ctx.source.replace(/_/g, " ")}</Badge>
+          <button
+            type="button"
+            className="sm ghost"
+            disabled={exportBusy}
+            onClick={() => void onExport()}
+          >
+            {exportBusy ? "…" : "Download audit JSON"}
+          </button>
+        </div>
       </div>
 
       <div className="card" style={{ margin: 0, background: "var(--bg-deep)", padding: "0.85rem 1rem" }}>
