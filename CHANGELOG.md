@@ -59,7 +59,7 @@ Self-host hardening, operator docs site, multi-tenant workers, and release packa
 
 - **CI** — `require-tools` test imports `after` from `node:test`; zizmor template-injection in
   Keycloak base-update workflow (inputs via env); `serialize-javascript` override for docs/Docusaurus
-  HIGH advisory.
+  HIGH advisory; Hadolint on `Dockerfile.node` (DL3008 ignore placement + merge consecutive RUNs).
 
 ### Upgrade notes
 

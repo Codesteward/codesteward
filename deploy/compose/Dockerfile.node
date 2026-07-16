@@ -1,27 +1,27 @@
 # Multi-stage app image (API + worker monorepo).
 # Build: compile server packages only. Runtime: production node_modules (no pnpm CLI, no UI).
 FROM node:22-bookworm-slim AS build
+# Debian slim packages are rolling; pin is impractical for git/ca-certificates build deps.
 # hadolint ignore=DL3008
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates python3 make g++ \
-  && rm -rf /var/lib/apt/lists/*
-RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+  && rm -rf /var/lib/apt/lists/* \
+  && corepack enable \
+  && corepack prepare pnpm@9.15.0 --activate
 WORKDIR /app
 COPY package.json pnpm-workspace.yaml tsconfig.base.json pnpm-lock.yaml ./
 COPY packages ./packages
 COPY services ./services
-# Full install for compile (deepagents, etc.). (actions/ GitHub Action is not part of this image)
-RUN pnpm install --frozen-lockfile=false
-# UI ships via Dockerfile.ui; evals / review-action not needed in the API/worker image
-RUN pnpm -r \
-  --filter '!@codesteward/ui' \
-  --filter '!@codesteward/evals' \
-  --filter '!@codesteward/review-action' \
-  run build
-# Production reinstall keeps pnpm workspace links (plain `pnpm prune` can break package resolution)
-# and drops devDeps (esbuild/vite) that inflate Trivy gobinary noise.
+# Full install + compile in one layer (DL3059). UI/evals/review-action excluded from this image.
+# Production reinstall keeps pnpm workspace links and drops devDeps (esbuild/vite Trivy noise).
 ENV CI=true
-RUN rm -rf node_modules packages/*/node_modules services/*/node_modules \
+RUN pnpm install --frozen-lockfile=false \
+  && pnpm -r \
+    --filter '!@codesteward/ui' \
+    --filter '!@codesteward/evals' \
+    --filter '!@codesteward/review-action' \
+    run build \
+  && rm -rf node_modules packages/*/node_modules services/*/node_modules \
   && pnpm install --frozen-lockfile --prod \
   && rm -rf packages/ui packages/evals \
   && find node_modules -type d \( -name 'esbuild' -o -name '@esbuild' -o -name 'pulsar-client' \) -prune -exec rm -rf {} + 2>/dev/null || true \
@@ -31,10 +31,10 @@ RUN rm -rf node_modules packages/*/node_modules services/*/node_modules \
   && rm -rf /root/.local/share/pnpm /root/.cache /tmp/*
 
 FROM node:22-bookworm-slim AS runtime
-# hadolint ignore=DL3008
 # uv installs a private Python 3.12 + codesteward-mcp for embedded Graph (stdio in workers).
 COPY --from=ghcr.io/astral-sh/uv:0.6.14 /uv /usr/local/bin/uv
 COPY deploy/compose/requirements-graph.txt /tmp/requirements-graph.txt
+# hadolint ignore=DL3008
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates openssh-client bash \
   && rm -rf /var/lib/apt/lists/* \
