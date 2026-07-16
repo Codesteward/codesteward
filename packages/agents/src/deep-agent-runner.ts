@@ -227,26 +227,44 @@ export class DeepAgentRunner implements AgentRunner {
     });
 
     let sandboxSessionId: string | undefined;
+    // Prefer review-bound tree (clone/mount from job), not host REPO_PATH alone
+    const repoPath =
+      (unit.metadata?.repoPath as string | undefined) ||
+      process.env.REPO_PATH;
     try {
-      // Prefer review-bound tree (clone/mount from job), not host REPO_PATH alone
-      const repoPath =
-        (unit.metadata?.repoPath as string | undefined) ||
-        process.env.REPO_PATH;
       const session = await this.sandbox.createSession({
         repoPath,
-        labels: { unit: unit.id, role },
+        labels: {
+          unit: unit.id,
+          role,
+          org: ctx.orgId ?? ctx.tenantId ?? "",
+        },
       });
       sandboxSessionId = session.id;
     } catch {
       /* null sandbox may still work */
     }
 
+    const { graphTenantId } = await import("./graph-scope.js");
+    const orgKey = ctx.orgId ?? ctx.tenantId;
+    const gTenant = graphTenantId(orgKey, ctx.tenantId);
+    const allowedRepoIds = Array.isArray(unit.metadata?.allowedRepoIds)
+      ? (unit.metadata!.allowedRepoIds as string[])
+      : [ctx.repoId];
+    if (!allowedRepoIds.includes(ctx.repoId)) allowedRepoIds.unshift(ctx.repoId);
+
     const tools = [
       ...createGraphTools(graph, {
-        tenantId: ctx.tenantId,
+        tenantId: gTenant,
         repoId: ctx.repoId,
+        allowedRepoIds,
+        workspaceRoot: repoPath,
       }),
-      ...(sandboxSessionId ? createSandboxTools(this.sandbox, sandboxSessionId) : []),
+      ...(sandboxSessionId
+        ? createSandboxTools(this.sandbox, sandboxSessionId, {
+            workspaceRoot: repoPath,
+          })
+        : []),
     ];
 
     const rulesForPaths = policy.pathRules

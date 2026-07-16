@@ -144,50 +144,54 @@ async function nodeHttpFetch(
  * Client for Codesteward Graph MCP.
  *
  * Transports:
- * - **http** (streamable HTTP): POST JSON-RPC to `/mcp`
- * - **sse** (classic MCP SSE): GET `/sse` → POST `/messages/?session_id=…`
- * - **stdio**: not implemented (use GRAPH_MCP_URL)
+ * - **stdio / embedded** (default): spawn `codesteward-mcp --transport stdio` in the worker
+ * - **http** / **sse**: remote URL via GRAPH_MCP_URL (legacy; not required)
  *
- * Auto-detects SSE when base URL ends with `/sse` or when POST `/mcp` returns 404.
- * Set GRAPH_MOCK=1 for offline demo mode.
+ * Workers embed Graph MCP so clones never need a shared PVC with a graph sidecar.
+ * Set GRAPH_MOCK=1 for offline demo. Set GRAPH_MCP_URL only for an external graph server.
  */
 export class GraphClient {
   readonly baseUrl: string;
-  readonly transport: "http" | "sse" | "stdio" | "auto";
+  readonly transport: "http" | "sse" | "stdio" | "embedded" | "auto";
   readonly defaultTenantId: string;
   readonly defaultRepoId: string;
   readonly mock: boolean;
   private readonly fetchImpl: typeof fetch;
+  private readonly stdioCommand?: string;
   private rpcId = 1;
 
   /** Lazy SSE session (reused across tool calls). */
   private sse: SseMcpSession | null = null;
-  private resolvedTransport: "http" | "sse" | null = null;
+  private resolvedTransport: "http" | "sse" | "stdio" | null = null;
 
   constructor(opts: GraphClientOptions = {}) {
-    let base = (
-      opts.baseUrl ??
-      process.env.GRAPH_MCP_URL ??
-      "http://localhost:3000/sse"
-    ).replace(/\/$/, "");
-    // Codesteward Graph Docker image defaults to TRANSPORT=sse; /mcp 404s.
-    if (base.endsWith("/mcp") && (opts.transport === "sse" || opts.transport === "auto" || !opts.transport)) {
-      // Prefer SSE endpoint when still on auto (avoid hard 404 probe failures in logs)
+    const modeEnv = (process.env.GRAPH_MCP_MODE ?? "").trim().toLowerCase();
+    const urlEnv = (opts.baseUrl ?? process.env.GRAPH_MCP_URL ?? "").trim();
+    let transport: GraphClientOptions["transport"] =
+      opts.transport ??
+      (modeEnv === "http" || modeEnv === "sse"
+        ? modeEnv
+        : modeEnv === "stdio" || modeEnv === "embedded" || !urlEnv
+          ? "stdio"
+          : "auto");
+
+    let base = (urlEnv || "http://127.0.0.1:3000/sse").replace(/\/$/, "");
+    if (
+      base.endsWith("/mcp") &&
+      (transport === "sse" || transport === "auto" || !transport)
+    ) {
       if (process.env.GRAPH_FORCE_HTTP !== "1") {
         base = base.replace(/\/mcp$/i, "/sse");
       }
     }
     this.baseUrl = base;
-    this.transport =
-      opts.transport ??
-      (this.baseUrl.endsWith("/sse") ? "sse" : "auto");
+    this.transport = transport ?? "stdio";
+    this.stdioCommand = opts.stdioCommand;
     this.defaultTenantId = opts.tenantId ?? process.env.DEFAULT_TENANT_ID ?? "local";
     this.defaultRepoId = opts.repoId ?? process.env.DEFAULT_REPO_ID ?? "codesteward";
     this.mock =
       opts.mock ??
       (process.env.GRAPH_MOCK === "1" || process.env.GRAPH_MOCK === "true");
-    // Prefer caller fetch; otherwise use node:http when Host rewrite is required
-    // (MCP SSE DNS rebinding + Docker service names).
     if (opts.fetchImpl) {
       this.fetchImpl = opts.fetchImpl;
     } else if (resolveSseHostHeader(this.baseUrl)) {
@@ -285,21 +289,33 @@ export class GraphClient {
   }
 
   private async callTool<T>(name: string, args: Record<string, unknown>): Promise<T> {
-    if (this.transport === "stdio") {
-      throw new Error(
-        "stdio transport requires a local process bridge; use GRAPH_MCP_URL (http or sse)",
-      );
-    }
-
     const mode = await this.resolveTransport();
+    if (mode === "stdio") {
+      return this.callToolStdio<T>(name, args);
+    }
     if (mode === "sse") {
       return this.callToolSse<T>(name, args);
     }
     return this.callToolHttp<T>(name, args);
   }
 
-  private async resolveTransport(): Promise<"http" | "sse"> {
+  private async callToolStdio<T>(name: string, args: Record<string, unknown>): Promise<T> {
+    const { getEmbeddedGraphBridge } = await import("./stdio-bridge.js");
+    const bridge = getEmbeddedGraphBridge();
+    if (this.stdioCommand) {
+      // Bridge is a process singleton; command is fixed at first spawn via env GRAPH_MCP_COMMAND
+      process.env.GRAPH_MCP_COMMAND = this.stdioCommand;
+    }
+    const result = await bridge.callTool(name, args);
+    return unwrapToolResult<T>({ result: result as JsonRpcResult["result"] }, name);
+  }
+
+  private async resolveTransport(): Promise<"http" | "sse" | "stdio"> {
     if (this.resolvedTransport) return this.resolvedTransport;
+    if (this.transport === "stdio" || this.transport === "embedded") {
+      this.resolvedTransport = "stdio";
+      return "stdio";
+    }
     if (this.transport === "sse" || this.baseUrl.endsWith("/sse")) {
       this.resolvedTransport = "sse";
       return "sse";
@@ -307,6 +323,11 @@ export class GraphClient {
     if (this.transport === "http") {
       this.resolvedTransport = "http";
       return "http";
+    }
+    // auto with no URL preference → stdio
+    if (!(process.env.GRAPH_MCP_URL ?? "").trim()) {
+      this.resolvedTransport = "stdio";
+      return "stdio";
     }
     // auto: probe streamable HTTP first
     try {
@@ -725,3 +746,17 @@ class SseMcpSession {
 export function createGraphClient(opts?: GraphClientOptions): GraphClient {
   return new GraphClient(opts);
 }
+
+/** Start embedded graph MCP early (workers) so first rebuild is warm. */
+export async function ensureEmbeddedGraphMcp(): Promise<void> {
+  if (process.env.GRAPH_MOCK === "1" || process.env.GRAPH_MOCK === "true") return;
+  const mode = (process.env.GRAPH_MCP_MODE ?? "stdio").toLowerCase();
+  if (mode === "http" || mode === "sse") return;
+  if ((process.env.GRAPH_MCP_URL ?? "").trim() && mode !== "stdio" && mode !== "embedded") {
+    return;
+  }
+  const { ensureEmbeddedGraphMcp: start } = await import("./stdio-bridge.js");
+  await start();
+}
+
+export { stopEmbeddedGraphMcp } from "./stdio-bridge.js";

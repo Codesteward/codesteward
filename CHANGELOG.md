@@ -11,6 +11,26 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Multi-tenant worker isolation** — harden shared workers against cross-org clone reads
+  (path layout + tool jail + optional hard sandbox + claim affinity). See
+  `docs/MULTI_TENANT_WORKERS.md`.
+  - Workspace layout: clones under `{STEW_WORKSPACE_DIR}/{orgId}/{sessionId}`
+    (`STEW_TENANT_ISOLATION=path` default; `off` for legacy flat paths).
+  - Path jail on agent tools / packing (`packages/agents/src/path-jail.ts`) so
+    `sandbox_read` / resolve stay inside the session tree.
+  - `STEW_TENANT_ISOLATION=strict` prefers Docker/k8s sandbox (no host shell for agent tools).
+  - Org-affine workers: `STEW_WORKER_ORG_IDS` filters Postgres job claim so a pool only
+    runs listed orgs’ jobs.
+  - Graph scope: graph `tenant_id` = product `orgId`; rebuild `repo_path` jailed to session
+    workspace; allow-lists for multi-tenant graph queries.
+- **Platform queue republish** — after optional broker (NATS/Rabbit/Pulsar) message loss,
+  platform operators can rehydrate wake-up depth from Postgres SoT via
+  `GET/POST /v1/platform/queue` (+ `/republish`) or **Settings → Platform ops → Job queue recovery**.
+  Jobs remain claimable from Postgres either way; republish is for KEDA / broker consumers.
+- **Embedded Graph MCP in workers** — removed standalone graph-mcp service; workers spawn
+  `codesteward-mcp --transport stdio`. Shared Neo4j/Janus via `GRAPH_BACKEND` + `NEO4J_URI`
+  (tenant_id = product orgId). No shared clone PVC between graph and workers.
+
 ### Changed
 
 ### Fixed

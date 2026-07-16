@@ -12,6 +12,30 @@ export type EnqueueJob = Omit<ReviewJob, "id" | "enqueuedAt" | "attempts" | "cro
   crossRepo?: boolean;
 };
 
+/** Result of platform-admin broker rehydrate after message loss. */
+export interface RepublishPendingResult {
+  /** Active broker kind, or null when SoT-only. */
+  broker: string | null;
+  queue: string;
+  pending: number;
+  published: number;
+  failed: number;
+  skipped: number;
+  /** First few publish errors (jobId: message). */
+  errors: string[];
+  note?: string;
+}
+
+export interface QueueStatus {
+  queue: string;
+  broker: string | null;
+  brokerConfigured: boolean;
+  brokerConnected: boolean;
+  pendingInSot: number;
+  brokerDepth: number | null;
+  note?: string;
+}
+
 export interface JobQueue {
   enqueue(job: EnqueueJob): Promise<ReviewJob>;
   dequeue(): Promise<ReviewJob | undefined>;
@@ -25,6 +49,14 @@ export interface JobQueue {
   touchLock?(id: string): Promise<void>;
   /** Optional: claim a known job id (broker delivery). */
   claimById?(id: string): Promise<ReviewJob | undefined>;
+  /**
+   * Re-publish pending SoT jobs to the optional broker (platform recovery).
+   * No-op / clear note when no broker is configured. Idempotent wake-ups are OK —
+   * workers still claim ownership in Postgres.
+   */
+  republishPending?(opts?: { limit?: number }): Promise<RepublishPendingResult>;
+  /** Diagnostics for platform ops (broker kind, depths). */
+  status?(): Promise<QueueStatus>;
   /** Diagnostics */
   describe?(): string;
 }
@@ -67,6 +99,7 @@ export class PgJobQueue implements JobQueue {
     return db.jobs.enqueue({
       ...partial,
       tenantId: partial.tenantId ?? "local",
+      orgId: partial.orgId ?? partial.tenantId ?? "local",
       riskTier: partial.riskTier ?? "full",
       depth: partial.depth ?? "normal",
       crossRepo: partial.crossRepo ?? true,
@@ -115,6 +148,39 @@ export class PgJobQueue implements JobQueue {
     const dead = row ? row.attempts >= row.maxAttempts : false;
     await db.jobs.fail(id, error, { dead, retryAfterMs: 5_000 });
   }
+
+  async status(): Promise<QueueStatus> {
+    const pending = await this.list();
+    return {
+      queue: this.describe(),
+      broker: null,
+      brokerConfigured: false,
+      brokerConnected: false,
+      pendingInSot: pending.length,
+      brokerDepth: null,
+      note: "Postgres SoT only — no optional broker (STEW_QUEUE_BROKER). Workers poll Postgres; republish is not needed.",
+    };
+  }
+
+  async republishPending(opts?: { limit?: number }): Promise<RepublishPendingResult> {
+    const pending = await this.list();
+    const limit = clampRepublishLimit(opts?.limit);
+    return {
+      broker: null,
+      queue: this.describe(),
+      pending: pending.length,
+      published: 0,
+      failed: 0,
+      skipped: Math.min(pending.length, limit),
+      errors: [],
+      note: "No optional broker configured — pending jobs are already claimable from Postgres. Set STEW_QUEUE_BROKER + URL to enable wake-up republish.",
+    };
+  }
+}
+
+function clampRepublishLimit(raw?: number): number {
+  const n = typeof raw === "number" && Number.isFinite(raw) ? Math.floor(raw) : 500;
+  return Math.min(5_000, Math.max(1, n));
 }
 
 /**
@@ -212,6 +278,66 @@ export class HybridJobQueue implements JobQueue {
     this.pending.delete(id);
     // PG owns retry schedule — ack broker so we don't double-deliver while pending
     await msg?.ack().catch(() => undefined);
+  }
+
+  async status(): Promise<QueueStatus> {
+    const jobs = await this.base.list();
+    let brokerDepth: number | null = null;
+    try {
+      const d = await this.broker.depth?.();
+      brokerDepth = typeof d === "number" ? d : null;
+    } catch {
+      brokerDepth = null;
+    }
+    return {
+      queue: this.describe(),
+      broker: this.broker.kind,
+      brokerConfigured: true,
+      brokerConnected: true,
+      pendingInSot: jobs.length,
+      brokerDepth,
+      note:
+        "Postgres is job SoT. Broker is wake-up only. After broker message loss, use POST /v1/platform/queue/republish or rely on Postgres poll.",
+    };
+  }
+
+  /**
+   * Re-publish pending Postgres jobs onto the broker so KEDA / consumers
+   * see depth again after broker disaster recovery. Does not mutate SoT.
+   */
+  async republishPending(opts?: { limit?: number }): Promise<RepublishPendingResult> {
+    const limit = clampRepublishLimit(opts?.limit);
+    const all = await this.base.list();
+    const batch = all.slice(0, limit);
+    let published = 0;
+    let failed = 0;
+    const errors: string[] = [];
+    for (const job of batch) {
+      try {
+        await this.broker.publish(job);
+        published += 1;
+      } catch (err) {
+        failed += 1;
+        if (errors.length < 10) {
+          errors.push(
+            `${job.id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    }
+    return {
+      broker: this.broker.kind,
+      queue: this.describe(),
+      pending: all.length,
+      published,
+      failed,
+      skipped: Math.max(0, all.length - batch.length),
+      errors,
+      note:
+        failed === 0
+          ? `Re-published ${published} pending job(s) to ${this.broker.kind}. Duplicates are safe — workers claim in Postgres.`
+          : `Published ${published}, failed ${failed}. Jobs remain claimable from Postgres regardless.`,
+    };
   }
 
   async closeBroker() {
@@ -328,6 +454,38 @@ class LazyHybridJobQueue implements JobQueue {
   async claimById(id: string) {
     await this.ensure();
     return this.inner.claimById?.(id);
+  }
+
+  async status() {
+    await this.ensure();
+    if (this.inner.status) return this.inner.status();
+    const pending = await this.inner.list();
+    return {
+      queue: this.inner.describe?.() ?? "unknown",
+      broker: null,
+      brokerConfigured: false,
+      brokerConnected: false,
+      pendingInSot: pending.length,
+      brokerDepth: null as number | null,
+    };
+  }
+
+  async republishPending(opts?: { limit?: number }) {
+    await this.ensure();
+    if (this.inner.republishPending) {
+      return this.inner.republishPending(opts);
+    }
+    const pending = await this.inner.list();
+    return {
+      broker: null,
+      queue: this.inner.describe?.() ?? "unknown",
+      pending: pending.length,
+      published: 0,
+      failed: 0,
+      skipped: pending.length,
+      errors: [] as string[],
+      note: "Queue implementation does not support broker republish.",
+    };
   }
 }
 

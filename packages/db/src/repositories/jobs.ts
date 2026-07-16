@@ -45,6 +45,17 @@ function mapJob(row: JobRow): JobRecord {
   };
 }
 
+/** STEW_WORKER_ORG_IDS=a,b  → only those orgs; empty/* → all */
+function parseWorkerOrgAllowlist(): string[] | null {
+  const raw = (process.env.STEW_WORKER_ORG_IDS ?? "").trim();
+  if (!raw || raw === "*" || raw.toLowerCase() === "all") return null;
+  const list = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return list.length ? list : null;
+}
+
 export class JobsRepository {
   constructor(private readonly db: Queryable) {}
 
@@ -97,6 +108,9 @@ export class JobsRepository {
   async claim(workerId: string): Promise<ReviewJob | undefined> {
     // Default 45m — reviews often exceed 2 minutes; heartbeat extends further.
     const leaseMs = Number(process.env.STEW_JOB_LEASE_MS ?? 2_700_000);
+    // Optional multi-tenant affinity: only claim jobs for these org ids
+    // STEW_WORKER_ORG_IDS=org_a,org_b  |  * or empty = all orgs
+    const orgAllow = parseWorkerOrgAllowlist();
     const res = await this.db.query<JobRow>(
       `WITH next AS (
          SELECT id FROM jobs
@@ -110,6 +124,10 @@ export class JobsRepository {
                  OR locked_at < now() - ($2::text || ' milliseconds')::interval
                )
              )
+           )
+           AND (
+             $3::text[] IS NULL
+             OR COALESCE(payload->>'orgId', payload->>'tenantId', 'local') = ANY($3::text[])
            )
          ORDER BY
            CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
@@ -127,7 +145,7 @@ export class JobsRepository {
        FROM next
        WHERE j.id = next.id
        RETURNING j.*`,
-      [workerId, String(leaseMs)],
+      [workerId, String(leaseMs), orgAllow],
     );
     const row = res.rows[0];
     if (!row) return undefined;

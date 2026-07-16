@@ -55,18 +55,24 @@ export interface GraphAugmentResult {
 
 export interface GraphClientOptions {
   /**
-   * MCP base URL:
+   * MCP base URL (HTTP/SSE only):
    * - streamable HTTP: `http://host:3000/mcp`
    * - classic SSE: `http://host:3000/sse`
-   * With transport `auto`, `/mcp` is probed first; 404 falls back to SSE.
+   * Prefer **stdio / embedded** on workers (no sidecar). Set GRAPH_MCP_URL only for
+   * rare external graph servers.
    */
   baseUrl?: string;
-  /** Default `auto` — detect streamable HTTP vs classic SSE. */
-  transport?: "http" | "sse" | "stdio" | "auto";
+  /**
+   * - `stdio` / `embedded`: spawn `codesteward-mcp --transport stdio` in-process (default for workers)
+   * - `http` / `sse` / `auto`: remote GRAPH_MCP_URL
+   */
+  transport?: "http" | "sse" | "stdio" | "embedded" | "auto";
   tenantId?: string;
   repoId?: string;
   mock?: boolean;
   fetchImpl?: typeof fetch;
+  /** Override stdio command (default GRAPH_MCP_COMMAND or codesteward-mcp) */
+  stdioCommand?: string;
 }
 
 export interface RepoScope {

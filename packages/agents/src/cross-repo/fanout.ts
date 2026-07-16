@@ -16,6 +16,8 @@ export interface FanOutInput {
   budget?: CrossRepoBudget;
   graph?: GraphClient;
   tenantId?: string;
+  /** Product org — used as graph tenant_id for multi-tenant isolation */
+  orgId?: string;
   /** Roles to assign on fan-out units */
   assignedRoles?: string[];
   /**
@@ -84,8 +86,9 @@ export async function planCrossRepoFanOut(input: FanOutInput): Promise<FanOutRes
       let graphSnippet = "";
       if (input.graph) {
         try {
+          const { graphTenantId } = await import("../graph-scope.js");
           const q = await input.graph.query("dependency", "", {
-            tenantId: input.tenantId ?? "local",
+            tenantId: graphTenantId(input.orgId, input.tenantId),
             repoId: nextId,
             limit: 15,
           });

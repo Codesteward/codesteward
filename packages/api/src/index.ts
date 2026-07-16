@@ -11,6 +11,12 @@ export {
   HybridJobQueue,
   createJobQueue,
 } from "./queue.js";
+export type {
+  JobQueue,
+  EnqueueJob,
+  RepublishPendingResult,
+  QueueStatus,
+} from "./queue.js";
 export { createJobBroker, resolveBrokerKind } from "./queue-broker.js";
 export type { JobBroker, BrokerKind, ConsumedJob } from "./queue-broker.js";
 export { runReviewJob, resumeIncompleteSessions } from "./run-job.js";

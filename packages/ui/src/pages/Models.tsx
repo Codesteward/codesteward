@@ -39,7 +39,8 @@ const STAGE_HINTS: Record<string, string> = {
   requirements: "Requirements specialist",
 };
 
-type RoleRow = { provider?: string; model?: string; baseUrl?: string; apiKeyRef?: string };
+/** Per-stage override: provider + model only. Keys come from org Providers section. */
+type RoleRow = { provider?: string; model?: string; baseUrl?: string };
 type ProviderForm = { apiKey: string; baseUrl: string; apiKeySet: boolean };
 
 const emptyProviderForm = (): ProviderForm => ({ apiKey: "", baseUrl: "", apiKeySet: false });
@@ -70,7 +71,17 @@ export function Models() {
     setModel(p.model || "");
     setStrong(p.strongModel || "");
     setCheap(p.cheapModel || "");
-    setRoles(p.roleMatrix ?? {});
+    // Drop legacy apiKeyRef fields if present — keys live under Providers only
+    const cleaned: Record<string, RoleRow> = {};
+    for (const [role, row] of Object.entries(p.roleMatrix ?? {})) {
+      const r = row as RoleRow & { apiKeyRef?: string };
+      cleaned[role] = {
+        provider: r.provider,
+        model: r.model,
+        baseUrl: r.baseUrl,
+      };
+    }
+    setRoles(cleaned);
     if (p.availableRoles?.length) setRoleList(p.availableRoles);
     setProviderKeys((prev) => {
       const next = { ...prev };
@@ -127,12 +138,22 @@ export function Models() {
           apiKey: row.apiKey.trim() || undefined,
         };
       }
+      // Per-stage matrix: provider + model only (no env: key refs — use Providers above)
+      const rolesOut: Record<string, RoleRow> = {};
+      for (const [role, row] of Object.entries(roles)) {
+        if (!row?.provider && !row?.model && !row?.baseUrl) continue;
+        rolesOut[role] = {
+          provider: row.provider,
+          model: row.model,
+          baseUrl: row.baseUrl,
+        };
+      }
       await api.putModels({
         defaultProvider: provider,
         defaultModel: model,
         strongModel,
         cheapModel,
-        roles,
+        roles: rolesOut,
         providers,
       });
       toast.success("Model settings saved for this org (keys encrypted at rest)");
@@ -366,7 +387,8 @@ export function Models() {
         <div className="card-header">
           <h3>Per-stage matrix (optional)</h3>
           <span className="muted" style={{ fontSize: "0.8rem" }}>
-            Empty model → inherits strong/default/cheap. Prefer org provider keys over env: refs.
+            Empty model → inherits strong/default/cheap. API keys always come from{" "}
+            <strong>Provider API keys</strong> above (by provider), not per stage.
           </span>
         </div>
         <div className="table-wrap">
@@ -376,7 +398,6 @@ export function Models() {
                 <th>Stage</th>
                 <th>Provider</th>
                 <th>Model</th>
-                <th>API key ref (optional)</th>
                 <th />
               </tr>
             </thead>
@@ -409,14 +430,6 @@ export function Models() {
                         value={row.model ?? ""}
                         onChange={(e) => setRole(role, { model: e.target.value || undefined })}
                         placeholder="inherit"
-                        style={{ minWidth: 160 }}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        value={row.apiKeyRef ?? ""}
-                        onChange={(e) => setRole(role, { apiKeyRef: e.target.value || undefined })}
-                        placeholder="env:OPTIONAL_HOST_VAR"
                         style={{ minWidth: 160 }}
                       />
                     </td>

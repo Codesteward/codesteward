@@ -147,10 +147,14 @@ const CHEAP_ROLES = new Set<ModelRole>([
   "rules",
 ]);
 
+/**
+ * Host-only escape hatch for `STEW_MODEL_ROLE_MATRIX` (process env JSON).
+ * Org product matrices must not set apiKeyRef — use org `providers` encrypted keys.
+ */
 function resolveApiKeyRef(ref: string | undefined, env: NodeJS.ProcessEnv = process.env): string | undefined {
   if (!ref) return undefined;
   if (ref.startsWith("env:")) return env[ref.slice(4)];
-  // Never accept raw API keys in matrix — secrets stay in env/vault
+  // Never accept raw API keys in matrix — secrets stay in env/vault or org providers
   if (/^(sk-|ghp_|gho_|xai-|key-)/i.test(ref) || ref.length > 40) {
     throw new Error("apiKeyRef must be env:VAR_NAME — raw secrets are not accepted in model matrix");
   }

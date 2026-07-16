@@ -65,7 +65,7 @@ findings**. Later stages **read those findings as data**, not as chat history.
 | Step | What happens |
 |------|----------------|
 | **Start review** | API creates a `ReviewSession` + `ReviewJob` (mode `gate` or `stewardship`, paths, risk tier, depth, SCM metadata). |
-| **Queue** | Job is stored in **Postgres** (`DATABASE_URL` required; `FOR UPDATE SKIP LOCKED`). Optional NATS/Rabbit/Pulsar only *wakes* workers — they are not the job SoT. |
+| **Queue** | Job is stored in **Postgres** (`DATABASE_URL` required; `FOR UPDATE SKIP LOCKED`). Optional NATS/Rabbit/Pulsar only *wakes* workers — they are not the job SoT. After broker data loss, workers still poll Postgres; platform operators can `POST /v1/platform/queue/republish` (or **Platform ops → Republish pending**) to rehydrate broker depth for KEDA. |
 | **Claim** | A worker process calls the queue claim API and runs `runReviewJob`. |
 | **Runtime config** | `applyOrgRuntimeToProcess(orgId)` paints platform/org UI settings into `process.env` for that job (e.g. DeepAgents, SARIF publish, suggested fixes). |
 | **Workspace** | Prefer **SCM clone** into `{STEW_WORKSPACE_DIR}/{sessionId}` when credentials exist; else mount `REPO_PATH` (dev). Cross-repo clones go under `{sessionId}/cross/…`. |

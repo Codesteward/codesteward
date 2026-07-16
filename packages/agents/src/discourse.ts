@@ -49,6 +49,7 @@ export async function runDiscourse(
     sessionId: string;
     repoId: string;
     tenantId: string;
+    orgId?: string;
     policy: Policy;
     modelRouter: ModelRouter;
     graph: GraphClient;
@@ -82,6 +83,7 @@ export async function runDiscourse(
     sessionId: ctx.sessionId,
     repoId: ctx.repoId,
     tenantId: ctx.tenantId,
+    orgId: ctx.orgId ?? ctx.tenantId,
     unit: { ...unit, assignedRoles: ["correctness"] },
     policy: ctx.policy,
     modelRouter: ctx.modelRouter,

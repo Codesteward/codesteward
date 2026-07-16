@@ -32,14 +32,21 @@ RUN rm -rf node_modules packages/*/node_modules services/*/node_modules \
 
 FROM node:22-bookworm-slim AS runtime
 # hadolint ignore=DL3008
+# uv installs a private Python 3.12 + codesteward-mcp for embedded Graph (stdio in workers).
+COPY --from=ghcr.io/astral-sh/uv:0.6.14 /uv /usr/local/bin/uv
+COPY deploy/compose/requirements-graph.txt /tmp/requirements-graph.txt
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates openssh-client bash \
   && rm -rf /var/lib/apt/lists/* \
   && git --version \
+  && uv python install 3.12 \
+  && uv venv /opt/graph-venv --python 3.12 \
+  && uv pip install --python /opt/graph-venv -r /tmp/requirements-graph.txt \
+  && rm -f /tmp/requirements-graph.txt \
   && groupadd --system --gid 1001 steward \
   && useradd --system --uid 1001 --gid steward --home-dir /app --shell /usr/sbin/nologin steward \
   && mkdir -p /data/checkpoints /data/workspaces /workspace /tmp/codesteward-sandbox \
-  && chown -R steward:steward /data /workspace /tmp/codesteward-sandbox \
+  && chown -R steward:steward /data /workspace /tmp/codesteward-sandbox /opt/graph-venv \
   # Node image ships npm/yarn/corepack trees unused at runtime; strip to avoid Trivy node-pkg noise.
   && rm -rf \
     /usr/local/lib/node_modules/npm \
@@ -60,7 +67,11 @@ RUN chmod 755 /usr/local/bin/docker-entrypoint.sh
 ENV NODE_ENV=production \
     STEW_DATA_DIR=/data \
     STEW_WORKSPACE_DIR=/workspace \
-    HOME=/tmp
+    HOME=/tmp \
+    PATH="/opt/graph-venv/bin:${PATH}" \
+    GRAPH_MCP_MODE=stdio \
+    GRAPH_MCP_COMMAND=codesteward-mcp \
+    GRAPH_BACKEND=auto
 ARG SERVICE=api
 ENV SERVICE=${SERVICE}
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

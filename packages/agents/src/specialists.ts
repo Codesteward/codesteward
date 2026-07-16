@@ -19,6 +19,8 @@ export interface SpecialistContext {
   sessionId: string;
   repoId: string;
   tenantId: string;
+  /** Product org (multi-tenant isolation); defaults to tenantId when unset */
+  orgId?: string;
   unit: ReviewUnit;
   policy: Policy;
   modelRouter: ModelRouter;
@@ -115,13 +117,15 @@ export async function runSpecialist(
       const chunks: string[] = [];
       for (const q of basenames.slice(0, 3)) {
         const t0 = Date.now();
+        const { graphTenantId } = await import("./graph-scope.js");
+        const gTenant = graphTenantId(ctx.orgId, ctx.tenantId);
         const lexical = await ctx.graph.query("lexical", q, {
-          tenantId: ctx.tenantId,
+          tenantId: gTenant,
           repoId: ctx.repoId,
           limit: 15,
         });
         const referential = await ctx.graph.query("referential", q, {
-          tenantId: ctx.tenantId,
+          tenantId: gTenant,
           repoId: ctx.repoId,
           limit: 15,
         });

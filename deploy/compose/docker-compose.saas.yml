@@ -13,7 +13,7 @@
 #   UI            http://localhost:9080
 #   API           http://localhost:9081
 #   Keycloak      http://localhost:9083  (admin/admin)
-#   Graph MCP     http://localhost:9300
+#   Graph         embedded in worker (stdio) — no :9300 service
 #   Billing       http://localhost:9095
 #   Postgres      localhost:5433  (steward/steward @ codesteward_saas)
 #
@@ -31,8 +31,10 @@ name: codesteward-saas
 x-stew-env: &stew-env
   PORT: "8081"
   GRAPH_MOCK: "0"
-  GRAPH_MCP_URL: "http://graph-mcp:3000/sse"
-  GRAPH_MCP_HOST_HEADER: "127.0.0.1:3000"
+  GRAPH_MCP_MODE: stdio
+  GRAPH_MCP_COMMAND: codesteward-mcp
+  GRAPH_BACKEND: graphqlite
+  GRAPHQLITE_PATH: /data/graph.db
   STEW_DEBUG_LLM: ${STEW_DEBUG_LLM:-1}
   STEW_CODE_TOKEN_BUDGET: ${STEW_CODE_TOKEN_BUDGET:-14000}
   MODEL_PROVIDER: ${MODEL_PROVIDER:-openai-compatible}
@@ -169,7 +171,12 @@ services:
         echo "seeded local=pro acme=free proco=pro entco=enterprise"
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.0
+    image: ${KEYCLOAK_IMAGE:-codesteward-keycloak:local}
+    build:
+      context: ./keycloak
+      dockerfile: Dockerfile
+      args:
+        REALM_FILE: realm-codesteward-saas.json
     command:
       [
         "start-dev",
@@ -189,29 +196,6 @@ services:
       KC_HOSTNAME_ADMIN_URL: ${SAAS_KC_HOSTNAME_URL:-http://localhost:9083}
     ports:
       - "9083:8083"
-    volumes:
-      - ./keycloak/realm-codesteward-saas.json:/opt/keycloak/data/import/realm-codesteward.json:ro
-      - ./keycloak/themes/codesteward:/opt/keycloak/themes/codesteward:ro
-
-  graph-mcp:
-    image: ghcr.io/codesteward/codesteward-graph:latest
-    environment:
-      TRANSPORT: "sse"
-      HOST: "0.0.0.0"
-      PORT: "3000"
-      GRAPH_BACKEND: "graphqlite"
-      GRAPHQLITE_PATH: "/data/graph.db"
-      DEFAULT_TENANT_ID: "local"
-      DEFAULT_REPO_ID: "demo"
-      DEFAULT_REPO_PATH: "/repos/project"
-      WORKSPACE_BASE: "/workspace"
-      LOG_LEVEL: "INFO"
-    ports:
-      - "9300:3000"
-    volumes:
-      - saas-graph-data:/data
-      - ${REPO_PATH:-../..}:/repos/project:ro
-      - saas-workspaces:/workspace
 
   api:
     build:
@@ -234,8 +218,6 @@ services:
         condition: service_healthy
       saas-billing-seed:
         condition: service_completed_successfully
-      graph-mcp:
-        condition: service_started
       keycloak:
         condition: service_started
 

@@ -406,8 +406,13 @@ export class ReviewOrchestrator {
       await this.enterStage(session.id, "graph", "Checking graph");
       current = { ...current, stage: "graph" };
       try {
+        const { graphTenantId } = await import("./graph-scope.js");
+        const gTenant = graphTenantId(
+          job.orgId ?? session.orgId,
+          job.tenantId,
+        );
         const status = await graph.status({
-          tenantId: job.tenantId,
+          tenantId: gTenant,
           repoId: job.repoId,
         });
         this.deps.audit?.patchContext({
@@ -426,7 +431,7 @@ export class ReviewOrchestrator {
             !(effectivePaths.length === 1 && effectivePaths[0] === ".");
           await graph.rebuild({
             repoPath: job.repoPath,
-            tenantId: job.tenantId,
+            tenantId: gTenant,
             repoId: job.repoId,
             changedFiles: scoped ? effectivePaths : undefined,
           });
@@ -593,6 +598,7 @@ export class ReviewOrchestrator {
           budget: job.crossRepoBudget,
           graph,
           tenantId: job.tenantId,
+          orgId: job.orgId ?? session.orgId ?? "local",
           cloneAuth: this.deps.cloneAuth,
           provider:
             this.deps.cloneAuth?.provider ??
@@ -860,18 +866,34 @@ export class ReviewOrchestrator {
               ? this.simpleRunner
               : this.runner;
 
+            // Graph queries may only target this job's primary + fan-out repos (not arbitrary org repos)
+            const allowedRepoIds = [
+              ...new Set(
+                [
+                  job.repoId,
+                  unitRepoId,
+                  ...[...unitIndex.values()].map(
+                    (x) =>
+                      (x.metadata?.repoId as string | undefined) ??
+                      (x.metadata?.linkedRepoId as string | undefined),
+                  ),
+                ].filter((x): x is string => Boolean(x)),
+              ),
+            ];
             const unitWithPath = {
               ...u,
               metadata: {
                 ...u.metadata,
                 // Prefer unit's own path (cross-repo); fall back to primary only for primary units
                 repoPath: unitRepoPath ?? job.repoPath,
+                allowedRepoIds,
               },
             };
             const ctx = {
               sessionId: session.id,
               repoId: unitRepoId,
               tenantId: job.tenantId,
+              orgId: job.orgId ?? session.orgId ?? "local",
               unit: unitWithPath,
               policy,
               modelRouter,
@@ -971,6 +993,7 @@ export class ReviewOrchestrator {
             sessionId: session.id,
             repoId: job.repoId,
             tenantId: job.tenantId,
+            orgId: job.orgId ?? session.orgId ?? "local",
             policy,
             modelRouter,
             graph,
@@ -1636,13 +1659,15 @@ export class ReviewOrchestrator {
     const { readFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
     const repoRoot = job.repoPath ?? process.cwd();
+    const { resolveInsideRoot } = await import("./path-jail.js");
     const inline = [];
     for (const f of capped) {
       if (!f.path) continue;
       let content = fileCache.get(f.path);
       if (content === undefined) {
         try {
-          content = await readFile(join(repoRoot, f.path), "utf8");
+          const abs = resolveInsideRoot(repoRoot, f.path);
+          content = await readFile(abs, "utf8");
           fileCache.set(f.path, content);
         } catch {
           content = "";

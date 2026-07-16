@@ -65,15 +65,39 @@ helm upgrade --install codesteward ./deploy/helm/codesteward \
   --set secrets.databasePassword=steward
 ```
 
-## Graph backends
+## Graph (embedded in workers)
 
-| values.graph.backend | Notes |
-|----------------------|-------|
-| `graphqlite` | Demo / small |
-| `neo4j` | Default production |
+There is **no graph-mcp Deployment**. Each worker runs `codesteward-mcp` over **stdio** and
+talks to a **shared** Neo4j or JanusGraph (recommended) or local GraphQLite.
+
+| `graph.backend` | Notes |
+|-----------------|-------|
+| `neo4j` | Default production — set `graph.neo4j.uri` or use in-cluster Neo4j |
 | `janusgraph` | Apache-2.0 alternative |
+| `graphqlite` | Single-worker / demo (`GRAPHQLITE_PATH=/data/graph.db`) |
 
-For local graph stacks: `deploy/compose/docker-compose.neo4j.yml` and `docker-compose.janusgraph.yml`.
+`tenant_id` for graph nodes = **product orgId** (multi-tenant isolation).
+
+Compose stacks: `docker-compose.neo4j.yml`, `docker-compose.janusgraph.yml`, `docker-compose.demo.yml`.
+
+## Keycloak (optional themed IdP)
+
+Helm does **not** require a git checkout for the login theme. Pull the published image whose
+**tag equals upstream Keycloak**:
+
+```bash
+# Same version string as quay.io/keycloak/keycloak:26.7.0
+helm upgrade --install codesteward ./deploy/helm/codesteward \
+  --set keycloak.enabled=true \
+  --set keycloak.image.repository=ghcr.io/codesteward/codesteward/keycloak \
+  --set keycloak.image.tag=26.7.0 \
+  --set secrets.keycloakAdminPassword="$KC_ADMIN_PASSWORD"
+```
+
+Pin / CI source of truth: `deploy/compose/keycloak/KEYCLOAK_VERSION`.  
+Weekly workflow `.github/workflows/keycloak-base-update.yml` rebuilds when upstream ships a new release.
+
+Use an external IdP instead: leave `keycloak.enabled=false` and set `OIDC_*` on the API/UI.
 
 ## Auth
 

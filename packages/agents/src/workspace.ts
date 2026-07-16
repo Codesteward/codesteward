@@ -11,6 +11,11 @@ import {
   parseOwnerRepo,
 } from "@codesteward/scm";
 import { spawn } from "node:child_process";
+import {
+  sessionWorkspaceDir,
+  tenantIsolationMode,
+  workspaceRootDir,
+} from "./path-jail.js";
 
 export interface PrepareWorkspaceOpts {
   job: ReviewJob;
@@ -105,11 +110,15 @@ export async function prepareSessionWorkspace(
     opts.cloneAuth?.token &&
     (opts.cloneAuth.provider || job.scm?.provider || true)
   ) {
-    const root =
-      process.env.STEW_WORKSPACE_DIR ??
-      join(process.env.STEW_DATA_DIR ?? ".steward-data", "workspaces");
-    workdir = join(root, sessionId);
+    const root = workspaceRootDir();
+    const orgKey = orgId ?? job.orgId ?? job.tenantId ?? "local";
+    // Multi-tenant layout: {root}/{orgId}/{sessionId} (isolation mode "off" keeps flat path)
+    workdir =
+      tenantIsolationMode() === "off"
+        ? join(root, sessionId)
+        : sessionWorkspaceDir({ sessionId, orgId: orgKey, root });
     await mkdir(root, { recursive: true, mode: 0o700 });
+    await mkdir(join(workdir, ".."), { recursive: true, mode: 0o700 });
     const provider = opts.cloneAuth.provider || job.scm?.provider || "github";
     const mat = await materializeGitWorkspace({
       provider,

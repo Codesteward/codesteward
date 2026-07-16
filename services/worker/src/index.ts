@@ -38,10 +38,26 @@ async function main() {
     console.warn("[worker] runtime config apply failed", err);
   }
 
+  // Embed Codesteward Graph MCP in-process (stdio) — no standalone graph-mcp pod / shared PVC
+  if (process.env.GRAPH_MOCK !== "1" && process.env.GRAPH_MOCK !== "true") {
+    try {
+      const { ensureEmbeddedGraphMcp } = await import("@codesteward/graph-client");
+      await ensureEmbeddedGraphMcp();
+      console.log(
+        `[worker] graph MCP embedded (stdio) backend=${process.env.GRAPH_BACKEND ?? "auto"} cmd=${process.env.GRAPH_MCP_COMMAND ?? "codesteward-mcp"}`,
+      );
+    } catch (err) {
+      console.warn(
+        "[worker] embedded graph MCP failed to start — reviews will soft-fail graph tools until fixed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
   const queueDesc = globalQueue.describe?.() ?? "unknown";
   console.log("[worker] starting Codesteward review worker");
   console.log(
-    `[worker] queue=${queueDesc} GRAPH_MOCK=${process.env.GRAPH_MOCK ?? "0"} DEEPAGENTS=${process.env.STEW_USE_DEEPAGENTS ?? "auto"} SANDBOX=${process.env.STEW_SANDBOX_PROVIDER ?? "null"}`,
+    `[worker] queue=${queueDesc} GRAPH_MOCK=${process.env.GRAPH_MOCK ?? "0"} GRAPH_MCP_MODE=${process.env.GRAPH_MCP_MODE ?? "stdio"} DEEPAGENTS=${process.env.STEW_USE_DEEPAGENTS ?? "auto"} SANDBOX=${process.env.STEW_SANDBOX_PROVIDER ?? "null"}`,
   );
 
   await resumeIncompleteSessions({

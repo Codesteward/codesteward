@@ -5,23 +5,19 @@ image:
   tag: "1.1.0"
   pullPolicy: IfNotPresent
 
-graphImage:
-  repository: ghcr.io/codesteward/codesteward-graph
-  tag: latest
-
-# Graph backend: graphqlite | neo4j | janusgraph
-# Production requires Neo4j or JanusGraph (or external managed graph).
+# Graph: embedded in workers (stdio MCP). No standalone graph-mcp Deployment.
+# Shared Neo4j/Janus recommended for multi-worker index cache (tenant_id = product orgId).
 graph:
-  backend: neo4j
-  mcp:
-    replicas: 2
-    port: 3000
+  backend: neo4j  # neo4j | janusgraph | graphqlite | auto
   neo4j:
     enabled: true
-    auth: "neo4j/changeme"
+    uri: ""  # default bolt://{{release}}-neo4j:7687 when empty
+    user: neo4j
+    password: changeme
     boltPort: 7687
   janusgraph:
     enabled: false
+    url: ""
     gremlinPort: 8182
 
 # Postgres is required in production (sessions, jobs, findings, learning, checkpoints).
@@ -138,6 +134,7 @@ secrets:
   apiKey: ""           # STEW_API_KEY
   databaseUrl: ""      # DATABASE_URL full connection string (required in production)
   databasePassword: "" # used when database.enabled=true
+  keycloakAdminPassword: ""  # when keycloak.enabled
 
 persistence:
   dataSize: 20Gi
@@ -159,3 +156,32 @@ ingress:
         - path: /v1
           pathType: Prefix
           service: api
+
+# Optional in-cluster Keycloak with Codesteward login theme (baked into the image).
+# Pull ghcr.io/<owner>/<repo>/keycloak — operators never need a git checkout for themes.
+# Disable when using an external IdP (Okta, Entra, corporate Keycloak).
+keycloak:
+  enabled: false
+  image:
+    # Override to match your GHCR path, e.g. ghcr.io/codesteward/codesteward/keycloak
+    repository: ghcr.io/codesteward/codesteward/keycloak
+    tag: "26.7.0"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  port: 8083
+  # Dev-friendly start-dev; set production: true for `start` + hostname
+  production: false
+  hostname: ""
+  admin:
+    user: admin
+    # Prefer secrets.keycloakAdminPassword; fallback for dev only
+    password: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  service:
+    type: ClusterIP

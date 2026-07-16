@@ -733,7 +733,7 @@ export const api = {
     defaultModel?: string;
     strongModel?: string;
     cheapModel?: string;
-    roles?: Record<string, { provider?: string; model?: string; baseUrl?: string; apiKeyRef?: string }>;
+    roles?: Record<string, { provider?: string; model?: string; baseUrl?: string }>;
     /** Per-org provider secrets — empty apiKey keeps existing; "__clear__" removes */
     providers?: Record<string, { apiKey?: string; baseUrl?: string }>;
   }) =>
@@ -1044,7 +1044,39 @@ export const api = {
   /** Install-wide performance analytics (platform operators only). */
   platformAnalytics: (days = 14) =>
     req<PlatformAnalytics>(`/v1/platform/analytics?days=${days}`),
+  /** Job queue status (Postgres SoT + optional broker). Platform operators only. */
+  platformQueueStatus: () => req<PlatformQueueStatus>("/v1/platform/queue"),
+  /**
+   * Re-publish pending Postgres jobs onto the optional wake-up broker
+   * (after broker disaster recovery). Platform operators only.
+   */
+  platformQueueRepublish: (body?: { limit?: number }) =>
+    req<PlatformQueueRepublishResult>("/v1/platform/queue/republish", {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
 };
+
+export interface PlatformQueueStatus {
+  queue: string;
+  broker: string | null;
+  brokerConfigured: boolean;
+  brokerConnected: boolean;
+  pendingInSot: number;
+  brokerDepth: number | null;
+  note?: string;
+}
+
+export interface PlatformQueueRepublishResult {
+  broker: string | null;
+  queue: string;
+  pending: number;
+  published: number;
+  failed: number;
+  skipped: number;
+  errors: string[];
+  note?: string;
+}
 
 export interface PlatformAnalytics {
   windowDays: number;
@@ -1576,7 +1608,7 @@ export interface ModelProfile {
   providers?: Record<string, { apiKeySet: boolean; baseUrl?: string }>;
   roleMatrix?: Record<
     string,
-    { provider?: string; model?: string; baseUrl?: string; apiKeyRef?: string; apiKeySet?: boolean }
+    { provider?: string; model?: string; baseUrl?: string }
   >;
   availableRoles?: string[];
   langfuseEnabled?: boolean;

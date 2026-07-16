@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
-import { join, relative, extname } from "node:path";
+import { join, relative, extname, resolve } from "node:path";
+import { isPathInsideRoot, resolveInsideRoot } from "./path-jail.js";
 
 const DEFAULT_EXTS = new Set([
   ".ts",
@@ -72,16 +73,26 @@ export async function packRepoContext(opts: {
   const maxFileBytes = opts.maxFileBytes ?? 24_000;
   const charBudget = tokenBudget * 4;
 
+  const repoRoot = resolve(opts.repoPath);
   const roots = opts.paths?.length ? opts.paths : ["."];
   const files: string[] = [];
   for (const p of roots) {
-    const abs = p === "." || p === "" ? opts.repoPath : join(opts.repoPath, p);
+    let abs: string;
+    try {
+      abs =
+        p === "." || p === ""
+          ? repoRoot
+          : resolveInsideRoot(repoRoot, p);
+    } catch {
+      /* path escape — skip */
+      continue;
+    }
     try {
       const st = await stat(abs);
       if (st.isFile()) {
-        files.push(relative(opts.repoPath, abs) || p);
+        files.push(relative(repoRoot, abs) || p);
       } else if (st.isDirectory()) {
-        await walk(abs, opts.repoPath, files, maxFiles * 3);
+        await walk(abs, repoRoot, files, maxFiles * 3);
       }
     } catch {
       /* skip missing */
@@ -103,7 +114,17 @@ export async function packRepoContext(opts: {
       truncated = true;
       continue;
     }
-    const abs = join(opts.repoPath, rel);
+    let abs: string;
+    try {
+      abs = resolveInsideRoot(repoRoot, rel);
+    } catch {
+      omitted.push(rel);
+      continue;
+    }
+    if (!isPathInsideRoot(repoRoot, abs)) {
+      omitted.push(rel);
+      continue;
+    }
     try {
       const st = await stat(abs);
       if (!st.isFile() || st.size > maxFileBytes * 2) {

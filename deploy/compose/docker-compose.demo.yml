@@ -1,8 +1,15 @@
-# CodeSteward Review — full demo stack with GraphQLite MCP
+# CodeSteward Review — demo stack with embedded Graph (stdio in worker)
 # Usage:
 #   export OPENAI_API_KEY=...
 #   docker compose -f deploy/compose/docker-compose.demo.yml up --build
 name: codesteward-demo
+
+x-graph-env: &graph-env
+  GRAPH_MOCK: "0"
+  GRAPH_MCP_MODE: stdio
+  GRAPH_MCP_COMMAND: codesteward-mcp
+  GRAPH_BACKEND: graphqlite
+  GRAPHQLITE_PATH: /data/graph.db
 
 services:
   postgres:
@@ -23,39 +30,6 @@ services:
       retries: 10
       start_period: 10s
 
-  graph-mcp:
-    image: ghcr.io/codesteward/codesteward-graph:latest
-    # Fallback local build if image pull fails — use upstream Dockerfile
-    # build:
-    #   context: ../../research/source/codesteward
-    #   dockerfile: Dockerfile.mcp
-    #   args:
-    #     INSTALL_EXTRA: "graph-all,graphqlite"
-    container_name: codesteward-graph-mcp
-    environment:
-      TRANSPORT: "sse"
-      HOST: "0.0.0.0"
-      PORT: "3000"
-      GRAPH_BACKEND: "graphqlite"
-      GRAPHQLITE_PATH: "/data/graph.db"
-      DEFAULT_TENANT_ID: "local"
-      DEFAULT_REPO_ID: "demo"
-      DEFAULT_REPO_PATH: "/repos/project"
-      WORKSPACE_BASE: "/workspace"
-      LOG_LEVEL: "INFO"
-    ports:
-      - "3000:3000"
-    volumes:
-      - graph-data:/data
-      - ${REPO_PATH:-../..}:/repos/project:ro
-      - stew-workspaces:/workspace
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/healthz"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
   api:
     build:
       context: ../..
@@ -63,9 +37,8 @@ services:
       args:
         SERVICE: api
     environment:
+      <<: *graph-env
       PORT: "8081"
-      GRAPH_MOCK: "0"
-      GRAPH_MCP_URL: "http://graph-mcp:3000/sse"
       MODEL_PROVIDER: ${MODEL_PROVIDER:-openai-compatible}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
@@ -79,6 +52,7 @@ services:
       DATABASE_URL: postgres://steward:steward@postgres:5432/codesteward
       REPO_PATH: /repos/project
       STEW_USE_DEEPAGENTS: ${STEW_USE_DEEPAGENTS:-1}
+      STEW_INLINE_WORKER: ${STEW_INLINE_WORKER:-0}
     ports:
       - "8081:8081"
     volumes:
@@ -88,8 +62,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      graph-mcp:
-        condition: service_started
 
   worker:
     build:
@@ -98,8 +70,7 @@ services:
       args:
         SERVICE: worker
     environment:
-      GRAPH_MOCK: "0"
-      GRAPH_MCP_URL: "http://graph-mcp:3000/sse"
+      <<: *graph-env
       MODEL_PROVIDER: ${MODEL_PROVIDER:-openai-compatible}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
@@ -119,17 +90,11 @@ services:
       - stew-data:/data
       - stew-workspaces:/workspace
       - ${REPO_PATH:-../..}:/repos/project:ro
-      # optional docker.sock for LocalSandbox docker mode
-      # - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy
       api:
         condition: service_started
-      graph-mcp:
-        condition: service_started
-    deploy:
-      replicas: 1
 
   ui:
     build:
@@ -143,5 +108,4 @@ services:
 volumes:
   stew-data:
   stew-workspaces:
-  graph-data:
   pg-data:

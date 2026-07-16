@@ -6,8 +6,9 @@
 #   3. release    — GitHub Release with changelog notes + scan assets
 #
 # Images (GHCR, lowercased repository path):
-#   ghcr.io/<owner>/<repo>     — monorepo app (API + worker)
-#   ghcr.io/<owner>/<repo>/ui  — product UI (nginx)
+#   ghcr.io/<owner>/<repo>           — monorepo app (API + worker)
+#   ghcr.io/<owner>/<repo>/ui        — product UI (nginx)
+#   ghcr.io/<owner>/<repo>/keycloak  — Keycloak + theme/realm; tags = upstream KC version
 #
 # Cosign keyless signing via GitHub OIDC. No Docker Hub credentials required.
 
@@ -99,6 +100,7 @@ jobs:
           REPO_LC=$(echo "$REPO" | tr '[:upper:]' '[:lower:]')
           echo "IMAGE_APP=${REGISTRY}/${REPO_LC}" >> "$GITHUB_ENV"
           echo "IMAGE_UI=${REGISTRY}/${REPO_LC}/ui" >> "$GITHUB_ENV"
+          echo "IMAGE_KEYCLOAK=${REGISTRY}/${REPO_LC}/keycloak" >> "$GITHUB_ENV"
           echo "REPO_LC=${REPO_LC}" >> "$GITHUB_ENV"
 
       - name: Set up QEMU
@@ -126,6 +128,36 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      # Keycloak image tags follow upstream Keycloak (KEYCLOAK_VERSION), not product semver
+      - name: Resolve Keycloak base version
+        id: keycloak-ver
+        run: |
+          set -euo pipefail
+          KC=$(tr -d '[:space:]' < deploy/compose/keycloak/KEYCLOAK_VERSION)
+          if [[ ! "$KC" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "Invalid KEYCLOAK_VERSION: $KC" >&2
+            exit 1
+          fi
+          # minor alias: 26.7.0 -> 26.7
+          if [[ "$KC" =~ ^([0-9]+\.[0-9]+)\.[0-9]+$ ]]; then
+            MINOR="${BASH_REMATCH[1]}"
+          else
+            MINOR="$KC"
+          fi
+          echo "version=$KC" >> "$GITHUB_OUTPUT"
+          echo "minor=$MINOR" >> "$GITHUB_OUTPUT"
+          echo "Keycloak base: $KC (minor tag $MINOR)"
+
+      - name: Extract Docker metadata (keycloak)
+        id: meta-keycloak
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_KEYCLOAK }}
+          tags: |
+            type=raw,value=${{ steps.keycloak-ver.outputs.version }}
+            type=raw,value=${{ steps.keycloak-ver.outputs.minor }}
             type=raw,value=latest
 
       # STEP 1 — Build amd64 locally for Trivy gate
@@ -213,6 +245,24 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Keycloak + theme/realm; tags = upstream Keycloak version (see KEYCLOAK_VERSION)
+      - name: Build and push Keycloak
+        id: push-keycloak
+        uses: docker/build-push-action@v6
+        with:
+          context: deploy/compose/keycloak
+          file: deploy/compose/keycloak/Dockerfile
+          push: true
+          tags: ${{ steps.meta-keycloak.outputs.tags }}
+          labels: ${{ steps.meta-keycloak.outputs.labels }}
+          build-args: |
+            KEYCLOAK_VERSION=${{ steps.keycloak-ver.outputs.version }}
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       # STEP 3 — cosign keyless
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
@@ -221,8 +271,10 @@ jobs:
         env:
           DIGEST_APP: ${{ steps.push-app.outputs.digest }}
           DIGEST_UI: ${{ steps.push-ui.outputs.digest }}
+          DIGEST_KEYCLOAK: ${{ steps.push-keycloak.outputs.digest }}
           TAGS_APP: ${{ steps.meta-app.outputs.tags }}
           TAGS_UI: ${{ steps.meta-ui.outputs.tags }}
+          TAGS_KEYCLOAK: ${{ steps.meta-keycloak.outputs.tags }}
         run: |
           set -euo pipefail
           sign_tags() {
@@ -238,8 +290,10 @@ jobs:
           # metadata-action emits newline-separated tags
           mapfile -t app_tags <<< "$TAGS_APP"
           mapfile -t ui_tags <<< "$TAGS_UI"
+          mapfile -t kc_tags <<< "$TAGS_KEYCLOAK"
           sign_tags "$DIGEST_APP" "${app_tags[@]}"
           sign_tags "$DIGEST_UI" "${ui_tags[@]}"
+          sign_tags "$DIGEST_KEYCLOAK" "${kc_tags[@]}"
 
       # STEP 4 — SBOM for release assets
       - name: Install syft
@@ -317,11 +371,19 @@ jobs:
             echo '```bash'
             echo "docker pull ghcr.io/${REPO_LC}:${VERSION}"
             echo "docker pull ghcr.io/${REPO_LC}/ui:${VERSION}"
+            KC=$(tr -d '[:space:]' < deploy/compose/keycloak/KEYCLOAK_VERSION 2>/dev/null || echo latest)
+            echo "docker pull ghcr.io/${REPO_LC}/keycloak:${KC}   # tag = upstream Keycloak, not product ${VERSION}"
             echo '```'
             echo ""
             echo "App image runs API by default (\`SERVICE=api\`). Worker:"
             echo '```bash'
             echo "docker run --rm -e SERVICE=worker ghcr.io/${REPO_LC}:${VERSION}"
+            echo '```'
+            echo ""
+            echo "Keycloak image tags match **upstream Keycloak** (theme + realm baked in; no git mounts):"
+            echo '```bash'
+            echo "docker run --rm -p 8083:8083 -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin \\"
+            echo "  ghcr.io/${REPO_LC}/keycloak:${KC} start-dev --import-realm --http-port=8083"
             echo '```'
             echo ""
             echo "Images are signed with [cosign](https://github.com/sigstore/cosign) keyless via GitHub OIDC."

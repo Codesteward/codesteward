@@ -22,12 +22,29 @@ import { getInlineWorkerStatus, isInlineWorkerEnabled } from "./worker-loop.js";
 import { requireOrgMatch, orgForbidden } from "./org-guard.js";
 
 
-function withJobDefaults(session: { id: string; tenantId: string; repoId: string; repoPath?: string; riskTier: string; depth: string; prNumber?: number; baseSha?: string; headSha?: string; baseBranch?: string; mode: "gate" | "stewardship" }, paths?: string[]) {
+function withJobDefaults(
+  session: {
+    id: string;
+    tenantId: string;
+    orgId?: string;
+    repoId: string;
+    repoPath?: string;
+    riskTier: string;
+    depth: string;
+    prNumber?: number;
+    baseSha?: string;
+    headSha?: string;
+    baseBranch?: string;
+    mode: "gate" | "stewardship";
+  },
+  paths?: string[],
+) {
   const repoPath = session.repoPath ?? process.env.REPO_PATH ?? process.cwd();
   return {
     sessionId: session.id,
     mode: session.mode,
     tenantId: session.tenantId,
+    orgId: session.orgId ?? "local",
     repoId: session.repoId,
     repoPath,
     baseSha: session.baseSha,
@@ -1123,15 +1140,15 @@ export function createApp() {
       "rules",
       "requirements",
     ];
+    // Per-stage matrix is provider + model only. Keys live under org providers (encrypted).
+    // apiKeyRef/env:VAR is not part of the org product model (host STEW_MODEL_ROLE_MATRIX only).
     const roleMatrix: Record<string, Record<string, unknown>> = {};
     for (const [role, row] of Object.entries(org.modelMatrix.roles ?? {})) {
-      const r = row as { provider?: string; model?: string; baseUrl?: string; apiKeyRef?: string };
+      const r = row as { provider?: string; model?: string; baseUrl?: string };
       roleMatrix[role] = {
         provider: r.provider,
         model: r.model,
         baseUrl: r.baseUrl,
-        apiKeyRef: r.apiKeyRef?.startsWith("env:") ? r.apiKeyRef : undefined,
-        apiKeySet: Boolean(r.apiKeyRef),
       };
     }
     const { isEntitled } = await import("./license.js");
@@ -1167,7 +1184,7 @@ export function createApp() {
         isEntitled("langfuse"),
       source: "org+env",
       note:
-        "Provider API keys are stored per org (encrypted). Host env is fallback only for single-tenant deploys.",
+        "Provider API keys are stored per org (encrypted) and apply to all stages that use that provider. Host env is fallback only for single-tenant deploys. Per-stage matrix sets provider/model only — not separate keys.",
     });
   });
 
@@ -1310,6 +1327,93 @@ export function createApp() {
     return c.json(saved);
   });
 
+  /**
+   * Job queue status (Postgres SoT + optional NATS/Rabbit/Pulsar wake-up broker).
+   * Platform operators only — used after broker disaster recovery.
+   */
+  app.get("/v1/platform/queue", async (c) => {
+    const authMode = c.get("authMode") as string | undefined;
+    const user = c.get("user") as import("./auth-store.js").PublicAuthUser | undefined;
+    try {
+      const { requirePlatformAdmin } = await import("./platform-admin.js");
+      requirePlatformAdmin(user ?? null, authMode);
+    } catch (err) {
+      const e = err as Error & { status?: number };
+      return c.json({ error: "forbidden", message: e.message }, 403);
+    }
+    await globalQueue.load();
+    const status = (await globalQueue.status?.()) ?? {
+      queue: globalQueue.describe?.() ?? "unknown",
+      broker: null,
+      brokerConfigured: false,
+      brokerConnected: false,
+      pendingInSot: (await globalQueue.list()).length,
+      brokerDepth: null,
+    };
+    return c.json(status);
+  });
+
+  /**
+   * Re-publish pending Postgres jobs onto the optional broker (wake-up rehydrate).
+   * Safe after broker data loss; does not change SoT. Duplicates are OK — claim is in PG.
+   */
+  app.post("/v1/platform/queue/republish", async (c) => {
+    const authMode = c.get("authMode") as string | undefined;
+    const user = c.get("user") as import("./auth-store.js").PublicAuthUser | undefined;
+    try {
+      const { requirePlatformAdmin } = await import("./platform-admin.js");
+      requirePlatformAdmin(user ?? null, authMode);
+    } catch (err) {
+      const e = err as Error & { status?: number };
+      return c.json(
+        {
+          error: "forbidden",
+          message:
+            e.message ||
+            "Platform operator required to republish the install job queue.",
+        },
+        403,
+      );
+    }
+    let limit: number | undefined;
+    try {
+      const body = (await c.req.json().catch(() => ({}))) as { limit?: number };
+      if (body.limit != null) limit = Number(body.limit);
+    } catch {
+      /* empty body OK */
+    }
+    await globalQueue.load();
+    if (!globalQueue.republishPending) {
+      return c.json(
+        {
+          error: "unsupported",
+          message: "This queue implementation does not support broker republish.",
+        },
+        501,
+      );
+    }
+    const result = await globalQueue.republishPending({ limit });
+    try {
+      const { auditLog } = await import("./audit.js");
+      await auditLog({
+        orgId: "platform",
+        action: "platform.queue.republish",
+        actorUserId: (c.get("user") as { id?: string } | undefined)?.id,
+        metadata: {
+          broker: result.broker,
+          pending: result.pending,
+          published: result.published,
+          failed: result.failed,
+          skipped: result.skipped,
+          limit: limit ?? 500,
+        },
+      });
+    } catch {
+      /* optional */
+    }
+    return c.json(result);
+  });
+
   app.put("/v1/org/model-profiles", async (c) => {
     const orgId = c.get("orgId") ?? "local";
     const body = (await c.req.json()) as {
@@ -1323,17 +1427,25 @@ export function createApp() {
       >;
       providers?: Record<string, { apiKey?: string; baseUrl?: string }>;
     };
+    // Sanitize roles: provider/model/baseUrl only — drop apiKeyRef (keys are org providers)
     const rolesIn = body.roles ?? {};
+    const rolesClean: Record<
+      string,
+      { provider?: string; model?: string; baseUrl?: string }
+    > = {};
     for (const [role, row] of Object.entries(rolesIn)) {
-      const ref = row?.apiKeyRef;
-      if (ref && !ref.startsWith("env:")) {
-        return c.json(
-          {
-            error: `roles.${role}.apiKeyRef must be env:VAR_NAME (or leave empty and use org provider keys below)`,
-          },
-          400,
+      if (!row) continue;
+      if (row.apiKeyRef) {
+        // Soft-ignore legacy clients still sending env: refs; do not store them on org matrix
+        console.warn(
+          `[models] ignoring roles.${role}.apiKeyRef for org=${orgId} — use org provider keys`,
         );
       }
+      rolesClean[role] = {
+        provider: row.provider,
+        model: row.model,
+        baseUrl: row.baseUrl,
+      };
     }
     const { getOrgSettingsStore } = await import("./org-settings-store.js");
     const saved = await getOrgSettingsStore().putModelMatrix(orgId, {
@@ -1341,7 +1453,7 @@ export function createApp() {
       defaultModel: body.defaultModel,
       strongModel: body.strongModel,
       cheapModel: body.cheapModel,
-      roles: rolesIn,
+      roles: rolesClean,
       providers: body.providers as never,
     });
     // Optional single-tenant: paint process env (avoid in multi-org)
@@ -1349,8 +1461,8 @@ export function createApp() {
       if (body.defaultModel) process.env.MODEL_NAME = body.defaultModel;
       if (body.strongModel) process.env.STEW_MODEL_JUDGE = body.strongModel;
       if (body.cheapModel) process.env.STEW_MODEL_CHEAP = body.cheapModel;
-      if (body.roles && Object.keys(body.roles).length) {
-        process.env.STEW_MODEL_ROLE_MATRIX = JSON.stringify(body.roles);
+      if (Object.keys(rolesClean).length) {
+        process.env.STEW_MODEL_ROLE_MATRIX = JSON.stringify(rolesClean);
       }
     }
     try {

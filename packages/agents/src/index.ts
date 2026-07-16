@@ -24,5 +24,7 @@ export * from "./line-relocate.js";
 export * from "./session-audit.js";
 export * from "./session-report.js";
 export * from "./workspace.js";
+export * from "./path-jail.js";
+export * from "./graph-scope.js";
 export * from "./gate.js";
 export * from "./prompt-pack.js";

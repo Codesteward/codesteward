@@ -209,6 +209,7 @@ React 👍/👎 on findings, set false-positive / won’t-fix — org memories f
 | More HTTP / webhooks | Scale **API** (JWT auth is stateless) |
 | More UI traffic | Scale **UI** (static nginx) |
 | Queue-depth autoscaling | Optional `STEW_QUEUE_BROKER=nats\|rabbitmq\|pulsar` + KEDA |
+| Broker disaster recovery | Workers still claim from Postgres; platform ops can **republish** pending jobs to rehydrate broker depth |
 
 ```bash
 # Minimal: Postgres only for jobs
@@ -217,6 +218,11 @@ DATABASE_URL=postgres://...
 # Optional hybrid (PG SoT + broker for KEDA)
 STEW_QUEUE_BROKER=rabbitmq
 RABBITMQ_URL=amqp://...
+
+# After broker message loss (platform operator):
+#   GET  /v1/platform/queue
+#   POST /v1/platform/queue/republish   # body: { "limit": 500 } optional
+# Or UI: Settings → Platform ops → Job queue recovery
 
 # Helm workers
 helm upgrade --install codesteward ./deploy/helm/codesteward \
@@ -257,7 +263,9 @@ docs/                    # UI guide (screenshots), pipeline, session audit
 ```bash
 # Graph
 GRAPH_MOCK=0
-GRAPH_MCP_URL=http://localhost:3000/sse   # or /mcp depending on transport
+GRAPH_MCP_MODE=stdio                 # embedded codesteward-mcp in the worker
+GRAPH_BACKEND=neo4j                  # or graphqlite / janusgraph
+# NEO4J_URI=bolt://localhost:7687
 
 # Models
 MODEL_PROVIDER=openai-compatible
@@ -306,16 +314,17 @@ git push origin v1.1.0
 
 Images (lowercased repo path on GHCR):
 
-| Image | Dockerfile |
-|-------|------------|
-| `ghcr.io/<owner>/<repo>` | `deploy/compose/Dockerfile.node` (API default; `SERVICE=worker` for workers) |
-| `ghcr.io/<owner>/<repo>/ui` | `deploy/compose/Dockerfile.ui` |
+| Image | Dockerfile | Tags |
+|-------|------------|------|
+| `ghcr.io/<owner>/<repo>` | `deploy/compose/Dockerfile.node` (API; `SERVICE=worker` for workers) | product semver (`1.1.0`) |
+| `ghcr.io/<owner>/<repo>/ui` | `deploy/compose/Dockerfile.ui` | product semver |
+| `ghcr.io/<owner>/<repo>/keycloak` | `deploy/compose/keycloak/Dockerfile` | **upstream Keycloak** (`26.7.0`, not product) |
 
 **Codesteward Graph** (MCP) image used by compose stacks:
 
 | Image | Source |
 |-------|--------|
-| `ghcr.io/codesteward/codesteward-graph` | [Codesteward/codesteward-graph](https://github.com/Codesteward/codesteward-graph/pkgs/container/codesteward-graph) |
+| Embedded `codesteward-mcp` (PyPI) in worker image | Graph MCP stdio — no separate graph container |
 
 Also: weekly security scans, OpenSSF Scorecard, Renovate (`renovate.json`).
 

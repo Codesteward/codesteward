@@ -1,8 +1,14 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Select } from "../components/Select";
+import { useToast } from "../components/Toast";
 import { EmptyState, KpiCard, PageHero, Badge } from "../components/ui";
-import { api, isPlatformOperator, type PlatformAnalytics } from "../lib/api";
+import {
+  api,
+  isPlatformOperator,
+  type PlatformAnalytics,
+  type PlatformQueueStatus,
+} from "../lib/api";
 
 const WINDOW_OPTIONS = [
   { value: "7", label: "7 days" },
@@ -22,11 +28,23 @@ function fmtMs(ms: number | null | undefined): string {
 }
 
 export function PlatformAnalyticsPage() {
+  const toast = useToast();
   const [days, setDays] = useState(14);
   const [data, setData] = useState<PlatformAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [allowed, setAllowed] = useState(false);
+  const [queueStatus, setQueueStatus] = useState<PlatformQueueStatus | null>(null);
+  const [queueBusy, setQueueBusy] = useState(false);
+
+  const refreshQueue = useCallback(async () => {
+    try {
+      const q = await api.platformQueueStatus();
+      setQueueStatus(q);
+    } catch {
+      setQueueStatus(null);
+    }
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -40,7 +58,10 @@ export function PlatformAnalyticsPage() {
           setLoading(false);
           return;
         }
-        const a = await api.platformAnalytics(days);
+        const [a] = await Promise.all([
+          api.platformAnalytics(days),
+          api.platformQueueStatus().then(setQueueStatus).catch(() => setQueueStatus(null)),
+        ]);
         if (!alive) return;
         setData(a);
         setError(null);
@@ -55,6 +76,40 @@ export function PlatformAnalyticsPage() {
       alive = false;
     };
   }, [days]);
+
+  async function republishQueue() {
+    if (
+      !window.confirm(
+        "Re-publish all pending Postgres jobs onto the optional message broker?\n\n" +
+          "Use after broker disaster recovery (empty queue / lost messages). " +
+          "Safe to run multiple times — workers still claim ownership in Postgres.",
+      )
+    ) {
+      return;
+    }
+    setQueueBusy(true);
+    try {
+      const r = await api.platformQueueRepublish();
+      await refreshQueue();
+      if (r.published > 0) {
+        toast.success(
+          `Republished ${r.published} job(s)${r.failed ? ` · ${r.failed} failed` : ""}` +
+            (r.skipped ? ` · ${r.skipped} not in batch` : ""),
+        );
+      } else if (r.note) {
+        toast.success(r.note);
+      } else {
+        toast.success("No pending jobs to republish");
+      }
+      if (r.errors?.length) {
+        toast.error(r.errors.slice(0, 3).join("; "));
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setQueueBusy(false);
+    }
+  }
 
   if (!allowed && !loading) {
     return (
@@ -229,6 +284,76 @@ export function PlatformAnalyticsPage() {
               </table>
             </div>
           )}
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: "1rem" }}>
+        <div className="card-header">
+          <strong>Job queue recovery</strong>
+          <span className="muted">Postgres SoT · optional broker wake-up</span>
+        </div>
+        <div className="stack" style={{ gap: 10, fontSize: "0.9rem" }}>
+          <p className="muted" style={{ margin: 0, lineHeight: 1.55 }}>
+            Pending review jobs always live in Postgres. Optional NATS / RabbitMQ / Pulsar only
+            wake workers (and feed KEDA depth). If the external queue loses messages, workers can
+            still poll Postgres — or use <strong>Republish pending</strong> to rehydrate broker
+            depth for autoscaling.
+          </p>
+          <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <span>
+              Queue:{" "}
+              <span className="mono" style={{ fontSize: "0.8rem" }}>
+                {queueStatus?.queue ?? (loading ? "…" : "—")}
+              </span>
+            </span>
+            <span>
+              Broker:{" "}
+              <Badge tone={queueStatus?.brokerConnected ? "ok" : "nit"}>
+                {queueStatus?.broker ?? "none"}
+              </Badge>
+            </span>
+            <span className="muted">
+              Pending in SoT: <strong>{queueStatus?.pendingInSot ?? w?.jobsPending ?? "—"}</strong>
+              {queueStatus?.brokerDepth != null ? (
+                <>
+                  {" "}
+                  · Broker depth: <strong>{queueStatus.brokerDepth}</strong>
+                </>
+              ) : null}
+            </span>
+          </div>
+          {queueStatus?.note ? (
+            <p className="muted" style={{ margin: 0, fontSize: "0.8rem", lineHeight: 1.5 }}>
+              {queueStatus.note}
+            </p>
+          ) : null}
+          <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="ghost sm"
+              disabled={queueBusy || loading}
+              onClick={() => void refreshQueue()}
+            >
+              Refresh status
+            </button>
+            <button
+              type="button"
+              className="primary sm"
+              disabled={
+                queueBusy || loading || !queueStatus?.brokerConfigured || (queueStatus?.pendingInSot ?? 0) === 0
+              }
+              onClick={() => void republishQueue()}
+              title={
+                !queueStatus?.brokerConfigured
+                  ? "No optional broker configured (STEW_QUEUE_BROKER)"
+                  : (queueStatus?.pendingInSot ?? 0) === 0
+                    ? "No pending jobs in Postgres"
+                    : "Re-publish pending Postgres jobs to the broker"
+              }
+            >
+              {queueBusy ? "Republishing…" : "Republish pending to broker"}
+            </button>
+          </div>
         </div>
       </div>
 

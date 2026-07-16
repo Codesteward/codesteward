@@ -1,0 +1,227 @@
+# Rebuild Codesteward Keycloak when upstream Keycloak ships a new release.
+#
+# Tags always match upstream (26.7.0), not product semver (1.1.0), so operators can
+# compare ghcr.io/.../keycloak:X.Y.Z with quay.io/keycloak/keycloak:X.Y.Z.
+#
+# Also runs on product release (release.yml) so theme/realm changes ship with the pin.
+# This workflow keeps the pin + GHCR image current between product releases.
+
+name: Keycloak base update
+
+on:
+  schedule:
+    - cron: "0 7 * * 2" # Tuesday 07:00 UTC
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild even if pin already equals latest upstream"
+        type: boolean
+        default: false
+      version:
+        description: "Explicit Keycloak version (empty = latest stable from keycloak/keycloak)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  update:
+    name: Check upstream & rebuild
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      pull-requests: write
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+
+      - name: Resolve versions
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PIN=$(tr -d '[:space:]' < deploy/compose/keycloak/KEYCLOAK_VERSION)
+          echo "pinned=$PIN" >> "$GITHUB_OUTPUT"
+
+          INPUT_VERSION='${{ github.event.inputs.version }}'
+          INPUT_FORCE='${{ github.event.inputs.force }}'
+
+          if [[ -n "${INPUT_VERSION}" ]]; then
+            LATEST="${INPUT_VERSION#v}"
+          else
+            LATEST=$(gh api "repos/keycloak/keycloak/releases?per_page=20" \
+              --jq '[.[] | select(.prerelease==false and .draft==false) | .tag_name | ltrimstr("v")] | map(select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))) | .[0]')
+          fi
+
+          if [[ -z "${LATEST}" || ! "$LATEST" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Could not resolve Keycloak version (got: '${LATEST:-}')" >&2
+            exit 1
+          fi
+
+          # Verify tag exists on Quay (official images)
+          if ! curl -fsSIL "https://quay.io/v2/keycloak/keycloak/manifests/${LATEST}" >/dev/null 2>&1; then
+            echo "Warning: Quay manifest check failed for ${LATEST}; continuing (API may require auth)" >&2
+          fi
+
+          MINOR="${LATEST%.*}"
+
+          NEED=false
+          if [[ "$LATEST" != "$PIN" ]]; then
+            NEED=true
+          fi
+          if [[ "$INPUT_FORCE" == "true" ]]; then
+            NEED=true
+          fi
+
+          {
+            echo "latest=$LATEST"
+            echo "minor=$MINOR"
+            echo "need_rebuild=$NEED"
+            echo "need_pin_pr=$([[ "$LATEST" != "$PIN" ]] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Pinned=$PIN  Upstream=$LATEST  rebuild=$NEED"
+
+      - name: Already current
+        if: steps.ver.outputs.need_rebuild != 'true'
+        run: |
+          echo "OK — pin and image target are Keycloak ${{ steps.ver.outputs.pinned }}."
+          echo "workflow_dispatch force=true rebuilds the same base (theme refresh)."
+
+      - name: Image name
+        if: steps.ver.outputs.need_rebuild == 'true'
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          REPO_LC=$(echo "$REPO" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_KEYCLOAK=${REGISTRY}/${REPO_LC}/keycloak" >> "$GITHUB_ENV"
+          echo "REPO_LC=${REPO_LC}" >> "$GITHUB_ENV"
+
+      - name: Set up QEMU
+        if: steps.ver.outputs.need_rebuild == 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: steps.ver.outputs.need_rebuild == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: steps.ver.outputs.need_rebuild == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (tags = upstream Keycloak)
+        if: steps.ver.outputs.need_rebuild == 'true'
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: deploy/compose/keycloak
+          file: deploy/compose/keycloak/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_KEYCLOAK }}:${{ steps.ver.outputs.latest }}
+            ${{ env.IMAGE_KEYCLOAK }}:${{ steps.ver.outputs.minor }}
+            ${{ env.IMAGE_KEYCLOAK }}:latest
+          build-args: |
+            KEYCLOAK_VERSION=${{ steps.ver.outputs.latest }}
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install cosign
+        if: steps.ver.outputs.need_rebuild == 'true'
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image
+        if: steps.ver.outputs.need_rebuild == 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE_KEYCLOAK}@${DIGEST}"
+
+      - name: Bump pin + open PR
+        if: steps.ver.outputs.need_rebuild == 'true' && steps.ver.outputs.need_pin_pr == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.ver.outputs.latest }}
+          PINNED: ${{ steps.ver.outputs.pinned }}
+        run: |
+          set -euo pipefail
+          BRANCH="chore/keycloak-${LATEST}"
+
+          if gh pr list --head "$BRANCH" --state open --json number --jq 'length' | grep -qv '^0$'; then
+            echo "PR already open for $BRANCH"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout -B "$BRANCH" origin/main
+
+          echo "$LATEST" > deploy/compose/keycloak/KEYCLOAK_VERSION
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, re
+          latest = os.environ["LATEST"]
+          df = Path("deploy/compose/keycloak/Dockerfile")
+          text = df.read_text()
+          text = re.sub(r"(ARG KEYCLOAK_VERSION=)[\d.]+", r"\g<1>" + latest, text, count=1)
+          df.write_text(text)
+          vals = Path("deploy/helm/codesteward/values.yaml")
+          if vals.exists():
+              vt = vals.read_text()
+              # only under keycloak.image.tag
+              vt2 = re.sub(
+                  r"(keycloak:\n(?:.*\n)*?  image:\n(?:.*\n)*?    tag: )\"[^\"]+\"",
+                  r"\1\"" + latest + "\"",
+                  vt,
+                  count=1,
+              )
+              vals.write_text(vt2)
+          PY
+
+          git add deploy/compose/keycloak/KEYCLOAK_VERSION \
+                  deploy/compose/keycloak/Dockerfile \
+                  deploy/helm/codesteward/values.yaml
+          git commit -m "chore(keycloak): bump base to ${LATEST}"
+          git push -u origin "$BRANCH" --force
+
+          REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          gh pr create \
+            --title "chore(keycloak): bump base to ${LATEST}" \
+            --base main \
+            --head "$BRANCH" \
+            --body "## Keycloak base update
+
+          Upstream **Keycloak ${LATEST}** (was pinned **${PINNED}**).
+
+          | | |
+          |--|--|
+          | Upstream | \`quay.io/keycloak/keycloak:${LATEST}\` |
+          | Ours | \`ghcr.io/${REPO_LC}/keycloak:${LATEST}\` (+ \`:latest\`) |
+
+          Tags match upstream so you can see at a glance that the themed image is current.
+
+          - Theme + bootstrap realm baked in (no git mounts)
+          - Image already built & signed by this workflow
+          - Merge this PR to update the pin for the next product release
+          "

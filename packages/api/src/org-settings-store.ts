@@ -15,7 +15,11 @@ export interface RoleModelOverride {
   provider?: string;
   model?: string;
   baseUrl?: string;
-  /** Secret ref: env:NAME — never return raw keys on GET */
+  /**
+   * @deprecated Not used for org product config. Keys live under `providers`.
+   * Host-only `STEW_MODEL_ROLE_MATRIX` may still use env:VAR in model-router.
+   * Stripped on org PUT.
+   */
   apiKeyRef?: string;
 }
 
@@ -394,10 +398,20 @@ export class OrgSettingsStore {
       prev.modelMatrix.providers,
       matrix.providers,
     );
+    // Per-stage: provider/model/baseUrl only — never persist apiKeyRef on org product config
+    const roles: Record<string, RoleModelOverride> = {};
+    for (const [role, row] of Object.entries(matrix.roles ?? {})) {
+      if (!row) continue;
+      roles[role] = {
+        provider: row.provider,
+        model: row.model,
+        baseUrl: row.baseUrl,
+      };
+    }
     const next: OrgSettingsDoc = {
       orgId,
       modelMatrix: {
-        roles: matrix.roles ?? {},
+        roles,
         defaultProvider: matrix.defaultProvider,
         defaultModel: matrix.defaultModel,
         strongModel: matrix.strongModel,

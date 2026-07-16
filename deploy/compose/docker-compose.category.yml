@@ -1,4 +1,4 @@
-# Category-leader stock stack: Postgres + Graph + API + Worker + UI + Keycloak
+# Category-leader stock stack: Postgres + API + Worker (embedded Graph MCP) + UI + Keycloak
 # Usage:
 #   export OPENAI_API_KEY=... STEW_SECRETS_KEY=$(openssl rand -hex 32)
 #   docker compose -f deploy/compose/docker-compose.category.yml up --build -d
@@ -7,10 +7,11 @@ name: codesteward-category
 x-stew-env: &stew-env
   PORT: "8081"
   GRAPH_MOCK: "0"
-  # Codesteward Graph image uses TRANSPORT=sse (GET /sse + POST /messages).
-  GRAPH_MCP_URL: "http://graph-mcp:3000/sse"
-  # MCP Python SSE rejects Docker DNS Host headers (421). Force local-IP Host.
-  GRAPH_MCP_HOST_HEADER: "127.0.0.1:3000"
+  # Graph MCP runs embedded in the worker (stdio) — no graph-mcp service / shared clone mount
+  GRAPH_MCP_MODE: stdio
+  GRAPH_MCP_COMMAND: codesteward-mcp
+  GRAPH_BACKEND: ${GRAPH_BACKEND:-graphqlite}
+  GRAPHQLITE_PATH: /data/graph.db
   STEW_DEBUG_LLM: ${STEW_DEBUG_LLM:-1}
   STEW_CODE_TOKEN_BUDGET: ${STEW_CODE_TOKEN_BUDGET:-14000}
   MODEL_PROVIDER: ${MODEL_PROVIDER:-openai-compatible}
@@ -20,8 +21,7 @@ x-stew-env: &stew-env
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   XAI_API_KEY: ${XAI_API_KEY:-}
   STEW_DATA_DIR: /data
-  # Clones must live on a path visible to graph-mcp (shared volume at /workspace).
-  # Codesteward Graph Python scans repo_path on the MCP host filesystem.
+  # Clones stay on the worker only; embedded graph MCP parses local paths.
   STEW_WORKSPACE_DIR: /workspace
   DATABASE_URL: postgres://steward:steward@postgres:5432/codesteward
   REPO_PATH: /repos/project
@@ -99,7 +99,10 @@ services:
       retries: 12
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.0
+    image: ${KEYCLOAK_IMAGE:-codesteward-keycloak:local}
+    build:
+      context: ./keycloak
+      dockerfile: Dockerfile
     # --spi-theme-static-max-age=-1 helps pick up theme CSS during dev
     command:
       [
@@ -121,32 +124,6 @@ services:
       KC_HOSTNAME_ADMIN_URL: ${KC_HOSTNAME_ADMIN_URL:-http://localhost:8083}
     ports:
       - "8083:8083"
-    volumes:
-      - ./keycloak/realm-codesteward.json:/opt/keycloak/data/import/realm-codesteward.json:ro
-      # Codesteward-branded login theme (parent keycloak.v2 + custom CSS)
-      - ./keycloak/themes/codesteward:/opt/keycloak/themes/codesteward:ro
-
-  graph-mcp:
-    image: ghcr.io/codesteward/codesteward-graph:latest
-    environment:
-      TRANSPORT: "sse"
-      HOST: "0.0.0.0"
-      PORT: "3000"
-      GRAPH_BACKEND: "graphqlite"
-      GRAPHQLITE_PATH: "/data/graph.db"
-      DEFAULT_TENANT_ID: "local"
-      DEFAULT_REPO_ID: "demo"
-      DEFAULT_REPO_PATH: "/repos/project"
-      # Same mount as API/worker clones (STEW_WORKSPACE_DIR=/workspace)
-      WORKSPACE_BASE: "/workspace"
-      LOG_LEVEL: "INFO"
-    ports:
-      - "3000:3000"
-    volumes:
-      - graph-data:/data
-      - ${REPO_PATH:-../..}:/repos/project:ro
-      # Shared with API/worker so graph_rebuild(repo_path=/workspace/...) can scan clones
-      - stew-workspaces:/workspace
 
   api:
     build:
@@ -165,8 +142,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      graph-mcp:
-        condition: service_started
       keycloak:
         condition: service_started
 
@@ -199,7 +174,7 @@ services:
 
 volumes:
   stew-data:
-  # Session SCM clones (primary + cross-repo) — must be shared with graph-mcp
+  # Session SCM clones (primary + cross-repo) on worker volume only
   stew-workspaces:
   graph-data:
   pg-data:

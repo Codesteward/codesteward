@@ -91,7 +91,7 @@ Jobs that blocked `v1.0.0`: **Semgrep**, **zizmor**, **Trivy** (CI + release con
 - **Always update `CHANGELOG.md` (`## [Unreleased]`) when a feature, fix, or behavior change is finished** — do not leave release notes for “later”
 - Runtime knobs: install-wide → Platform runtime (`/v1/platform/runtime-config`); org may override only `STEW_SUGGESTED_CODE_FIXES` when platform leaves it Unset
 - PR mention trigger (webhook `issue_comment`): default **`@codesteward`** via `STEW_MENTION_TOKEN` (override if needed). Example: `@codesteward review`
-- Job queue: **Postgres only** (`DATABASE_URL` required). Optional dispatch broker: `STEW_QUEUE_BROKER=nats|rabbitmq|pulsar` (+ URL) — wake-up only, not SoT; see `deploy/compose/docker-compose.queue.yml`
+- Job queue: **Postgres only** (`DATABASE_URL` required). Optional dispatch broker: `STEW_QUEUE_BROKER=nats|rabbitmq|pulsar` (+ URL) — wake-up only, not SoT; see `deploy/compose/docker-compose.queue.yml`. After broker loss: workers still poll PG; platform admin `POST /v1/platform/queue/republish` (UI: Platform ops) rehydrates broker depth
 
 ## Self-host auth + connectors
 

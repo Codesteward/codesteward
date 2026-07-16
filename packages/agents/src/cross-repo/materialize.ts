@@ -32,6 +32,8 @@ export interface MaterializeCrossRepoOpts {
   links: CrossRepoLink[];
   cloneAuth?: CloneAuth | null;
   workspaceRoot?: string;
+  /** Product org — nests clones under {root}/{orgId}/{sessionId}/cross/… */
+  orgId?: string;
   /** Default SCM provider when cloning owner/repo ids. */
   provider?: string;
 }
@@ -56,16 +58,23 @@ async function pathExists(p: string): Promise<boolean> {
 /**
  * Ensure every fan-out repo has a local path for packing + graph rebuild.
  * Primary is expected already prepared; linked repos are cloned under
- * `{workspaceRoot}/{sessionId}/cross/{owner__repo}` when SCM auth is available.
+ * `{workspaceRoot}/{orgId}/{sessionId}/cross/{owner__repo}` when SCM auth is available.
  */
 export async function materializeCrossRepoWorkspaces(
   opts: MaterializeCrossRepoOpts,
 ): Promise<Map<string, MaterializedRepo>> {
   const out = new Map<string, MaterializedRepo>();
-  const root =
-    opts.workspaceRoot ??
-    process.env.STEW_WORKSPACE_DIR ??
-    join(process.env.STEW_DATA_DIR ?? ".steward-data", "workspaces");
+  const { sessionWorkspaceDir, tenantIsolationMode, workspaceRootDir } =
+    await import("../path-jail.js");
+  const rootBase = opts.workspaceRoot ?? workspaceRootDir();
+  const sessionRoot =
+    tenantIsolationMode() === "off"
+      ? join(rootBase, opts.sessionId)
+      : sessionWorkspaceDir({
+          sessionId: opts.sessionId,
+          orgId: opts.orgId,
+          root: rootBase,
+        });
   const provider = opts.provider ?? opts.cloneAuth?.provider ?? "github";
   const cloneForcedOff = process.env.STEW_WORKSPACE_CLONE === "0";
 
@@ -103,8 +112,7 @@ export async function materializeCrossRepoWorkspaces(
       opts.cloneAuth?.token
     ) {
       const workdir = join(
-        root,
-        opts.sessionId,
+        sessionRoot,
         "cross",
         `${ownerRepo.owner}__${ownerRepo.repo}`,
       );

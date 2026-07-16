@@ -39,6 +39,7 @@ async function cleanSessionWorkspace(
   sessionId: string,
   repoPath: string | undefined,
   log: RunJobLog,
+  orgId?: string,
 ): Promise<void> {
   if (process.env.STEW_WORKSPACE_KEEP === "1") {
     log(`workspace keep enabled (STEW_WORKSPACE_KEEP=1) — skip GC for ${sessionId}`);
@@ -50,25 +51,41 @@ async function cleanSessionWorkspace(
     process.env.STEW_WORKSPACE_DIR ??
       join(process.env.STEW_DATA_DIR ?? ".steward-data", "workspaces"),
   );
-  // Session trees: {root}/{sessionId} (primary) and {root}/{sessionId}/cross/...
-  const sessionDir = resolve(join(root, sessionId));
   const underRoot = (p: string) => {
     const abs = resolve(p);
     return abs === root || abs.startsWith(root + "/") || abs.startsWith(root + "\\");
   };
-  if (!underRoot(sessionDir)) {
-    log(`workspace GC refused: session dir outside root (${sessionDir})`);
-    return;
+  // Prefer org-nested layout; also try legacy flat {root}/{sessionId}
+  const candidates: string[] = [];
+  if (orgId) {
+    const orgSeg =
+      orgId.trim().replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^\.+/, "").slice(0, 64) ||
+      "local";
+    candidates.push(resolve(join(root, orgSeg, sessionId)));
   }
-  try {
-    await rm(sessionDir, { recursive: true, force: true });
-    log(`workspace cleaned ${sessionDir}`);
-  } catch (err) {
-    log(
-      `workspace GC failed ${sessionDir}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+  candidates.push(resolve(join(root, sessionId)));
+  // If job.repoPath is under root and looks like the session tree, clean it too
+  if (repoPath && underRoot(repoPath)) {
+    candidates.push(resolve(repoPath));
   }
-  // If job.repoPath was a clone path but not under sessionDir naming, try it only if under root
+
+  const seen = new Set<string>();
+  for (const sessionDir of candidates) {
+    if (seen.has(sessionDir)) continue;
+    seen.add(sessionDir);
+    if (!underRoot(sessionDir)) {
+      log(`workspace GC refused: session dir outside root (${sessionDir})`);
+      continue;
+    }
+    try {
+      await rm(sessionDir, { recursive: true, force: true });
+      log(`workspace cleaned ${sessionDir}`);
+    } catch (err) {
+      log(
+        `workspace GC failed ${sessionDir}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 }
 
 /**
@@ -567,7 +584,12 @@ export async function runReviewJob(
     ) {
       await globalQueue.complete?.(job.id);
       // Drop cloned trees for this session (primary + cross-repo under same sessionId dir)
-      await cleanSessionWorkspace(job.sessionId, job.repoPath, log);
+      await cleanSessionWorkspace(
+        job.sessionId,
+        job.repoPath,
+        log,
+        (job as { orgId?: string }).orgId ?? orgId,
+      );
     }
     // Final open stage (e.g. judge → completed without another stage event)
     if (stageTrack.name && stageTrack.t0 > 0) {
@@ -659,7 +681,12 @@ export async function runReviewJob(
 
     // Terminal crash: free disk for clones (resumable crashes keep the tree for resume)
     if (exhausted) {
-      await cleanSessionWorkspace(job.sessionId, job.repoPath, log);
+      await cleanSessionWorkspace(
+        job.sessionId,
+        job.repoPath,
+        log,
+        (job as { orgId?: string }).orgId ?? orgId,
+      );
     }
 
     if (!exhausted && cur) {

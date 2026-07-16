@@ -1,13 +1,20 @@
-# CodeSteward Review — demo stack with Neo4j graph backend
-# Extends docker-compose.demo.yml patterns; replaces GraphQLite MCP with Neo4j.
-#
+# CodeSteward Review — Neo4j shared graph backend + embedded MCP in workers
 # Usage:
 #   export REPO_PATH=/path/to/repo OPENAI_API_KEY=...
 #   docker compose -f deploy/compose/docker-compose.neo4j.yml up -d
 #
-# MCP: http://localhost:3000/mcp
 # Neo4j Browser: http://localhost:7474  (neo4j / changeme)
+# Graph MCP is NOT a separate container — workers run codesteward-mcp via stdio.
 name: codesteward-neo4j
+
+x-graph-env: &graph-env
+  GRAPH_MOCK: "0"
+  GRAPH_MCP_MODE: stdio
+  GRAPH_MCP_COMMAND: codesteward-mcp
+  GRAPH_BACKEND: neo4j
+  NEO4J_URI: bolt://neo4j:7687
+  NEO4J_USER: neo4j
+  NEO4J_PASSWORD: changeme
 
 services:
   postgres:
@@ -48,31 +55,6 @@ services:
       retries: 5
       start_period: 30s
 
-  graph-mcp:
-    image: ghcr.io/codesteward/codesteward-graph:latest
-    container_name: codesteward-graph-mcp
-    depends_on:
-      neo4j:
-        condition: service_healthy
-    environment:
-      TRANSPORT: "sse"
-      HOST: "0.0.0.0"
-      PORT: "3000"
-      GRAPH_BACKEND: "neo4j"
-      NEO4J_URI: "bolt://neo4j:7687"
-      NEO4J_USER: "neo4j"
-      NEO4J_PASSWORD: "changeme"
-      DEFAULT_TENANT_ID: "local"
-      DEFAULT_REPO_ID: "demo"
-      DEFAULT_REPO_PATH: "/repos/project"
-      WORKSPACE_BASE: "/workspace"
-      LOG_LEVEL: "INFO"
-    ports:
-      - "3000:3000"
-    volumes:
-      - ${REPO_PATH:-../..}:/repos/project:ro
-      - mcp-workspace:/workspace
-
   api:
     build:
       context: ../..
@@ -80,27 +62,29 @@ services:
       args:
         SERVICE: api
     environment:
+      <<: *graph-env
       PORT: "8081"
-      GRAPH_MOCK: "0"
-      GRAPH_MCP_URL: "http://graph-mcp:3000/mcp"
       MODEL_PROVIDER: ${MODEL_PROVIDER:-openai-compatible}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       MODEL_NAME: ${MODEL_NAME:-gpt-4.1-mini}
       STEW_DATA_DIR: /data
+      STEW_WORKSPACE_DIR: /workspace
       DATABASE_URL: postgres://steward:steward@postgres:5432/codesteward
       STEW_API_KEY: ${STEW_API_KEY:-}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-dev-insecure}
       REPO_PATH: /repos/project
+      STEW_INLINE_WORKER: "0"
     ports:
       - "8081:8081"
     volumes:
       - stew-data:/data
+      - stew-workspaces:/workspace
       - ${REPO_PATH:-../..}:/repos/project:ro
     depends_on:
       postgres:
         condition: service_healthy
-      graph-mcp:
-        condition: service_started
+      neo4j:
+        condition: service_healthy
 
   worker:
     build:
@@ -109,21 +93,24 @@ services:
       args:
         SERVICE: worker
     environment:
-      GRAPH_MOCK: "0"
-      GRAPH_MCP_URL: "http://graph-mcp:3000/mcp"
+      <<: *graph-env
       MODEL_PROVIDER: ${MODEL_PROVIDER:-openai-compatible}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       MODEL_NAME: ${MODEL_NAME:-gpt-4.1-mini}
       STEW_DATA_DIR: /data
+      STEW_WORKSPACE_DIR: /workspace
       DATABASE_URL: postgres://steward:steward@postgres:5432/codesteward
       STEW_SANDBOX_PROVIDER: ${STEW_SANDBOX_PROVIDER:-local}
       STEW_MAX_CONCURRENT: ${STEW_MAX_CONCURRENT:-8}
       REPO_PATH: /repos/project
     volumes:
       - stew-data:/data
+      - stew-workspaces:/workspace
       - ${REPO_PATH:-../..}:/repos/project:ro
     depends_on:
       postgres:
+        condition: service_healthy
+      neo4j:
         condition: service_healthy
       api:
         condition: service_started
@@ -141,4 +128,4 @@ volumes:
   pg-data:
   neo4j-data:
   stew-data:
-  mcp-workspace:
+  stew-workspaces:

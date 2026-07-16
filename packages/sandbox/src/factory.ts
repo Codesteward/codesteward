@@ -4,13 +4,39 @@ import { NullSandbox } from "./null.js";
 import type { Sandbox } from "./types.js";
 
 /**
+ * Multi-tenant: STEW_TENANT_ISOLATION=strict refuses host-local shells so agents
+ * cannot `cat ../other-org-session` on a shared worker filesystem.
+ */
+function resolveProvider(
+  provider: string = process.env.STEW_SANDBOX_PROVIDER ?? "null",
+): string {
+  const isolation = (process.env.STEW_TENANT_ISOLATION ?? "path").toLowerCase();
+  const strict = isolation === "strict" || isolation === "hard" || isolation === "2";
+  if (!strict) return provider;
+  if (provider === "docker" || provider === "k8s" || provider === "kubernetes") {
+    return provider;
+  }
+  // Prefer docker for hard multi-tenant isolation of agent tools
+  if (process.env.STEW_SANDBOX_DOCKER !== "0") {
+    console.warn(
+      "[sandbox] STEW_TENANT_ISOLATION=strict — using docker sandbox (not local/null)",
+    );
+    return "docker";
+  }
+  console.warn(
+    "[sandbox] STEW_TENANT_ISOLATION=strict but STEW_SANDBOX_DOCKER=0 — k8s preferred; local host shell is unsafe for multi-tenant",
+  );
+  return provider === "null" ? "local" : provider;
+}
+
+/**
  * Create a sandbox provider.
  * When STEW_SANDBOX_PROVIDER=k8s but kubectl is missing, auto-fallback to LocalSandbox.
  */
 export function createSandbox(
   provider: string = process.env.STEW_SANDBOX_PROVIDER ?? "null",
 ): Sandbox {
-  switch (provider) {
+  switch (resolveProvider(provider)) {
     case "docker":
       return new LocalSandbox({ useDocker: true });
     case "local":

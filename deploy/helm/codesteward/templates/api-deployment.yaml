@@ -28,10 +28,15 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.api.port | quote }}
-            - name: GRAPH_MCP_URL
-              value: "http://{{ include "codesteward.name" . }}-graph-mcp:{{ .Values.graph.mcp.port }}/mcp"
             - name: GRAPH_MOCK
               value: {{ .Values.env.GRAPH_MOCK | quote }}
+            # API rarely runs graph rebuilds; workers embed MCP. Mock is fine for API-only graph UI stubs.
+            - name: GRAPH_MCP_MODE
+              value: {{ .Values.api.graphMode | default "stdio" | quote }}
+            - name: GRAPH_MCP_COMMAND
+              value: "codesteward-mcp"
+            - name: GRAPH_BACKEND
+              value: {{ .Values.graph.backend | quote }}
             - name: MODEL_PROVIDER
               value: {{ .Values.env.MODEL_PROVIDER | quote }}
             - name: MODEL_NAME

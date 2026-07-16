@@ -1,0 +1,3 @@
+# Embedded Graph MCP (installed into worker/API image for stdio transport).
+# Backend: set GRAPH_BACKEND=neo4j|janusgraph|graphqlite|auto at runtime.
+codesteward-mcp[graph-all,graphqlite,janusgraph]>=0.5.2,<1

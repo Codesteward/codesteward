@@ -28,6 +28,8 @@ export interface CrossRepoPrepareInput {
   budget?: CrossRepoBudget;
   graph: GraphClient;
   tenantId: string;
+  /** Product org for multi-tenant workspace layout */
+  orgId?: string;
   cloneAuth?: CloneAuth | null;
   provider?: string;
   /**
@@ -78,6 +80,7 @@ export async function prepareCrossRepoReview(
     budget: input.budget,
     graph: input.graph,
     tenantId: input.tenantId,
+    orgId: input.orgId,
   });
 
   const materialized = await materializeCrossRepoWorkspaces({
@@ -86,6 +89,7 @@ export async function prepareCrossRepoReview(
     repoIds: preview.repos,
     links: input.links,
     cloneAuth: input.cloneAuth,
+    orgId: input.orgId,
     provider: input.provider ?? input.cloneAuth?.provider ?? "github",
   });
 
@@ -125,9 +129,11 @@ export async function prepareCrossRepoReview(
     );
 
     try {
+      const { graphTenantId } = await import("../graph-scope.js");
+      const gTenant = graphTenantId(input.orgId, input.tenantId);
       await input.graph.rebuild({
         repoPath: mat.repoPath,
-        tenantId: input.tenantId,
+        tenantId: gTenant,
         repoId,
       });
       rebuiltRepoIds.push(repoId);
@@ -148,9 +154,10 @@ export async function prepareCrossRepoReview(
 
   let edgeSeed: { written: number; skipped: number; errors: string[] };
   try {
+    const { graphTenantId } = await import("../graph-scope.js");
     edgeSeed = await seedCrossRepoGraphEdges({
       graph: input.graph,
-      tenantId: input.tenantId,
+      tenantId: graphTenantId(input.orgId, input.tenantId),
       primaryRepoId: input.primaryRepoId,
       links: input.links,
       readyRepoIds,
@@ -175,6 +182,7 @@ export async function prepareCrossRepoReview(
     budget: input.budget,
     graph: input.graph,
     tenantId: input.tenantId,
+    orgId: input.orgId,
     materialized,
   });
 

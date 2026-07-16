@@ -15,6 +15,12 @@ export const ReviewJobSchema = z.object({
   sessionId: z.string(),
   mode: ReviewModeSchema,
   tenantId: z.string().default("local"),
+  /**
+   * Product organization id (multi-tenant). Used for workspace layout
+   * `{STEW_WORKSPACE_DIR}/{orgId}/{sessionId}` and optional worker claim affinity
+   * (`STEW_WORKER_ORG_IDS`). Distinct from graph tenantId when SaaS uses both.
+   */
+  orgId: z.string().optional(),
   repoId: z.string(),
   repoPath: z.string().optional(),
   baseSha: z.string().optional(),

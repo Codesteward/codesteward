@@ -24,10 +24,38 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: ["node", "services/worker/dist/index.js"]
           env:
-            - name: GRAPH_MCP_URL
-              value: "http://{{ include "codesteward.name" . }}-graph-mcp:{{ .Values.graph.mcp.port }}/mcp"
             - name: GRAPH_MOCK
               value: {{ .Values.env.GRAPH_MOCK | quote }}
+            - name: GRAPH_MCP_MODE
+              value: "stdio"
+            - name: GRAPH_MCP_COMMAND
+              value: "codesteward-mcp"
+            - name: GRAPH_BACKEND
+              value: {{ .Values.graph.backend | quote }}
+            {{- if eq .Values.graph.backend "neo4j" }}
+            - name: NEO4J_URI
+              {{- if .Values.graph.neo4j.uri }}
+              value: {{ .Values.graph.neo4j.uri | quote }}
+              {{- else }}
+              value: {{ printf "bolt://%s-neo4j:%v" (include "codesteward.name" .) (.Values.graph.neo4j.boltPort | default 7687) | quote }}
+              {{- end }}
+            - name: NEO4J_USER
+              value: {{ .Values.graph.neo4j.user | default "neo4j" | quote }}
+            - name: NEO4J_PASSWORD
+              value: {{ .Values.graph.neo4j.password | default "changeme" | quote }}
+            {{- end }}
+            {{- if eq .Values.graph.backend "janusgraph" }}
+            - name: JANUSGRAPH_URL
+              {{- if .Values.graph.janusgraph.url }}
+              value: {{ .Values.graph.janusgraph.url | quote }}
+              {{- else }}
+              value: {{ printf "ws://%s-janusgraph:%v/gremlin" (include "codesteward.name" .) (.Values.graph.janusgraph.gremlinPort | default 8182) | quote }}
+              {{- end }}
+            {{- end }}
+            {{- if or (eq .Values.graph.backend "graphqlite") (eq .Values.graph.backend "auto") }}
+            - name: GRAPHQLITE_PATH
+              value: /data/graph.db
+            {{- end }}
             - name: STEW_MAX_CONCURRENT
               value: {{ .Values.worker.maxConcurrent | quote }}
             - name: AGENT_MAX_CONCURRENT
@@ -50,7 +78,7 @@ spec:
               value: {{ .Values.env.MODEL_NAME | quote }}
             - name: STEW_DATA_DIR
               value: /data
-            # Must match graph-mcp WORKSPACE_BASE so graph_rebuild can scan clones
+            # Clones local to this worker; embedded graph MCP parses the same paths
             - name: STEW_WORKSPACE_DIR
               value: /workspace
             - name: OTEL_ENABLED
