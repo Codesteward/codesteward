@@ -1,5 +1,5 @@
-# Trivy ignore list (CVE IDs, one per line).
-# Prefer fixing or upgrading over ignoring. Document any exception with a date.
+# Residual image findings accepted after multi-stage prod image.
+# Prefer fixing via base-image / dependency bumps; re-check every release.
 #
-# Example:
-# CVE-2024-XXXXX  # waiting for upstream; re-check after 2026-08-01
+# No permanent ignores by default — multi-stage + --ignore-unfixed should clear most.
+# Add CVE-… lines here only with a date and rationale if a gate blocks without fix.

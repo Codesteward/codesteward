@@ -1,0 +1,12 @@
+# Vendored / third-party research (not product code)
+research/
+third_party/
+node_modules/
+**/dist/
+**/*.map
+.steward-data/
+# Local smoke scripts intentionally use http://localhost
+scripts/
+evals/
+# Workflow install patterns are audited by zizmor; Semgrep GHA rules are noisy here
+.github/
