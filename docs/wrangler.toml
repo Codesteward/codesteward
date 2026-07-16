@@ -1,0 +1,10 @@
+# Deploy the Docusaurus build to Cloudflare Workers (static assets).
+# Usage (from website/):
+#   pnpm install && pnpm build
+#   npx wrangler deploy
+#
+# Or in CI: build → wrangler deploy --config wrangler.toml
+name = "codesteward-docs"
+compatibility_date = "2025-03-01"
+# Workers static assets (serves SPA/static from build/)
+assets = { directory = "./build", not_found_handling = "single-page-application" }

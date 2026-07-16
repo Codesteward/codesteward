@@ -42,6 +42,8 @@ pnpm install && pnpm -r run build
 GRAPH_MOCK=1 pnpm dev:api      # :8081
 GRAPH_MOCK=1 pnpm dev:worker
 pnpm dev:ui                    # :8080
+pnpm dev:docs                  # Docusaurus :3000 (docs/)
+pnpm build:docs                # docs/build → Cloudflare Workers
 pnpm stew -- review -p . -r codesteward
 pnpm stew -- review --tier thorough --depth thorough
 pnpm stew -- config doctor
@@ -67,6 +69,7 @@ pnpm stew -- findings export --sarif -s <sessionId>
 | `api` / `cli` / `mcp-server` / `ui` | Surfaces |
 | `actions/review-action` | GitHub Action for PR gate |
 | `services/worker` | Job consumer |
+| `docs/` | Product/operator docs (Docusaurus; not under `packages/`) |
 
 ## Conventions
 

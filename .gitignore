@@ -84,3 +84,6 @@ sbom.cdx.json
 zizmor.sarif
 
 research/
+# Docusaurus
+docs/build
+docs/.docusaurus

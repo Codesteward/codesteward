@@ -1,9 +1,14 @@
-# Enterprise session audit & subagent ledger
+---
+sidebar_position: 2
+title: "Enterprise session audit"
+sidebar_label: "Session audit"
+description: "Provenance ledger, specialist runs, crash resume, export."
+---
 
 Product UI: open a completed session → **Review audit** panel (clone/mount receipt,
-specialist ledger, **Download audit JSON**). See [UI guide — session blade](./UI_GUIDE.md#4-running-reviews-gate--steward).
+specialist ledger, **Download audit JSON**). See [UI guide — session blade](/docs/product/ui-guide#4-running-reviews-gate--steward).
 
-![Review audit panel with specialist ledger](./screenshots/session-blade-review-audit.png)
+![Review audit panel with specialist ledger](/img/screenshots/session-blade-review-audit.png)
 
 ## Problem
 

@@ -1,0 +1,8 @@
+{
+  "label": "Security & compliance",
+  "position": 10,
+  "link": {
+    "type": "generated-index",
+    "description": "Audit, isolation, self-host posture"
+  }
+}

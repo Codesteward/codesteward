@@ -1,0 +1,8 @@
+{
+  "label": "Platform ops",
+  "position": 9,
+  "link": {
+    "type": "generated-index",
+    "description": "Workers, multi-tenant isolation, scale"
+  }
+}

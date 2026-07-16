@@ -245,7 +245,7 @@ services/worker          # job consumer
 actions/review-action    # GitHub Action
 deploy/compose           # demo + category + keycloak + queue
 deploy/helm/codesteward  # production chart + HPA / KEDA
-docs/                    # UI guide (screenshots), pipeline, session audit
+docs/                 # Docusaurus product & operator docs (Cloudflare-ready)
 ```
 
 | Script | Purpose |
@@ -336,12 +336,10 @@ Self-hosted dual-mode review platform with product UI, Keycloak identity, orgs, 
 
 **This release** is free to run under Apache-2.0 — use your own models, keys, and infra.
 
-Further reading in-repo:
+Further reading:
 
-- [`docs/UI_GUIDE.md`](docs/UI_GUIDE.md) — **product UI tour** with screenshots (Gate, sessions, findings, tenancy, platform)  
-- [`docs/REVIEW_PIPELINE.md`](docs/REVIEW_PIPELINE.md) — **how a review works** (units, specialists, turns, dataflow)  
-- [`docs/ENTERPRISE_SESSION_AUDIT.md`](docs/ENTERPRISE_SESSION_AUDIT.md) — session / audit provenance  
-- [`docs/README.md`](docs/README.md) — docs index  
+- **[Documentation site](./docs)** (`docs/`) — Docusaurus product & operator handbook (UI guide, pipeline, multi-tenant workers, session audit). Local: `pnpm dev:docs`. Publish `docs/build` to Cloudflare Workers (`docs/wrangler.toml`).  
+- Public docs URL: set `url` in `docs/docusaurus.config.ts` (default `https://docs.codesteward.ai`).  
 - [`deploy/helm/codesteward/README.md`](deploy/helm/codesteward/README.md) — production chart  
 
 ---

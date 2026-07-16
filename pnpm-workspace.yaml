@@ -2,3 +2,4 @@ packages:
   - "packages/*"
   - "services/*"
   - "actions/*"
+  - "docs"

@@ -1,0 +1,8 @@
+{
+  "label": "Integrations",
+  "position": 8,
+  "link": {
+    "type": "generated-index",
+    "description": "CLI, GitHub Action, SCM webhooks"
+  }
+}

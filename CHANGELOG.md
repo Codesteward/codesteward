@@ -11,9 +11,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Documentation site** — Docusaurus handbook at top-level `docs/` (replaces flat markdown-only docs folder).
+  Full product handbook: why Codesteward, quick start, install (Compose/Helm), configure, product UI,
+  pipeline, integrations, ops, security, FAQ — not only migrated legacy markdown. Theme aligned with
+  product UI; Cloudflare Workers via `docs/wrangler.toml`.
 - **Multi-tenant worker isolation** — harden shared workers against cross-org clone reads
   (path layout + tool jail + optional hard sandbox + claim affinity). See
-  `docs/MULTI_TENANT_WORKERS.md`.
+  `docs/docs/ops/multi-tenant-workers.md` (docs site).
   - Workspace layout: clones under `{STEW_WORKSPACE_DIR}/{orgId}/{sessionId}`
     (`STEW_TENANT_ISOLATION=path` default; `off` for legacy flat paths).
   - Path jail on agent tools / packing (`packages/agents/src/path-jail.ts`) so

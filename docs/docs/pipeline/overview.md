@@ -1,4 +1,9 @@
-# How a Codesteward review works (behind the scenes)
+---
+sidebar_position: 1
+title: "How a review works"
+sidebar_label: "Review pipeline"
+description: "End-to-end agent pipeline — units, specialists, judge, publish."
+---
 
 This document explains the **agent pipeline** end to end: how a job is claimed, how
 **review units** and **specialists** are spawned, what each step receives and returns,
@@ -8,7 +13,7 @@ It matches the implementation in `packages/agents` (orchestrator, planner, runne
 discourse, judge, self-heal) and the worker entrypoint in `packages/api/src/run-job.ts`.
 
 For a **visual product tour** (Dashboard, Gate form, session blade, Findings, Platform),
-see [UI_GUIDE.md](./UI_GUIDE.md).
+see [Product UI guide](/docs/product/ui-guide).
 
 How operators experience the same pipeline in the UI:
 
@@ -19,7 +24,7 @@ How operators experience the same pipeline in the UI:
 | Findings + report | Blade **Evidence**, **Review report**, **Reports** page |
 | Provenance | Blade **Review audit** + Download audit JSON |
 
-![Stage pipeline and narrative report in the session blade](./screenshots/session-blade-stage-pipeline.png)
+![Stage pipeline and narrative report in the session blade](/img/screenshots/session-blade-stage-pipeline.png)
 
 ---
 
@@ -542,7 +547,7 @@ Checkpoint keeps completed siblings; resume skips them.
 
 | Doc | Topic |
 |-----|--------|
-| [`ENTERPRISE_SESSION_AUDIT.md`](./ENTERPRISE_SESSION_AUDIT.md) | Audit fields, compliance lens |
+| [Session audit](/docs/security/session-audit) | Audit fields, compliance lens |
 | Code: `packages/agents/src/orchestrator.ts` | Stage machine |
 | Code: `packages/agents/src/planner.ts` | Units & roles |
 | Code: `packages/agents/src/specialists.ts` / `deep-agent-runner.ts` | Per-role execution |

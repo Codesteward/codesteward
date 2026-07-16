@@ -1,0 +1,78 @@
+/**
+ * Codesteward Review docs — brand tokens aligned with packages/ui
+ * Surfaces: #0c0e14 / #12141c · Accent: #7c5cfc
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --ifm-color-primary: #5b3fd4;
+  --ifm-color-primary-dark: #4c2fc0;
+  --ifm-color-primary-darker: #462cb4;
+  --ifm-color-primary-darkest: #3a2494;
+  --ifm-color-primary-light: #6d55db;
+  --ifm-color-primary-lighter: #7c5cfc;
+  --ifm-color-primary-lightest: #9b84fd;
+  --ifm-code-font-size: 90%;
+  --ifm-font-family-base: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --ifm-font-family-monospace: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ifm-heading-font-family: 'DM Sans', system-ui, sans-serif;
+  --ifm-border-radius: 10px;
+  --docusaurus-highlighted-code-line-bg: rgba(91, 63, 212, 0.1);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #7c5cfc;
+  --ifm-color-primary-dark: #6346e6;
+  --ifm-color-primary-darker: #5a3fd9;
+  --ifm-color-primary-darkest: #4a33b3;
+  --ifm-color-primary-light: #9278fd;
+  --ifm-color-primary-lighter: #a48efd;
+  --ifm-color-primary-lightest: #c4b5fd;
+  --ifm-background-color: #0c0e14;
+  --ifm-background-surface-color: #12141c;
+  --ifm-navbar-background-color: #0e1018;
+  --ifm-footer-background-color: #080a10;
+  --ifm-color-content: #ffffff;
+  --ifm-color-content-secondary: rgba(255, 255, 255, 0.65);
+  --ifm-toc-border-color: rgba(255, 255, 255, 0.08);
+  --ifm-hr-background-color: rgba(255, 255, 255, 0.08);
+  --ifm-table-border-color: rgba(255, 255, 255, 0.1);
+  --ifm-code-background: rgba(124, 92, 252, 0.12);
+  --docusaurus-highlighted-code-line-bg: rgba(124, 92, 252, 0.2);
+  --ifm-menu-color: rgba(255, 255, 255, 0.75);
+  --ifm-menu-color-active: #c4b5fd;
+  --ifm-breadcrumb-color-active: #a48efd;
+}
+
+/* Doc images (UI screenshots) */
+.markdown img {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  margin: 1rem 0 1.5rem;
+}
+
+html[data-theme='light'] .markdown img {
+  border-color: rgba(15, 23, 42, 0.1);
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+}
+
+.markdown table {
+  display: table;
+  width: 100%;
+}
+
+.navbar {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme='light'] .navbar {
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+
+.footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Prefer dark default via colorMode config; keep light usable */

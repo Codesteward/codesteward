@@ -1,0 +1,8 @@
+{
+  "label": "Getting started",
+  "position": 3,
+  "link": {
+    "type": "generated-index",
+    "description": "Try Codesteward on your machine"
+  }
+}

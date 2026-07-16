@@ -1,0 +1,115 @@
+.heroBanner {
+  padding: 4.5rem 0 3.5rem;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% -20%, rgba(124, 92, 252, 0.4), transparent),
+    radial-gradient(ellipse 50% 40% at 80% 60%, rgba(34, 211, 238, 0.08), transparent),
+    linear-gradient(180deg, #080a10 0%, #0c0e14 100%);
+}
+
+.kicker {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgba(196, 181, 253, 0.9);
+  margin-bottom: 0.75rem;
+}
+
+.heroLead {
+  max-width: 36rem;
+  margin: 0.5rem auto 1.5rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 1.05rem;
+  line-height: 1.55;
+}
+
+.buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.features {
+  padding: 2.75rem 0 3.5rem;
+  width: 100%;
+}
+
+.sectionTitle {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: var(--ifm-color-primary-lighter, #a48efd);
+}
+
+.sectionTitleSpaced {
+  margin-top: 2.25rem;
+}
+
+.featureCard {
+  margin-bottom: 1.15rem;
+}
+
+.cardInner {
+  height: 100%;
+  padding: 1.2rem 1.3rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #12141c;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+}
+
+.cardInner h3 {
+  margin-bottom: 0.45rem;
+  font-size: 1.05rem;
+}
+
+.cardInner p {
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 0.92rem;
+  line-height: 1.55;
+  flex: 1;
+}
+
+.cardInner a {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+html[data-theme='light'] .cardInner {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.1);
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06);
+}
+
+html[data-theme='light'] .cardInner p {
+  color: rgba(15, 23, 42, 0.7);
+}
+
+.bannerNote {
+  margin-top: 2rem;
+  padding: 1rem 1.25rem;
+  border-radius: 10px;
+  border: 1px solid rgba(124, 92, 252, 0.35);
+  background: rgba(124, 92, 252, 0.1);
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+html[data-theme='light'] .bannerNote {
+  color: rgba(15, 23, 42, 0.85);
+  background: rgba(91, 63, 212, 0.08);
+}
+
+@media screen and (max-width: 996px) {
+  .heroBanner {
+    padding: 2.75rem 1rem;
+  }
+}

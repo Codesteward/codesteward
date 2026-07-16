@@ -1,0 +1,8 @@
+{
+  "label": "Install",
+  "position": 4,
+  "link": {
+    "type": "generated-index",
+    "description": "Compose, Helm, and production topology"
+  }
+}

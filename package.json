@@ -13,6 +13,8 @@
     "dev:api": "pnpm --filter @codesteward/api run dev",
     "dev:worker": "pnpm --filter @codesteward/worker run dev",
     "dev:ui": "pnpm --filter @codesteward/ui run dev",
+    "dev:docs": "pnpm --filter @codesteward/docs-site start",
+    "build:docs": "pnpm --filter @codesteward/docs-site build",
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",
     "test:unit": "node scripts/run-unit-tests.mjs",

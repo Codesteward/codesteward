@@ -1,4 +1,9 @@
-# Multi-tenant worker isolation
+---
+sidebar_position: 1
+title: "Multi-tenant worker isolation"
+sidebar_label: "Multi-tenant workers"
+description: "Org-affine workers, workspace isolation, sandbox strict mode, graph tenant scope."
+---
 
 ## Threat
 

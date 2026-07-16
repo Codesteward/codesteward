@@ -1,18 +1,36 @@
-# Codesteward documentation
+# Codesteward Review documentation
 
-Product and operator docs for the self-hosted review platform.
+Public product & operator handbook (Docusaurus). Top-level monorepo package.
 
-| Doc | Audience | Description |
-|-----|----------|-------------|
-| **[UI guide](./UI_GUIDE.md)** | Operators, admins, reviewers | Visual tour of the product UI with screenshots |
-| **[Review pipeline](./REVIEW_PIPELINE.md)** | Engineers | How a review job runs (units, specialists, judge, publish) |
-| **[Session audit](./ENTERPRISE_SESSION_AUDIT.md)** | Compliance, platform | Provenance ledger, specialist runs, export |
-| **[Multi-tenant workers](./MULTI_TENANT_WORKERS.md)** | Platform ops / security | Org-affine workers, workspace isolation, sandbox strict mode |
+**Audience:** teams evaluating self-host install (no SaaS today) and operators running production.
 
-Screenshots live under [`screenshots/`](./screenshots/) (kebab-case names).
+## Develop
 
-Deploy / ops:
+```bash
+# from monorepo root
+pnpm dev:docs      # http://localhost:3000
+pnpm build:docs    # → docs/build
+```
 
-- [Helm chart](../deploy/helm/codesteward/README.md)
-- [Compose stacks](../deploy/compose/)
-- Root [README](../README.md) — install, CLI, architecture overview
+```bash
+cd docs && pnpm start && pnpm build
+npx wrangler deploy   # Cloudflare Workers (wrangler.toml → ./build)
+```
+
+## Information architecture
+
+| Section | Contents |
+|---------|----------|
+| **Introduction** | Value prop, dual mode, self-host framing |
+| **Concepts** | Why Codesteward, Gate vs Steward, architecture, findings |
+| **Getting started** | Prerequisites, Compose quickstart, first review |
+| **Install** | Overview, Compose, Helm, local monorepo dev |
+| **Configure** | Keycloak, models, policy, queue, SCM connectors |
+| **Product** | UI overview + full screenshot guide |
+| **Pipeline** | Agent stages (deep technical) |
+| **Integrations** | CLI, GitHub Action, webhooks |
+| **Platform ops** | Multi-tenant workers, scaling, platform ops UI |
+| **Security** | Overview + session audit |
+| **Reference** | Env vars, glossary, FAQ |
+
+Theme tokens match `packages/ui` (dark surfaces, brand purple `#7c5cfc`, DM Sans).
