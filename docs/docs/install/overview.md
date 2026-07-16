@@ -12,7 +12,8 @@ Codesteward Review is a **self-hosted** monorepo product. Pick a path by maturit
 |------|----------|
 | **[Compose category](../getting-started/quickstart)** | Evaluate on a laptop / shared demo host |
 | **[Compose profiles](./compose)** | Add Neo4j, Janus, queue brokers, Keycloak alone |
-| **[Helm](./helm)** | Production Kubernetes |
+| **[Kubernetes quick start](../getting-started/kubernetes)** | Cluster eval / first Helm install (OCI from GHCR) |
+| **[Helm reference](./helm)** | Production values, HPA, KEDA, graph |
 | **[Local monorepo](./development)** | Contribute or debug packages |
 
 ## Production checklist
@@ -37,6 +38,6 @@ Codesteward Review is a **self-hosted** monorepo product. Pick a path by maturit
 
 ## Images
 
-CI builds combined **API + worker** runtime images and a **UI** image. Graph MCP runs **inside the worker** (no separate graph-mcp Deployment). Keycloak can use a themed image for production login chrome.
+CI builds combined **API + worker** runtime images, a **UI** image, and publishes the **Helm chart** to GHCR (`…/charts/codesteward`). Graph MCP runs **inside the worker** (no separate graph-mcp Deployment). Keycloak can use a themed image for production login chrome.
 
-Next: [Helm](./helm) · [Compose](./compose)
+Next: [Kubernetes quick start](../getting-started/kubernetes) · [Helm](./helm) · [Compose](./compose)

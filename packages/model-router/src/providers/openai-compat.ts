@@ -8,7 +8,7 @@ import type {
 } from "../types.js";
 import { fetchWithLlmRetry } from "../llm-retry.js";
 
-/** OpenAI Chat Completions API (also xAI, LiteLLM, OpenRouter, openai-compatible). */
+/** OpenAI Chat Completions API (also SpaceXAI, LiteLLM, OpenRouter, openai-compatible). */
 export function createOpenAICompatModel(
   role: ModelRole,
   target: ResolvedModelTarget,

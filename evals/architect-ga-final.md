@@ -162,7 +162,7 @@ From `research/design/05-full-product-architecture.md` §1.3 (incl. 2026-07 hone
 | 4 | Compose + Kubernetes (workers, API, UI, graph, sandboxes) | **IN** — compose + Helm (worker HPA, sandbox docs) |
 | 5 | Sandbox Prove (local/docker; k8s path) | **IN** — local/docker production path; k8s with fallback (prior R2 evidence) |
 | 6 | Scale-out via horizontal workers | **IN** — worker service + HPA + concurrency env |
-| 7 | Multi-model (OpenAI/Anthropic/xAI/compat/LiteLLM) | **IN** — model-router package |
+| 7 | Multi-model (OpenAI/Anthropic/SpaceXAI/compat/LiteLLM) | **IN** — model-router package |
 | 8 | Cross-repo org links + fan-out | **IN** — API + UI CrossRepo page |
 | 9 | Full product UI | **IN** — 11 required pages present |
 | 10 | CLI + MCP + Action + skills | **IN** — all four surfaces |

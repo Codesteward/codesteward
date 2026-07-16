@@ -14,7 +14,7 @@ or to inspect findings/policy/graph status via CodeSteward Review.
 - Monorepo built: `pnpm install && pnpm -r run build`
 - Optional API: `pnpm dev:api` and worker `pnpm dev:worker`
 - Graph: set `GRAPH_MOCK=1` offline, or run Codesteward MCP on `:3000`
-- Models: `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `XAI_API_KEY` (mock if unset)
+- Models: `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `SPACEXAI_API_KEY` (or legacy `XAI_API_KEY`) (mock if unset)
 
 ## Commands
 

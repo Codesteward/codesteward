@@ -1,27 +1,59 @@
+/**
+ * Homepage — always light-on-dark brand hero (matches product #0c0e14 chrome).
+ * Do not rely on Infima .hero--primary text colors (they go black in dark mode).
+ */
+
 .heroBanner {
+  --ifm-hero-text-color: #ffffff;
+  --ifm-color-white: #ffffff;
+
   padding: 4.5rem 0 3.5rem;
   text-align: center;
   position: relative;
   overflow: hidden;
+  color: #ffffff !important;
   background:
-    radial-gradient(ellipse 80% 60% at 50% -20%, rgba(124, 92, 252, 0.4), transparent),
-    radial-gradient(ellipse 50% 40% at 80% 60%, rgba(34, 211, 238, 0.08), transparent),
-    linear-gradient(180deg, #080a10 0%, #0c0e14 100%);
+    radial-gradient(ellipse 80% 55% at 50% -15%, rgba(124, 92, 252, 0.45), transparent 55%),
+    radial-gradient(ellipse 45% 40% at 85% 70%, rgba(34, 211, 238, 0.1), transparent 50%),
+    linear-gradient(180deg, #080a10 0%, #0c0e14 55%, #0e1018 100%);
+}
+
+/* Beat Infima .hero / theme content color in both light & dark */
+.heroBanner :global(.hero__title),
+.heroBanner :global(.hero__subtitle),
+.heroTitle,
+.heroSubtitle,
+.kicker,
+.heroLead {
+  color: #ffffff !important;
+}
+
+.heroBanner :global(.hero__title) {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.heroBanner :global(.hero__subtitle) {
+  opacity: 0.82;
+  max-width: 38rem;
+  margin-left: auto;
+  margin-right: auto;
+  color: rgba(255, 255, 255, 0.82) !important;
 }
 
 .kicker {
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 600;
-  color: rgba(196, 181, 253, 0.9);
-  margin-bottom: 0.75rem;
+  color: #c4b5fd !important;
+  margin-bottom: 0.85rem;
 }
 
 .heroLead {
   max-width: 36rem;
-  margin: 0.5rem auto 1.5rem;
-  color: rgba(255, 255, 255, 0.7);
+  margin: 0.65rem auto 1.6rem;
+  color: rgba(255, 255, 255, 0.72) !important;
   font-size: 1.05rem;
   line-height: 1.55;
 }
@@ -34,16 +66,47 @@
   gap: 0.65rem;
 }
 
+/* Explicit button contrast on the dark hero (theme-independent) */
+.buttons :global(.button--secondary) {
+  background: #ffffff !important;
+  color: #0c0e14 !important;
+  border: none !important;
+  font-weight: 600;
+}
+
+.buttons :global(.button--secondary:hover) {
+  background: #e9e4ff !important;
+  color: #0c0e14 !important;
+}
+
+.buttons :global(.button--outline) {
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.4) !important;
+  background: transparent !important;
+  font-weight: 600;
+}
+
+.buttons :global(.button--outline:hover) {
+  border-color: #7c5cfc !important;
+  background: rgba(124, 92, 252, 0.18) !important;
+  color: #ffffff !important;
+}
+
 .features {
   padding: 2.75rem 0 3.5rem;
   width: 100%;
+  background: var(--ifm-background-color);
 }
 
 .sectionTitle {
-  font-size: 1.15rem;
+  font-size: 1.1rem;
   font-weight: 600;
   margin-bottom: 1rem;
   color: var(--ifm-color-primary-lighter, #a48efd);
+}
+
+html[data-theme='light'] .sectionTitle {
+  color: #5b3fd4;
 }
 
 .sectionTitleSpaced {
@@ -56,22 +119,29 @@
 
 .cardInner {
   height: 100%;
-  padding: 1.2rem 1.3rem;
+  padding: 1.25rem 1.35rem;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: #12141c;
+  border: 1px solid var(--cs-border, rgba(255, 255, 255, 0.08));
+  background: var(--cs-bg-elevated, #12141c);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
   display: flex;
   flex-direction: column;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cardInner:hover {
+  border-color: rgba(124, 92, 252, 0.45);
+  box-shadow: 0 10px 32px rgba(124, 92, 252, 0.12);
 }
 
 .cardInner h3 {
   margin-bottom: 0.45rem;
   font-size: 1.05rem;
+  color: var(--ifm-heading-color, #fff);
 }
 
 .cardInner p {
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--ifm-color-content-secondary, rgba(255, 255, 255, 0.65));
   font-size: 0.92rem;
   line-height: 1.55;
   flex: 1;
@@ -80,6 +150,7 @@
 .cardInner a {
   font-weight: 600;
   font-size: 0.9rem;
+  color: var(--ifm-link-color, #a78bfa);
 }
 
 html[data-theme='light'] .cardInner {
@@ -89,23 +160,28 @@ html[data-theme='light'] .cardInner {
 }
 
 html[data-theme='light'] .cardInner p {
-  color: rgba(15, 23, 42, 0.7);
+  color: #475569;
 }
 
 .bannerNote {
   margin-top: 2rem;
   padding: 1rem 1.25rem;
   border-radius: 10px;
-  border: 1px solid rgba(124, 92, 252, 0.35);
-  background: rgba(124, 92, 252, 0.1);
+  border: 1px solid rgba(124, 92, 252, 0.4);
+  background: rgba(124, 92, 252, 0.12);
   font-size: 0.92rem;
   line-height: 1.55;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--ifm-color-content, #fff);
+}
+
+html[data-theme='dark'] .bannerNote {
+  color: rgba(255, 255, 255, 0.9);
 }
 
 html[data-theme='light'] .bannerNote {
-  color: rgba(15, 23, 42, 0.85);
+  color: #1e293b;
   background: rgba(91, 63, 212, 0.08);
+  border-color: rgba(91, 63, 212, 0.25);
 }
 
 @media screen and (max-width: 996px) {

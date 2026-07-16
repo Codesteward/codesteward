@@ -27,9 +27,9 @@ const primary: Card[] = [
   {
     title: 'Install for production',
     description:
-      'Helm chart, horizontal workers, Neo4j/Janus, OIDC, optional KEDA. Built for platform teams.',
-    to: '/docs/install/overview',
-    cta: 'Install paths',
+      'Helm chart from GHCR (OCI), horizontal workers, Neo4j/Janus, OIDC, optional KEDA.',
+    to: '/docs/getting-started/kubernetes',
+    cta: 'Kubernetes / Helm',
   },
 ];
 
@@ -63,13 +63,13 @@ const secondary: Card[] = [
 function Hero() {
   const {siteConfig} = useDocusaurusContext();
   return (
-    <header className={clsx('hero hero--primary', styles.heroBanner)}>
+    <header className={clsx('hero', styles.heroBanner)}>
       <div className="container">
         <p className={styles.kicker}>Self-hosted · Apache-2.0 · No SaaS required</p>
-        <Heading as="h1" className="hero__title">
+        <Heading as="h1" className={clsx('hero__title', styles.heroTitle)}>
           {siteConfig.title}
         </Heading>
-        <p className="hero__subtitle">{siteConfig.tagline}</p>
+        <p className={clsx('hero__subtitle', styles.heroSubtitle)}>{siteConfig.tagline}</p>
         <p className={styles.heroLead}>
           Gate every merge. Steward every branch. Bring your own models, identity, and cloud.
         </p>

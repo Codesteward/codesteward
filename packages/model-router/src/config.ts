@@ -45,7 +45,9 @@ function loadRoleOverrides(env: NodeJS.ProcessEnv): Record<string, RoleModelOver
 export type OrgProviderSecrets = {
   openai?: { apiKey?: string; baseUrl?: string };
   anthropic?: { apiKey?: string; baseUrl?: string };
+  /** SpaceXAI (Grok); key id `xai` for compatibility */
   xai?: { apiKey?: string; baseUrl?: string };
+  spacexai?: { apiKey?: string; baseUrl?: string };
   litellm?: { apiKey?: string; baseUrl?: string };
   "openai-compatible"?: { apiKey?: string; baseUrl?: string };
   openrouter?: { apiKey?: string; baseUrl?: string };
@@ -77,7 +79,7 @@ export function mergeRoleOverrides(
     cheapModel: matrix.cheapModel ?? cfg.cheapModel,
     openaiApiKey: p.openai?.apiKey || cfg.openaiApiKey,
     anthropicApiKey: p.anthropic?.apiKey || cfg.anthropicApiKey,
-    xaiApiKey: p.xai?.apiKey || cfg.xaiApiKey,
+    xaiApiKey: p.xai?.apiKey || p.spacexai?.apiKey || cfg.xaiApiKey,
     openrouterApiKey: p.openrouter?.apiKey || cfg.openrouterApiKey,
     openaiBaseUrl: p.openai?.baseUrl || cfg.openaiBaseUrl,
     litellmBaseUrl: p.litellm?.baseUrl || cfg.litellmBaseUrl,
@@ -120,7 +122,8 @@ export function loadEnvModelConfig(env: NodeJS.ProcessEnv = process.env): EnvMod
         : model),
     openaiApiKey: env.OPENAI_API_KEY,
     anthropicApiKey: env.ANTHROPIC_API_KEY,
-    xaiApiKey: env.XAI_API_KEY,
+    // SpaceXAI (formerly xAI); accept both env names
+    xaiApiKey: env.SPACEXAI_API_KEY || env.XAI_API_KEY,
     openrouterApiKey: env.OPENROUTER_API_KEY,
     openaiBaseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
     litellmBaseUrl: env.LITELLM_BASE_URL,
@@ -174,7 +177,11 @@ export function resolveModelForRole(
   }
   if (override?.model) model = override.model;
 
-  const provider = (override?.provider as ModelProvider) ?? cfg.provider;
+  const providerRaw = String(override?.provider ?? cfg.provider);
+  // SpaceXAI rebrand: accept `spacexai` as alias of stored id `xai`
+  const provider = (
+    providerRaw === "spacexai" ? "xai" : providerRaw
+  ) as ModelProvider;
   const overrideKey =
     resolveApiKeyRef(override?.apiKeyRef) ?? override?.apiKey;
 
@@ -186,13 +193,21 @@ export function resolveModelForRole(
         baseUrl: override?.baseUrl ?? "https://api.anthropic.com",
         apiKey: overrideKey ?? cfg.anthropicApiKey,
       };
-    case "xai":
+    case "xai": {
+      // SpaceXAI (Grok) — OpenAI-compatible chat API (api.x.ai)
+      let grokModel = model;
+      if (!model.startsWith("grok")) {
+        if (model.includes("xai/")) grokModel = model.slice(4);
+        else if (model.includes("spacexai/")) grokModel = model.slice("spacexai/".length);
+        else grokModel = "grok-3";
+      }
       return {
         provider: "xai",
-        model: model.startsWith("grok") ? model : model.includes("xai/") ? model.slice(4) : "grok-3",
+        model: grokModel,
         baseUrl: override?.baseUrl ?? "https://api.x.ai/v1",
         apiKey: overrideKey ?? cfg.xaiApiKey,
       };
+    }
     case "litellm":
       return {
         provider: "litellm",

@@ -1,7 +1,7 @@
 # Default values for CodeSteward Review (production-oriented self-host)
 
 image:
-  repository: ghcr.io/codesteward/review
+  repository: ghcr.io/codesteward/codesteward
   tag: "1.1.0"
   pullPolicy: IfNotPresent
 
@@ -126,7 +126,8 @@ secrets:
   # create via sealed-secrets / external-secrets
   openaiApiKey: ""
   anthropicApiKey: ""
-  xaiApiKey: ""
+  xaiApiKey: ""  # SpaceXAI (Grok) — env SPACEXAI_API_KEY / XAI_API_KEY
+  spacexaiApiKey: ""  # optional alias of xaiApiKey
   githubToken: ""
   githubWebhookSecret: ""
   gitlabToken: ""
@@ -158,12 +159,12 @@ ingress:
           service: api
 
 # Optional in-cluster Keycloak with Codesteward login theme (baked into the image).
-# Pull ghcr.io/<owner>/<repo>/keycloak — operators never need a git checkout for themes.
+# Pull ghcr.io/codesteward/codesteward/keycloak — operators never need a git checkout for themes.
 # Disable when using an external IdP (Okta, Entra, corporate Keycloak).
 keycloak:
   enabled: false
   image:
-    # Override to match your GHCR path, e.g. ghcr.io/codesteward/codesteward/keycloak
+    # Official image from Codesteward/codesteward releases
     repository: ghcr.io/codesteward/codesteward/keycloak
     tag: "26.7.0"
     pullPolicy: IfNotPresent

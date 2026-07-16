@@ -116,7 +116,10 @@ export type AgentRole = z.infer<typeof AgentRoleSchema>;
 export const ModelProviderSchema = z.enum([
   "openai",
   "anthropic",
+  /** SpaceXAI (Grok); stored id remains `xai` for API compatibility */
   "xai",
+  /** Alias of `xai` (SpaceXAI rebrand) */
+  "spacexai",
   "openai-compatible",
   "litellm",
   "openrouter",

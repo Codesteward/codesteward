@@ -5,6 +5,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'Codesteward Review',
   tagline: 'Agentic code review that knows your graph — self-hosted docs',
+  // Official mark from packages/ui/public/brand (copied into static/img)
   favicon: 'img/favicon.ico',
 
   url: 'https://docs.codesteward.ai',
@@ -20,6 +21,35 @@ const config: Config = {
       onBrokenMarkdownLinks: 'warn',
     },
   },
+
+  headTags: [
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'icon',
+        type: 'image/png',
+        sizes: '32x32',
+        href: '/img/favicon-32.png',
+      },
+    },
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'icon',
+        type: 'image/png',
+        sizes: '64x64',
+        href: '/img/favicon-64.png',
+      },
+    },
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'apple-touch-icon',
+        sizes: '180x180',
+        href: '/img/apple-touch-icon.png',
+      },
+    },
+  ],
 
   i18n: {
     defaultLocale: 'en',
@@ -44,7 +74,8 @@ const config: Config = {
   ],
 
   themeConfig: {
-    image: 'img/screenshots/dashboard-home.png',
+    // Open Graph / social preview — official logo
+    image: 'img/social-card.png',
     metadata: [
       {
         name: 'description',
@@ -60,7 +91,11 @@ const config: Config = {
       title: 'Codesteward Review',
       logo: {
         alt: 'Codesteward',
-        src: 'img/logo.svg',
+        // Official icon (same assets as product UI packages/ui/public/brand)
+        src: 'img/brand/codesteward-icon-nav.png',
+        srcDark: 'img/brand/codesteward-icon-nav.png',
+        width: 32,
+        height: 32,
       },
       items: [
         {
@@ -72,6 +107,11 @@ const config: Config = {
         {
           to: '/docs/getting-started/quickstart',
           label: 'Quick start',
+          position: 'left',
+        },
+        {
+          to: '/docs/getting-started/kubernetes',
+          label: 'Kubernetes',
           position: 'left',
         },
         {
@@ -104,7 +144,8 @@ const config: Config = {
           items: [
             {label: 'Introduction', to: '/docs/'},
             {label: 'Why Codesteward', to: '/docs/concepts/why-codesteward'},
-            {label: 'Quick start', to: '/docs/getting-started/quickstart'},
+            {label: 'Compose quick start', to: '/docs/getting-started/quickstart'},
+            {label: 'Kubernetes quick start', to: '/docs/getting-started/kubernetes'},
             {label: 'FAQ', to: '/docs/reference/faq'},
           ],
         },
@@ -112,7 +153,7 @@ const config: Config = {
           title: 'Install & configure',
           items: [
             {label: 'Install overview', to: '/docs/install/overview'},
-            {label: 'Helm', to: '/docs/install/helm'},
+            {label: 'Helm (OCI / GHCR)', to: '/docs/install/helm'},
             {label: 'Identity', to: '/docs/configure/identity'},
             {label: 'Environment', to: '/docs/reference/environment'},
           ],

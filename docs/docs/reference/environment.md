@@ -23,7 +23,7 @@ This is a **practical subset** — not every flag. Prefer Platform / org runtime
 
 | Variable | Purpose |
 |----------|---------|
-| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / … | Host-level provider keys |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `SPACEXAI_API_KEY` | Host-level provider keys (SpaceXAI also accepts legacy `XAI_API_KEY`) |
 | `MODEL_PROVIDER` | Default provider selection |
 | `STEW_LLM_MAX_RETRIES` | LLM retry budget |
 | `STEW_LLM_REQUEST_TIMEOUT_MS` | Per-request timeout |

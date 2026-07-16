@@ -31,7 +31,7 @@ const PRICE_TABLE: Array<{ match: RegExp; price: ModelTokenPrice }> = [
   { match: /claude-3-5-sonnet|claude-3\.5-sonnet/i, price: { inputPerMTok: 3, outputPerMTok: 15, label: "claude-3.5-sonnet" } },
   { match: /claude-3-5-haiku|claude-3\.5-haiku|haiku/i, price: { inputPerMTok: 0.8, outputPerMTok: 4, label: "claude-haiku" } },
   { match: /claude-3-opus/i, price: { inputPerMTok: 15, outputPerMTok: 75, label: "claude-3-opus" } },
-  // xAI
+  // SpaceXAI (Grok)
   { match: /grok-3-mini|grok-mini/i, price: { inputPerMTok: 0.3, outputPerMTok: 0.5, label: "grok-3-mini" } },
   { match: /grok-3|grok-2/i, price: { inputPerMTok: 3, outputPerMTok: 15, label: "grok-3" } },
   // OpenRouter-style prefixes: strip provider/ and retry via normalize

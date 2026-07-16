@@ -10,7 +10,7 @@ Codesteward routes specialist stages through a **model router**:
 
 - OpenAI  
 - Anthropic  
-- xAI  
+- SpaceXAI  
 - OpenAI-compatible endpoints  
 - LiteLLM  
 

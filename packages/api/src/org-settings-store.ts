@@ -27,6 +27,7 @@ export type ProviderId =
   | "openai"
   | "anthropic"
   | "xai"
+  | "spacexai"
   | "litellm"
   | "openai-compatible"
   | "openrouter";

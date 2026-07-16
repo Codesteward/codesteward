@@ -1,6 +1,32 @@
-# CodeSteward Helm chart
+# Codesteward Helm chart
 
 Production deployment with Neo4j/JanusGraph graph, API, UI, and **horizontally scaled workers**.
+
+## Install from GHCR (OCI)
+
+Official repo: [Codesteward/codesteward](https://github.com/Codesteward/codesteward).  
+Each product release (`vX.Y.Z`) packages this chart and pushes it to GHCR:
+
+```bash
+VERSION=1.1.0
+
+helm install codesteward oci://ghcr.io/codesteward/codesteward/charts/codesteward \
+  --version "$VERSION" \
+  --namespace codesteward --create-namespace \
+  --set image.repository=ghcr.io/codesteward/codesteward \
+  --set image.tag="$VERSION" \
+  --set ui.image.repository=ghcr.io/codesteward/codesteward/ui \
+  --set ui.image.tag="$VERSION"
+```
+
+| Artifact | Reference |
+|----------|-----------|
+| Chart | `oci://ghcr.io/codesteward/codesteward/charts/codesteward` |
+| App | `ghcr.io/codesteward/codesteward` |
+| UI | `ghcr.io/codesteward/codesteward/ui` |
+| Keycloak | `ghcr.io/codesteward/codesteward/keycloak` |
+
+The `.tgz` is also attached to the GitHub Release. Product docs: **Kubernetes quick start**.
 
 ## Production requirements
 

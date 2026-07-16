@@ -73,7 +73,7 @@ One finding schema. One policy model. Multi-provider LLMs. Product UI, CLI, GitH
               ┌──────────────────────────────┼────────────────────────┐
               ▼                              ▼                        ▼
      Codesteward Graph MCP           Model router              Sandbox / Prove
-     GraphQLite · Neo4j · Janus      OpenAI · Anthropic · xAI   local · docker · k8s
+     GraphQLite · Neo4j · Janus      OpenAI · Anthropic · SpaceXAI   local · docker · k8s
 ```
 
 | Layer | Role |
@@ -312,13 +312,14 @@ git tag v1.1.0
 git push origin v1.1.0
 ```
 
-Images (lowercased repo path on GHCR):
+Images ([Codesteward/codesteward](https://github.com/Codesteward/codesteward) → GHCR, lowercased):
 
 | Image | Dockerfile | Tags |
 |-------|------------|------|
-| `ghcr.io/<owner>/<repo>` | `deploy/compose/Dockerfile.node` (API; `SERVICE=worker` for workers) | product semver (`1.1.0`) |
-| `ghcr.io/<owner>/<repo>/ui` | `deploy/compose/Dockerfile.ui` | product semver |
-| `ghcr.io/<owner>/<repo>/keycloak` | `deploy/compose/keycloak/Dockerfile` | **upstream Keycloak** (`26.7.0`, not product) |
+| `ghcr.io/codesteward/codesteward` | `deploy/compose/Dockerfile.node` (API; `SERVICE=worker` for workers) | product semver (`1.1.0`) |
+| `ghcr.io/codesteward/codesteward/ui` | `deploy/compose/Dockerfile.ui` | product semver |
+| `ghcr.io/codesteward/codesteward/keycloak` | `deploy/compose/keycloak/Dockerfile` | **upstream Keycloak** (`26.7.0`, not product) |
+| Helm chart `oci://ghcr.io/codesteward/codesteward/charts/codesteward` | `deploy/helm/codesteward` | product semver |
 
 **Codesteward Graph** (MCP) image used by compose stacks:
 

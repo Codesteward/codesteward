@@ -1,11 +1,33 @@
 /**
- * Codesteward Review docs — brand tokens aligned with packages/ui
- * Surfaces: #0c0e14 / #12141c · Accent: #7c5cfc
+ * Codesteward Review docs — tokens mirrored from packages/ui/src/styles/global.css
+ * Surfaces: #0c0e14 / #12141c · Accent: #7c5cfc · DM Sans
  */
 
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap');
 
+/* ── Brand tokens (product UI) ─────────────────────────────── */
 :root {
+  --cs-bg: #0c0e14;
+  --cs-bg-deep: #080a10;
+  --cs-bg-elevated: #12141c;
+  --cs-bg-panel: #0e1018;
+  --cs-bg-hover: #181b26;
+  --cs-border: rgba(255, 255, 255, 0.08);
+  --cs-border-strong: rgba(255, 255, 255, 0.14);
+  --cs-text: #ffffff;
+  --cs-text-secondary: rgba(255, 255, 255, 0.85);
+  --cs-text-muted: rgba(255, 255, 255, 0.55);
+  --cs-accent: #7c5cfc;
+  --cs-accent-strong: #6346e6;
+  --cs-accent-dim: rgba(124, 92, 252, 0.14);
+  --cs-violet: #a78bfa;
+  --cs-brand-cyan: #22d3ee;
+  --cs-brand-blue: #2563eb;
+  --cs-radius: 10px;
+  --cs-font: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --cs-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Light Infima primary (used when theme is light) */
   --ifm-color-primary: #5b3fd4;
   --ifm-color-primary-dark: #4c2fc0;
   --ifm-color-primary-darker: #462cb4;
@@ -14,14 +36,21 @@
   --ifm-color-primary-lighter: #7c5cfc;
   --ifm-color-primary-lightest: #9b84fd;
   --ifm-code-font-size: 90%;
-  --ifm-font-family-base: 'DM Sans', system-ui, -apple-system, sans-serif;
-  --ifm-font-family-monospace: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  --ifm-heading-font-family: 'DM Sans', system-ui, sans-serif;
-  --ifm-border-radius: 10px;
+  --ifm-font-family-base: var(--cs-font);
+  --ifm-font-family-monospace: var(--cs-mono);
+  --ifm-heading-font-family: var(--cs-font);
+  --ifm-font-weight-semibold: 600;
+  --ifm-global-radius: var(--cs-radius);
+  --ifm-button-border-radius: var(--cs-radius);
+  --ifm-code-border-radius: 6px;
+  --ifm-card-border-radius: 12px;
   --docusaurus-highlighted-code-line-bg: rgba(91, 63, 212, 0.1);
+  --ifm-link-color: var(--ifm-color-primary);
+  --ifm-menu-color-active: var(--ifm-color-primary);
 }
 
-[data-theme='dark'] {
+/* Product is dark-first — dark theme is the brand experience */
+html[data-theme='dark'] {
   --ifm-color-primary: #7c5cfc;
   --ifm-color-primary-dark: #6346e6;
   --ifm-color-primary-darker: #5a3fd9;
@@ -29,32 +58,136 @@
   --ifm-color-primary-light: #9278fd;
   --ifm-color-primary-lighter: #a48efd;
   --ifm-color-primary-lightest: #c4b5fd;
-  --ifm-background-color: #0c0e14;
-  --ifm-background-surface-color: #12141c;
-  --ifm-navbar-background-color: #0e1018;
-  --ifm-footer-background-color: #080a10;
-  --ifm-color-content: #ffffff;
-  --ifm-color-content-secondary: rgba(255, 255, 255, 0.65);
-  --ifm-toc-border-color: rgba(255, 255, 255, 0.08);
-  --ifm-hr-background-color: rgba(255, 255, 255, 0.08);
+
+  --ifm-background-color: var(--cs-bg);
+  --ifm-background-surface-color: var(--cs-bg-elevated);
+  --ifm-navbar-background-color: var(--cs-bg-panel);
+  --ifm-footer-background-color: var(--cs-bg-deep);
+  --ifm-footer-color: var(--cs-text-muted);
+  --ifm-footer-link-color: var(--cs-text-secondary);
+  --ifm-footer-title-color: var(--cs-text);
+
+  --ifm-color-content: var(--cs-text);
+  --ifm-color-content-secondary: var(--cs-text-muted);
+  --ifm-heading-color: var(--cs-text);
+  --ifm-font-color-base: var(--cs-text);
+  --ifm-font-color-base-inverse: #0f172a;
+
+  --ifm-navbar-link-color: var(--cs-text-secondary);
+  --ifm-navbar-link-hover-color: var(--cs-text);
+  --ifm-menu-color: var(--cs-text-secondary);
+  --ifm-menu-color-active: var(--cs-violet);
+  --ifm-menu-color-background-active: var(--cs-accent-dim);
+  --ifm-menu-color-background-hover: rgba(255, 255, 255, 0.04);
+
+  --ifm-toc-border-color: var(--cs-border);
+  --ifm-hr-background-color: var(--cs-border);
   --ifm-table-border-color: rgba(255, 255, 255, 0.1);
-  --ifm-code-background: rgba(124, 92, 252, 0.12);
-  --docusaurus-highlighted-code-line-bg: rgba(124, 92, 252, 0.2);
-  --ifm-menu-color: rgba(255, 255, 255, 0.75);
-  --ifm-menu-color-active: #c4b5fd;
-  --ifm-breadcrumb-color-active: #a48efd;
+  --ifm-table-stripe-background: rgba(255, 255, 255, 0.03);
+  --ifm-table-head-background: var(--cs-bg-elevated);
+
+  --ifm-code-background: rgba(124, 92, 252, 0.14);
+  --ifm-code-color: #e9e4ff;
+  --docusaurus-highlighted-code-line-bg: rgba(124, 92, 252, 0.22);
+
+  --ifm-breadcrumb-color-active: var(--cs-violet);
+  --ifm-link-color: #a78bfa;
+  --ifm-link-hover-color: #c4b5fd;
+
+  --ifm-color-emphasis-100: #12141c;
+  --ifm-color-emphasis-200: #181b26;
+  --ifm-color-emphasis-300: rgba(255, 255, 255, 0.12);
+  --ifm-hover-overlay: rgba(255, 255, 255, 0.04);
+
+  /* Hero / inverse surfaces: always light-on-dark brand chrome */
+  --ifm-hero-background-color: var(--cs-bg-deep);
+  --ifm-hero-text-color: #ffffff;
+
+  color-scheme: dark;
 }
 
-/* Doc images (UI screenshots) */
+html[data-theme='light'] {
+  --cs-bg: #f1f5f9;
+  --cs-bg-deep: #e2e8f0;
+  --cs-bg-elevated: #ffffff;
+  --cs-bg-panel: #f8fafc;
+  --cs-bg-hover: #e8eef6;
+  --cs-border: rgba(15, 23, 42, 0.1);
+  --cs-border-strong: rgba(15, 23, 42, 0.16);
+  --cs-text: #0f172a;
+  --cs-text-secondary: #1e293b;
+  --cs-text-muted: #475569;
+  --cs-accent: #5b3fd4;
+  --cs-accent-strong: #4c2fc0;
+  --cs-accent-dim: rgba(91, 63, 212, 0.1);
+  --cs-violet: #6d28d9;
+
+  --ifm-background-color: var(--cs-bg);
+  --ifm-background-surface-color: var(--cs-bg-elevated);
+  --ifm-navbar-background-color: rgba(255, 255, 255, 0.92);
+  --ifm-footer-background-color: #0c0e14;
+  --ifm-footer-color: rgba(255, 255, 255, 0.55);
+  --ifm-footer-link-color: rgba(255, 255, 255, 0.85);
+  --ifm-footer-title-color: #ffffff;
+  --ifm-color-content: var(--cs-text);
+  --ifm-heading-color: var(--cs-text);
+  color-scheme: light;
+}
+
+/* ── Chrome ────────────────────────────────────────────────── */
+.navbar {
+  border-bottom: 1px solid var(--cs-border);
+  box-shadow: none;
+  backdrop-filter: blur(12px);
+}
+
+/* Official Codesteward icon in navbar */
+.navbar__logo {
+  height: 2rem;
+  margin-right: 0.5rem;
+}
+
+.navbar__logo img {
+  height: 2rem;
+  width: 2rem;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.navbar__title {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme='light'] .footer {
+  /* Footer stays dark brand strip like product marketing */
+  --ifm-footer-background-color: #080a10;
+}
+
+.footer__copyright {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* Sidebar active item — purple pill feel */
+html[data-theme='dark'] .menu__link--active:not(.menu__link--sublist) {
+  background: var(--cs-accent-dim);
+  border-left: 2px solid var(--cs-accent);
+  border-radius: 0 8px 8px 0;
+}
+
+/* Doc images */
 .markdown img {
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--cs-radius);
+  border: 1px solid var(--cs-border);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
   margin: 1rem 0 1.5rem;
 }
 
 html[data-theme='light'] .markdown img {
-  border-color: rgba(15, 23, 42, 0.1);
   box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
 }
 
@@ -63,16 +196,82 @@ html[data-theme='light'] .markdown img {
   width: 100%;
 }
 
-.navbar {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+/* Admonitions closer to product banners */
+html[data-theme='dark'] .alert {
+  border: 1px solid var(--cs-border-strong);
+  background: var(--cs-bg-elevated);
 }
 
-html[data-theme='light'] .navbar {
-  border-bottom-color: rgba(15, 23, 42, 0.08);
+html[data-theme='dark'] .alert--info {
+  --ifm-alert-background-color: rgba(124, 92, 252, 0.12);
+  --ifm-alert-border-color: rgba(124, 92, 252, 0.45);
+  --ifm-alert-foreground-color: var(--cs-text);
 }
 
-.footer {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+html[data-theme='dark'] .alert--warning {
+  --ifm-alert-background-color: rgba(251, 191, 36, 0.1);
+  --ifm-alert-border-color: rgba(251, 191, 36, 0.4);
+  --ifm-alert-foreground-color: var(--cs-text);
 }
 
-/* Prefer dark default via colorMode config; keep light usable */
+/* Buttons — ensure readable contrast on dark surfaces */
+html[data-theme='dark'] .button--secondary {
+  background: #ffffff;
+  color: #0c0e14 !important;
+  border-color: transparent;
+}
+
+html[data-theme='dark'] .button--secondary:hover {
+  background: #e9e4ff;
+  color: #0c0e14 !important;
+}
+
+html[data-theme='dark'] .button--outline {
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.35);
+  background: transparent;
+}
+
+html[data-theme='dark'] .button--outline:hover {
+  border-color: var(--cs-accent);
+  background: var(--cs-accent-dim);
+  color: #ffffff !important;
+}
+
+html[data-theme='dark'] .button--primary {
+  background: var(--cs-accent);
+  border-color: var(--cs-accent);
+  color: #ffffff !important;
+}
+
+html[data-theme='dark'] .button--primary:hover {
+  background: var(--cs-accent-strong);
+  border-color: var(--cs-accent-strong);
+  color: #ffffff !important;
+}
+
+/* Infima hero defaults fight our homepage — kill inverse black text */
+.hero,
+.hero--primary {
+  --ifm-hero-text-color: #ffffff;
+  color: #ffffff;
+}
+
+.hero .hero__title,
+.hero .hero__subtitle,
+.hero h1,
+.hero h2,
+.hero p {
+  color: #ffffff;
+}
+
+.hero .hero__subtitle {
+  opacity: 0.78;
+}
+
+/* Pagination / cards on dark */
+html[data-theme='dark'] .card,
+html[data-theme='dark'] .pagination-nav__link {
+  background: var(--cs-bg-elevated);
+  border-color: var(--cs-border);
+}

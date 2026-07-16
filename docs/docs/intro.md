@@ -54,14 +54,14 @@ Most AI review tools skim a diff and guess. Codesteward runs **multi-agent** rev
 
 1. **[Why Codesteward](./concepts/why-codesteward)** — when graph-aware review is worth running yourself  
 2. **[Quick start](./getting-started/quickstart)** — category Compose stack on your laptop  
-3. **[Install for production](./install/overview)** — Helm topology, Postgres, Keycloak, workers  
+3. **[Kubernetes quick start](./getting-started/kubernetes)** or **[Install overview](./install/overview)** — Helm / Compose, Postgres, Keycloak, workers  
 
 Then explore the [UI guide](./product/ui-guide) and [review pipeline](./pipeline/overview) when you want depth.
 
 ## License & cost model
 
 - **Software:** Apache-2.0 (see repository `LICENSE`)  
-- **Your cost:** infrastructure + **LLM API usage** (OpenAI, Anthropic, xAI, OpenAI-compatible, LiteLLM, …)  
+- **Your cost:** infrastructure + **LLM API usage** (OpenAI, Anthropic, SpaceXAI, OpenAI-compatible, LiteLLM, …)  
 - **Not included:** managed multi-tenant SaaS, hosted billing portal for end customers  
 
 Ready to try? → **[Quick start](./getting-started/quickstart)**

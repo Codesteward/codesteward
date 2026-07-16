@@ -263,7 +263,7 @@ configCmd
         value: cfg.anthropicApiKey ? "***" : "",
       },
       {
-        name: "XAI_API_KEY",
+        name: "SPACEXAI_API_KEY",
         ok: Boolean(cfg.xaiApiKey),
         value: cfg.xaiApiKey ? "***" : "",
       },

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 2
+sidebar_position: 3
 title: "Your first review"
 description: "From login to findings on a real PR or branch."
 ---

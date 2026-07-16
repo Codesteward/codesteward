@@ -45,7 +45,7 @@ Validator design is honest about itself (“structural validator”) but is **da
 | **Noise stack (partial)** | Severity floor, dedupe, nit patterns, prior fingerprint convergence, comment caps, learning suppress fingerprints | **No embedding cosine cluster filter** (Greptile/Kodus-class) |
 | **Policy** | STEWARD.md parse + path rules + defaults | Base-branch safety needs runtime verification per deploy |
 | **Graph client** | HTTP MCP client + `GRAPH_MOCK` mock | stdio transport explicitly not implemented |
-| **Multi-model router** | OpenAI-compatible + Anthropic + LiteLLM base URL / xAI via compat | Role routing + budget; not full multi-model “teams” UX |
+| **Multi-model router** | OpenAI-compatible + Anthropic + LiteLLM base URL / SpaceXAI via compat | Role routing + budget; not full multi-model “teams” UX |
 | **SCM adapters** | Real REST `fetch` adapters: GitHub, GitLab, Bitbucket, Azure DevOps, Gitea | Unified interface; **webhooks only for GitHub** |
 | **GitHub gate path** | Webhook PR opened/sync/reopen/ready_for_review; draft skip; signature verify; Action | Mention trigger not implemented; GH file list capped at 100 |
 | **CLI** | `review`, `steward`, `scan`, `resume`, findings export SARIF, graph, rules, config doctor | Local + remote enqueue paths present |

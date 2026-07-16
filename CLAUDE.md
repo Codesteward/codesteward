@@ -57,7 +57,7 @@ pnpm stew -- findings export --sarif -s <sessionId>
 | Package | Role |
 |---------|------|
 | `core` | Zod schemas, IDs, events |
-| `model-router` | OpenAI/Anthropic/xAI/compat/LiteLLM |
+| `model-router` | OpenAI/Anthropic/SpaceXAI/compat/LiteLLM |
 | `graph-client` | Graph MCP + mock |
 | `policy` | STEWARD.md + `.codesteward/rules` (base branch) |
 | `findings` | Store + fingerprint + SARIF 2.1.0 |

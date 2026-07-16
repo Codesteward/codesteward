@@ -8,11 +8,13 @@ description: "Run the category Compose stack and open the UI in minutes."
 
 The **category stack** is the fastest path to a realistic install: Postgres, graph, API, worker, UI, and Keycloak with the Codesteward login theme.
 
+Prefer a **cluster** already? See the **[Kubernetes quick start](./kubernetes)** (Helm from GHCR).
+
 ## Prerequisites
 
 - Docker + Docker Compose  
 - Node **≥ 22** and **pnpm 9** (to build images/packages if not using prebuilt images)  
-- An LLM API key (OpenAI, Anthropic, xAI, or OpenAI-compatible endpoint)  
+- An LLM API key (OpenAI, Anthropic, SpaceXAI, or OpenAI-compatible endpoint)  
 
 ## Run the category stack
 

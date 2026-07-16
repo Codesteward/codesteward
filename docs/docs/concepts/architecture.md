@@ -27,7 +27,7 @@ description: "UI, API, workers, Postgres, graph, and identity."
               ┌──────────────────────────────┼────────────────────────┐
               ▼                              ▼                        ▼
      Graph MCP (stdio in worker)     Model router              Sandbox / Prove
-     Neo4j · Janus · GraphQLite      OpenAI · Anthropic · xAI   local · docker · k8s
+     Neo4j · Janus · GraphQLite      OpenAI · Anthropic · SpaceXAI   local · docker · k8s
 ```
 
 | Layer | Role |

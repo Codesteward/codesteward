@@ -8,7 +8,7 @@ import { OrgLangfusePanel } from "./settings/panels";
 const PROVIDERS = [
   { id: "openai", label: "OpenAI", keyLabel: "OPENAI_API_KEY" },
   { id: "anthropic", label: "Anthropic", keyLabel: "ANTHROPIC_API_KEY" },
-  { id: "xai", label: "xAI", keyLabel: "XAI_API_KEY" },
+  { id: "xai", label: "SpaceXAI", keyLabel: "SPACEXAI_API_KEY" },
   { id: "openrouter", label: "OpenRouter", keyLabel: "OPENROUTER_API_KEY" },
   { id: "openai-compatible", label: "OpenAI-compatible", keyLabel: "API key" },
   { id: "litellm", label: "LiteLLM", keyLabel: "API key" },

@@ -9,12 +9,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Changed
+
+- **SpaceXAI rebrand** — user-facing "xAI" renamed to **SpaceXAI** (docs, UI Models, CLI doctor).
+  Env: prefer `SPACEXAI_API_KEY` (legacy `XAI_API_KEY` still accepted). Provider id `xai` kept for
+  stored configs; alias `spacexai` accepted in the model router. API host remains `api.x.ai` until upstream changes.
+
 ### Added
 
+- **Helm chart OCI publish on release** — `helm package` + `helm push` to
+  `oci://ghcr.io/<owner>/<repo>/charts/codesteward` (version = product semver); `.tgz` also attached
+  to the GitHub Release. Docs: Kubernetes quick start + Helm install from GHCR.
 - **Documentation site** — Docusaurus handbook at top-level `docs/` (replaces flat markdown-only docs folder).
-  Full product handbook: why Codesteward, quick start, install (Compose/Helm), configure, product UI,
-  pipeline, integrations, ops, security, FAQ — not only migrated legacy markdown. Theme aligned with
-  product UI; Cloudflare Workers via `docs/wrangler.toml`.
+  Full product handbook: why Codesteward, Compose + **Kubernetes quick start**, install (Compose/Helm),
+  configure, product UI, pipeline, integrations, ops, security, FAQ. Theme aligned with product UI;
+  Cloudflare Workers via `docs/wrangler.toml`.
 - **Multi-tenant worker isolation** — harden shared workers against cross-org clone reads
   (path layout + tool jail + optional hard sandbox + claim affinity). See
   `docs/docs/ops/multi-tenant-workers.md` (docs site).
@@ -138,7 +147,7 @@ pnpm migrate
 
 - **Dual-mode reviews** — PR **Gate** (diff-focused) and branch **Stewardship** (path/package batches) on one platform
 - **Graph-aware agents** — specialists call Codesteward Graph (MCP) for structure, not only the patch
-- **Multi-provider model router** — OpenAI, Anthropic, xAI, OpenAI-compatible, LiteLLM; optional Langfuse tracing
+- **Multi-provider model router** — OpenAI, Anthropic, SpaceXAI, OpenAI-compatible, LiteLLM; optional Langfuse tracing
 - **Policy** — `STEWARD.md` + `.codesteward/rules` loaded from the **base** branch only
 - **Findings** — durable store, fingerprinting, SARIF 2.1.0 export, lifecycle reconcile (auto-fix / reopen)
 - **Learning** — 👍/👎 reactions, dismissals, org/repo/PR-scoped memories, `last_reviewed_sha` incremental gate

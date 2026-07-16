@@ -24,7 +24,7 @@ Yes — that is a primary reason to self-host. Connect a GitHub App (or other SC
 
 ### What models work?
 
-OpenAI, Anthropic, xAI, OpenAI-compatible endpoints, LiteLLM. Quality depends on the model; start with a strong default.
+OpenAI, Anthropic, SpaceXAI, OpenAI-compatible endpoints, LiteLLM. Quality depends on the model; start with a strong default.
 
 ### Will it spam my PRs?
 

@@ -43,6 +43,7 @@ x-stew-env: &stew-env
   MODEL_NAME: ${MODEL_NAME:-gpt-4.1-mini}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   XAI_API_KEY: ${XAI_API_KEY:-}
+  SPACEXAI_API_KEY: ${SPACEXAI_API_KEY:-${XAI_API_KEY:-}}
   STEW_DATA_DIR: /data
   STEW_WORKSPACE_DIR: /workspace
   # Isolated DB — never shares category/demo Postgres volume

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 3
+sidebar_position: 4
 title: "Prerequisites"
 description: "What you need before installing Codesteward Review."
 ---
@@ -13,7 +13,7 @@ description: "What you need before installing Codesteward Review."
 | Docker Compose | Category stack |
 | CPU / RAM | ~4+ CPU, 8+ GB RAM recommended for full stack |
 | Disk | Clones + Postgres + graph; plan for workspace growth |
-| LLM API access | OpenAI / Anthropic / xAI / compatible |
+| LLM API access | OpenAI / Anthropic / SpaceXAI / compatible |
 
 ## Production
 

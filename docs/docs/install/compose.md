@@ -47,7 +47,7 @@ Minimum interesting env:
 
 ```bash
 DATABASE_URL=postgres://...
-OPENAI_API_KEY=...          # or ANTHROPIC_API_KEY / xAI / compatible
+OPENAI_API_KEY=...          # or ANTHROPIC_API_KEY / SpaceXAI / compatible
 OIDC_ISSUER=https://...     # when using Keycloak
 ```
 

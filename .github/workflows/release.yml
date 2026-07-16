@@ -5,10 +5,12 @@
 #   2. container  — build images, Trivy gate, push multi-arch, cosign, SBOM
 #   3. release    — GitHub Release with changelog notes + scan assets
 #
-# Images (GHCR, lowercased repository path):
-#   ghcr.io/<owner>/<repo>           — monorepo app (API + worker)
-#   ghcr.io/<owner>/<repo>/ui        — product UI (nginx)
-#   ghcr.io/<owner>/<repo>/keycloak  — Keycloak + theme/realm; tags = upstream KC version
+# Official repo: github.com/Codesteward/codesteward → GHCR (lowercased):
+#   ghcr.io/codesteward/codesteward           — monorepo app (API + worker)
+#   ghcr.io/codesteward/codesteward/ui        — product UI (nginx)
+#   ghcr.io/codesteward/codesteward/keycloak  — Keycloak + theme/realm; tags = upstream KC version
+#   oci://ghcr.io/codesteward/codesteward/charts/codesteward — Helm chart (product semver)
+# Workflow derives paths from github.repository (works for forks too).
 #
 # Cosign keyless signing via GitHub OIDC. No Docker Hub credentials required.
 
@@ -328,6 +330,52 @@ jobs:
             sbom.cdx.json
           if-no-files-found: error
 
+      # STEP 5 — Helm chart → GHCR OCI + release asset
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Package and push Helm chart (OCI → GHCR)
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          REPO_LC=$(echo "$REPO" | tr '[:upper:]' '[:lower:]')
+          CHART_DIR=deploy/helm/codesteward
+          OUT_DIR="${RUNNER_TEMP}/helm-chart"
+          mkdir -p "$OUT_DIR"
+
+          # Align Chart.yaml with the git tag (semver without leading v)
+          sed -i "s/^version: .*/version: ${VERSION}/" "$CHART_DIR/Chart.yaml"
+          sed -i "s/^appVersion: .*/appVersion: \"${VERSION}\"/" "$CHART_DIR/Chart.yaml"
+
+          # Default image tag in values matches this release when still on chart appVersion pattern
+          if grep -q 'tag: ".*"' "$CHART_DIR/values.yaml"; then
+            sed -i "0,/tag: \".*\"/s//tag: \"${VERSION}\"/" "$CHART_DIR/values.yaml" || true
+          fi
+
+          helm lint "$CHART_DIR"
+          helm package "$CHART_DIR" --destination "$OUT_DIR" --version "$VERSION" --app-version "$VERSION"
+
+          TGZ=$(ls "$OUT_DIR"/codesteward-*.tgz | head -1)
+          echo "Packaged: $TGZ"
+          # oci://ghcr.io/<owner>/<repo>/charts  → chart name "codesteward"
+          helm push "$TGZ" "oci://${REGISTRY}/${REPO_LC}/charts"
+
+          # Stash for GitHub Release assets
+          cp "$TGZ" "./codesteward-${VERSION}.tgz"
+          echo "CHART_TGZ=codesteward-${VERSION}.tgz" >> "$GITHUB_ENV"
+          echo "Pushed oci://${REGISTRY}/${REPO_LC}/charts/codesteward:${VERSION}"
+
+      - name: Upload Helm chart package
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart
+          path: codesteward-*.tgz
+          if-no-files-found: error
+
   # ── Create GitHub release ──────────────────────────────────────────────────
   release:
     name: Create GitHub release
@@ -351,6 +399,12 @@ jobs:
         with:
           name: container-reports
           path: container-reports/
+
+      - name: Download Helm chart
+        uses: actions/download-artifact@v4
+        with:
+          name: helm-chart
+          path: helm-chart/
 
       - name: Extract changelog for this version
         env:
@@ -386,6 +440,16 @@ jobs:
             echo "  ghcr.io/${REPO_LC}/keycloak:${KC} start-dev --import-realm --http-port=8083"
             echo '```'
             echo ""
+            echo "## Helm chart (OCI on GHCR)"
+            echo ""
+            echo '```bash'
+            echo "helm install codesteward oci://ghcr.io/${REPO_LC}/charts/codesteward --version ${VERSION}"
+            echo "# or: helm pull oci://ghcr.io/${REPO_LC}/charts/codesteward --version ${VERSION}"
+            echo '```'
+            echo ""
+            echo "Chart package is also attached to this release as \`codesteward-${VERSION}.tgz\`."
+            echo "Docs: Kubernetes quick start in the product documentation site."
+            echo ""
             echo "Images are signed with [cosign](https://github.com/sigstore/cosign) keyless via GitHub OIDC."
             echo "Verify with:"
             echo '```bash'
@@ -402,4 +466,5 @@ jobs:
           files: |
             container-reports/trivy-report.json
             container-reports/sbom.cdx.json
+            helm-chart/*.tgz
           generate_release_notes: false

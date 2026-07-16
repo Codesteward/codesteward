@@ -72,6 +72,25 @@ spec:
                   name: codesteward-secrets
                   key: openaiApiKey
                   optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: codesteward-secrets
+                  key: anthropicApiKey
+                  optional: true
+            # SpaceXAI (Grok); secret key xaiApiKey for compatibility
+            - name: SPACEXAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: codesteward-secrets
+                  key: xaiApiKey
+                  optional: true
+            - name: XAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: codesteward-secrets
+                  key: xaiApiKey
+                  optional: true
             - name: GITHUB_TOKEN
               valueFrom:
                 secretKeyRef:
