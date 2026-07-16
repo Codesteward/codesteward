@@ -9,44 +9,72 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
 ### Changed
 
-- **SpaceXAI rebrand** — user-facing "xAI" renamed to **SpaceXAI** (docs, UI Models, CLI doctor).
-  Env: prefer `SPACEXAI_API_KEY` (legacy `XAI_API_KEY` still accepted). Provider id `xai` kept for
-  stored configs; alias `spacexai` accepted in the model router. API host remains `api.x.ai` until upstream changes.
+### Fixed
+
+---
+
+## [1.2.0] — 2026-07-17
+
+Self-host hardening, operator docs site, multi-tenant workers, and release packaging (Helm OCI + SpaceXAI branding).
 
 ### Added
 
-- **Helm chart OCI publish on release** — `helm package` + `helm push` to
-  `oci://ghcr.io/<owner>/<repo>/charts/codesteward` (version = product semver); `.tgz` also attached
-  to the GitHub Release. Docs: Kubernetes quick start + Helm install from GHCR.
 - **Documentation site** — Docusaurus handbook at top-level `docs/` (replaces flat markdown-only docs folder).
-  Full product handbook: why Codesteward, Compose + **Kubernetes quick start**, install (Compose/Helm),
-  configure, product UI, pipeline, integrations, ops, security, FAQ. Theme aligned with product UI;
-  Cloudflare Workers via `docs/wrangler.toml`.
+  Product handbook: why Codesteward, Compose + **Kubernetes quick start**, install (Compose/Helm),
+  configure, product UI, pipeline, integrations, ops, security, FAQ. Theme aligned with product UI
+  (official brand assets); Cloudflare Workers via `docs/wrangler.toml`.
+- **Helm chart OCI publish on release** — `helm package` + `helm push` to
+  `oci://ghcr.io/codesteward/codesteward/charts/codesteward` (version = product semver); `.tgz`
+  also attached to the GitHub Release. Docs: Kubernetes quick start + Helm install from GHCR.
 - **Multi-tenant worker isolation** — harden shared workers against cross-org clone reads
   (path layout + tool jail + optional hard sandbox + claim affinity). See
-  `docs/docs/ops/multi-tenant-workers.md` (docs site).
-  - Workspace layout: clones under `{STEW_WORKSPACE_DIR}/{orgId}/{sessionId}`
+  `docs/docs/ops/multi-tenant-workers.md`.
+  - Workspace layout: `{STEW_WORKSPACE_DIR}/{orgId}/{sessionId}`
     (`STEW_TENANT_ISOLATION=path` default; `off` for legacy flat paths).
-  - Path jail on agent tools / packing (`packages/agents/src/path-jail.ts`) so
-    `sandbox_read` / resolve stay inside the session tree.
+  - Path jail on agent tools / packing (`packages/agents/src/path-jail.ts`).
   - `STEW_TENANT_ISOLATION=strict` prefers Docker/k8s sandbox (no host shell for agent tools).
-  - Org-affine workers: `STEW_WORKER_ORG_IDS` filters Postgres job claim so a pool only
-    runs listed orgs’ jobs.
-  - Graph scope: graph `tenant_id` = product `orgId`; rebuild `repo_path` jailed to session
-    workspace; allow-lists for multi-tenant graph queries.
+  - Org-affine workers: `STEW_WORKER_ORG_IDS` filters Postgres job claim.
+  - Graph scope: graph `tenant_id` = product `orgId`; rebuild `repo_path` jailed to session workspace.
 - **Platform queue republish** — after optional broker (NATS/Rabbit/Pulsar) message loss,
-  platform operators can rehydrate wake-up depth from Postgres SoT via
+  platform operators rehydrate wake-up depth from Postgres via
   `GET/POST /v1/platform/queue` (+ `/republish`) or **Settings → Platform ops → Job queue recovery**.
-  Jobs remain claimable from Postgres either way; republish is for KEDA / broker consumers.
 - **Embedded Graph MCP in workers** — removed standalone graph-mcp service; workers spawn
   `codesteward-mcp --transport stdio`. Shared Neo4j/Janus via `GRAPH_BACKEND` + `NEO4J_URI`
   (tenant_id = product orgId). No shared clone PVC between graph and workers.
 
 ### Changed
 
+- **SpaceXAI rebrand** — user-facing "xAI" renamed to **SpaceXAI** (docs, UI Models, CLI doctor).
+  Env: prefer `SPACEXAI_API_KEY` (legacy `XAI_API_KEY` still accepted). Provider id `xai` kept for
+  stored configs; alias `spacexai` accepted in the model router. API host remains `api.x.ai` until
+  upstream changes.
+- **Default container images** — Helm defaults use `ghcr.io/codesteward/codesteward` (+ `/ui`, `/keycloak`).
+- **Models** — removed unrealistic per-stage env `apiKeyRef` UI/API surface; org provider keys remain BYOK.
+
 ### Fixed
+
+- (See 1.1.0 for prior release fixes.)
+
+### Upgrade notes
+
+1. Pull images / chart for **1.2.0**:
+   ```bash
+   helm upgrade --install codesteward oci://ghcr.io/codesteward/codesteward/charts/codesteward \
+     --version 1.2.0 \
+     --set image.tag=1.2.0 \
+     --set ui.image.tag=1.2.0
+   ```
+   Or from git: `./deploy/helm/codesteward` with image tags `1.2.0`.
+2. Set `SPACEXAI_API_KEY` if you used Grok/`XAI_API_KEY` (legacy env still works).
+3. Multi-tenant production: review `STEW_TENANT_ISOLATION` and optional `STEW_WORKER_ORG_IDS`
+   (`docs/docs/ops/multi-tenant-workers.md`).
+4. Graph: no standalone graph-mcp Deployment — workers embed MCP; point `GRAPH_BACKEND` + Neo4j/Janus as needed.
+5. Optional broker: after broker data loss, use Platform ops **Republish pending** or
+   `POST /v1/platform/queue/republish`.
 
 ---
 
