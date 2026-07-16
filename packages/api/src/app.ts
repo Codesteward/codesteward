@@ -523,6 +523,8 @@ export function createApp() {
     }
 
     const attempts = (session.resumeAttempts ?? 0) + 1;
+    const { failureSummary: _dropFailSummary, ...metaRest } = (session.metadata ??
+      {}) as Record<string, unknown> & { failureSummary?: unknown };
     const updated = globalSessionStore.update(session.id, {
       status: "running",
       stage:
@@ -530,9 +532,12 @@ export function createApp() {
           ? "specialists"
           : session.stage,
       resumeAttempts: attempts,
+      // Clear terminal failure so UI does not keep showing the previous error
       error: undefined,
+      completedAt: undefined,
+      verdict: undefined,
       metadata: {
-        ...session.metadata,
+        ...metaRest,
         resumeFromCheckpoint: true,
       },
     });
@@ -1166,15 +1171,81 @@ export function createApp() {
     });
   });
 
-  /** Runtime knobs (STEW_*, GRAPH_* subset). Env always overrides UI/DB. */
+  /**
+   * Org-overridable runtime only (e.g. STEW_SUGGESTED_CODE_FIXES, STEW_PUBLISH_SARIF).
+   * Install-wide knobs live under /v1/platform/runtime-config.
+   */
   app.get("/v1/org/runtime-config", async (c) => {
     const orgId = c.get("orgId") ?? "local";
-    const { getRuntimeConfigView } = await import("./runtime-config.js");
-    return c.json(await getRuntimeConfigView(orgId));
+    const { getOrgRuntimeConfigView } = await import("./runtime-config.js");
+    return c.json(await getOrgRuntimeConfigView(String(orgId)));
   });
 
   app.put("/v1/org/runtime-config", async (c) => {
     const orgId = c.get("orgId") ?? "local";
+    const role = c.get("role");
+    const authMode = c.get("authMode") as string | undefined;
+    // Org admin (or platform/API key break-glass)
+    if (
+      role !== "admin" &&
+      role !== "owner" &&
+      authMode !== "api_key" &&
+      authMode !== "dev_open"
+    ) {
+      return c.json(
+        {
+          error: "forbidden",
+          message: "Organization admin required to change tenant review preferences",
+        },
+        403,
+      );
+    }
+    const body = (await c.req.json()) as {
+      values?: Record<string, string | null | undefined>;
+    };
+    if (!body.values || typeof body.values !== "object") {
+      return c.json({ error: "body.values required" }, 400);
+    }
+    try {
+      const { putOrgRuntimeConfig } = await import("./runtime-config.js");
+      const saved = await putOrgRuntimeConfig(String(orgId), body.values);
+      try {
+        const { auditLog } = await import("./audit.js");
+        await auditLog({
+          orgId: String(orgId),
+          action: "org.runtime_config.update",
+          actorUserId: (c.get("user") as { id?: string } | undefined)?.id,
+          metadata: { keys: Object.keys(body.values) },
+        });
+      } catch {
+        /* optional */
+      }
+      return c.json(saved);
+    } catch (err) {
+      const e = err as Error & { status?: number; code?: string };
+      if (e.status === 403) {
+        return c.json({ error: e.message, code: e.code }, 403);
+      }
+      throw err;
+    }
+  });
+
+  /** Install-wide runtime knobs (clone, DeepAgents, graph, worker, …). */
+  app.get("/v1/platform/runtime-config", async (c) => {
+    const authMode = c.get("authMode") as string | undefined;
+    const user = c.get("user") as import("./auth-store.js").PublicAuthUser | undefined;
+    try {
+      const { requirePlatformAdmin } = await import("./platform-admin.js");
+      requirePlatformAdmin(user ?? null, authMode);
+    } catch (err) {
+      const e = err as Error & { status?: number };
+      return c.json({ error: "forbidden", message: e.message }, 403);
+    }
+    const { getPlatformRuntimeConfigView } = await import("./runtime-config.js");
+    return c.json(await getPlatformRuntimeConfigView());
+  });
+
+  app.put("/v1/platform/runtime-config", async (c) => {
     const authMode = c.get("authMode") as string | undefined;
     const user = c.get("user") as import("./auth-store.js").PublicAuthUser | undefined;
     try {
@@ -1187,7 +1258,7 @@ export function createApp() {
           error: "forbidden",
           message:
             e.message ||
-            "Platform operator required to change install runtime knobs (tenant admins cannot).",
+            "Platform operator required to change install runtime knobs.",
         },
         403,
       );
@@ -1198,13 +1269,13 @@ export function createApp() {
     if (!body.values || typeof body.values !== "object") {
       return c.json({ error: "body.values required" }, 400);
     }
-    const { putRuntimeConfig } = await import("./runtime-config.js");
-    const saved = await putRuntimeConfig(orgId, body.values);
+    const { putPlatformRuntimeConfig } = await import("./runtime-config.js");
+    const saved = await putPlatformRuntimeConfig(body.values);
     try {
       const { auditLog } = await import("./audit.js");
       await auditLog({
-        orgId,
-        action: "runtime_config.update",
+        orgId: "platform",
+        action: "platform.runtime_config.update",
         actorUserId: (c.get("user") as { id?: string } | undefined)?.id,
         metadata: { keys: Object.keys(body.values) },
       });

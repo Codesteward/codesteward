@@ -21,6 +21,12 @@ export interface CompleteRequest {
   maxTokens?: number;
   /** Optional JSON mode hint for providers that support it. */
   jsonMode?: boolean;
+  /**
+   * Request token logprobs when the provider supports them (OpenAI-compatible).
+   * Used to derive optional `tokenConfidence` on the response.
+   * Default: true when env STEW_REQUEST_LOGPROBS is not "0".
+   */
+  logprobs?: boolean;
 }
 
 export interface ToolCall {
@@ -41,6 +47,11 @@ export interface CompleteResponse {
   model: string;
   provider: ModelProvider;
   raw?: unknown;
+  /**
+   * Mean completion-token probability from logprobs when the provider returned them.
+   * Undefined for Anthropic and other APIs without logprobs.
+   */
+  tokenConfidence?: number;
 }
 
 export interface ChatModel {

@@ -2,7 +2,11 @@ import { nowIso, type AgentRole, type FindingCandidate, type ReviewUnit } from "
 import type { GraphClient } from "@codesteward/graph-client";
 import { resolveModelForRole, type ModelRouter } from "@codesteward/model-router";
 import type { Policy } from "@codesteward/policy";
-import { extractFindingsFromLlm } from "./extract.js";
+import { applyProductConfidence } from "./confidence.js";
+import {
+  extractFindingsFromLlm,
+  resolveSpecialistRunConfidence,
+} from "./extract.js";
 import type { SessionAuditCollector } from "./session-audit.js";
 import {
   DEFAULT_PERSONAS,
@@ -175,56 +179,84 @@ export async function runSpecialist(
       temperature: 0.1,
     });
 
-    const findings = extractFindingsFromLlm(res.content, {
+    let findings = extractFindingsFromLlm(res.content, {
       role,
       sessionId: ctx.sessionId,
       repoId: ctx.repoId,
+      tokenConfidence: res.tokenConfidence,
     });
 
-    // Attach structured graph evidence to high-severity findings
+    // Attach structured graph evidence to high-severity findings, then rescore product confidence
     if (graphEvidencePayload.queries.length) {
-      for (const f of findings) {
+      findings = findings.map((f) => {
         const sev = String(f.severity ?? "medium");
-        if (["critical", "high", "medium"].includes(sev) || role === "evidence" || role === "security") {
+        if (
+          ["critical", "high", "medium"].includes(sev) ||
+          role === "evidence" ||
+          role === "security"
+        ) {
           const existing = Array.isArray(f.evidence) ? f.evidence : [];
-          f.evidence = [
-            ...existing,
-            {
-              type: "graph" as const,
-              id: `graph-${role}-${ctx.unit.id}`,
-              summary: `Structural graph queries for ${ctx.unit.paths.slice(0, 3).join(", ")}`,
-              payload: graphEvidencePayload,
-            },
-          ];
+          const withEv = {
+            ...f,
+            evidence: [
+              ...existing,
+              {
+                type: "graph" as const,
+                id: `graph-${role}-${ctx.unit.id}`,
+                summary: `Structural graph queries for ${ctx.unit.paths.slice(0, 3).join(", ")}`,
+                payload: graphEvidencePayload,
+              },
+            ],
+          };
+          return applyProductConfidence(withEv);
         }
-      }
+        return f;
+      });
     }
 
     if (runId && ctx.audit) {
-      const confs = findings
-        .map((f) => f.confidence)
-        .filter((c): c is number => typeof c === "number" && Number.isFinite(c));
+      const usedGraph = graphEvidencePayload.queries.length > 0;
+      const runConf = resolveSpecialistRunConfidence({
+        findings,
+        responseContent: res.content ?? "",
+        tokenConfidence: res.tokenConfidence,
+        pathsReviewed: ctx.unit.paths.length,
+        filesReviewed: filesFromContext.length,
+        usedGraph,
+      });
+      const findingsSummary =
+        findings.length > 0
+          ? findings.map((f) => ({
+              title: f.title,
+              severity: f.severity,
+              confidence: f.confidence,
+              modelConfidence: f.modelConfidence,
+              tokenConfidence: f.tokenConfidence,
+              path: f.path,
+              startLine: f.startLine,
+              category: f.category,
+            }))
+          : [
+              {
+                title: "No findings",
+                severity: "info",
+                confidence: runConf.avgConfidence,
+                modelConfidence: runConf.modelEmptyScanConfidence,
+                tokenConfidence: res.tokenConfidence,
+                category: "other",
+              },
+            ];
       ctx.audit.endRun(runId, {
         status: "ok",
         findingCount: findings.length,
         responseContent: res.content ?? "",
         promptChars,
         toolCallCount: toolCalls,
-        usedGraph: graphEvidencePayload.queries.length > 0,
+        usedGraph,
         filesReviewed: filesFromContext.length ? filesFromContext : undefined,
         pathsReviewed: ctx.unit.paths,
-        avgConfidence:
-          confs.length > 0
-            ? confs.reduce((a, b) => a + b, 0) / confs.length
-            : undefined,
-        findingsSummary: findings.map((f) => ({
-          title: f.title,
-          severity: f.severity,
-          confidence: f.confidence,
-          path: f.path,
-          startLine: f.startLine,
-          category: f.category,
-        })),
+        avgConfidence: runConf.avgConfidence,
+        findingsSummary,
       });
     }
     void ctx.onEvent?.({

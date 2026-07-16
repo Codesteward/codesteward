@@ -31,13 +31,16 @@ import {
   seedMemoriesFromSteward,
 } from "@codesteward/learning";
 import {
+  findingsToSarif,
   presentFingerprintSet,
   reconcileFindingsOnRereview,
   scopeTags,
   upsertFindingAcrossSessions,
   type FindingScope,
 } from "@codesteward/findings";
+import type { Finding } from "@codesteward/core";
 import type { OrgPromptPack } from "./prompt-pack.js";
+import { applySuggestedFixConfidenceGate } from "./extract.js";
 import { createLimiter, defaultMaxConcurrent } from "./concurrency.js";
 import { prepareCrossRepoReview } from "./cross-repo/prepare.js";
 import type { CloneAuth } from "./cross-repo/materialize.js";
@@ -1174,6 +1177,8 @@ export class ReviewOrchestrator {
     const scopeTagList = scopeTags(findingScope);
     const persisted = [];
     const upsertStats = { created: 0, updated: 0, reopened: 0, kept_closed: 0 };
+    // Drop low-confidence concrete fixes (platform STEW_SUGGESTED_FIX_MIN_CONFIDENCE)
+    proved = applySuggestedFixConfidenceGate(proved);
     for (const c of proved) {
       const { finding: f, action } = await upsertFindingAcrossSessions(
         findings,
@@ -1411,6 +1416,7 @@ export class ReviewOrchestrator {
           category: f.category,
           agents: f.agents,
           suggestion: f.suggestion,
+          suggestedFix: f.suggestedFix,
         })),
         units,
         dropped: judged.dropped,
@@ -1536,6 +1542,8 @@ export class ReviewOrchestrator {
       category?: string;
       evidence?: Array<{ snippet?: string; summary?: string; payload?: Record<string, unknown> }>;
       existingCode?: string;
+      suggestion?: string;
+      suggestedFix?: string;
     }>,
     stats: HealPublishStats,
     sessionStatus: "completed" | "completed_with_errors" | "failed",
@@ -1612,10 +1620,27 @@ export class ReviewOrchestrator {
         continue;
       }
       if (!anchor.startLine) continue;
+      const parts = [
+        `**[${f.severity}/${f.category ?? "other"}]** ${f.title}`,
+        "",
+        f.body ?? "",
+      ];
+      if (f.suggestion?.trim()) {
+        parts.push("", `**Suggestion:** ${f.suggestion.trim()}`);
+      }
+      if (f.suggestedFix?.trim()) {
+        parts.push(
+          "",
+          "**Proposed fix:**",
+          "```",
+          f.suggestedFix.trim(),
+          "```",
+        );
+      }
       inline.push({
         path: f.path,
         line: anchor.startLine,
-        body: `**[${f.severity}/${f.category ?? "other"}]** ${f.title}\n\n${f.body}`,
+        body: parts.join("\n").trim(),
       });
     }
 
@@ -1672,7 +1697,98 @@ export class ReviewOrchestrator {
       }
     }
 
+    // GitHub Code Scanning (Security tab) — SARIF upload when supported
+    await this.publishSarifToCodeScanning(job, findings as Finding[], scm);
+
     return posted.id;
+  }
+
+  /**
+   * Upload findings as SARIF to GitHub Code Scanning (Security → Code scanning).
+   * Controlled by STEW_PUBLISH_SARIF (env → platform → org → product default on).
+   * Applied into process.env via applyOrgRuntimeToProcess before the job runs.
+   * Requires code scanning enabled + token with security_events: write.
+   */
+  private async publishSarifToCodeScanning(
+    job: ReviewJob,
+    findings: Finding[],
+    scm: ScmProvider,
+  ): Promise<void> {
+    if (!scm.uploadCodeScanningSarif) return;
+    if (!job.scm) return;
+    // Resolution: env → platform store → org store (applied into process.env on job start)
+    // → product default On when unset/empty.
+    const flag = process.env.STEW_PUBLISH_SARIF?.trim().toLowerCase();
+    if (flag === "0" || flag === "false" || flag === "off" || flag === "no") {
+      return;
+    }
+    const headSha = job.headSha?.trim();
+    if (!headSha || headSha.length < 7) {
+      await this.emit({
+        type: "log",
+        sessionId: job.sessionId,
+        level: "warn",
+        message:
+          "SARIF Code Scanning upload skipped: job.headSha missing (required by GitHub)",
+        ts: nowIso(),
+      });
+      return;
+    }
+
+    const { owner, repo, prNumber } = job.scm;
+    const ref =
+      prNumber != null
+        ? `refs/pull/${prNumber}/head`
+        : job.baseBranch
+          ? `refs/heads/${job.baseBranch}`
+          : process.env.STEW_SARIF_REF?.trim() || undefined;
+    if (!ref) {
+      await this.emit({
+        type: "log",
+        sessionId: job.sessionId,
+        level: "warn",
+        message:
+          "SARIF Code Scanning upload skipped: no PR number or branch ref for GitHub",
+        ts: nowIso(),
+      });
+      return;
+    }
+
+    try {
+      const category =
+        process.env.STEW_SARIF_CATEGORY?.trim() ||
+        (job.mode === "gate" ? "codesteward/gate" : "codesteward/stewardship");
+      const sarif = findingsToSarif(findings, {
+        toolName: "Codesteward Review",
+        toolVersion: process.env.STEW_VERSION ?? "1.0.0",
+        informationUri: "https://github.com/Codesteward/codesteward",
+        category,
+      });
+      const uploaded = await scm.uploadCodeScanningSarif(owner, repo, {
+        commitSha: headSha,
+        ref,
+        sarif,
+        toolName: "Codesteward Review",
+        startedAt: job.sessionId ? undefined : undefined,
+      });
+      await this.emit({
+        type: "log",
+        sessionId: job.sessionId,
+        level: "info",
+        message: `Uploaded SARIF to GitHub Code Scanning (id=${uploaded.id}${uploaded.url ? ` url=${uploaded.url}` : ""}) — Security → Code scanning`,
+        ts: nowIso(),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // 403/404 are common when GHAS/code scanning is off — don't fail the review
+      await this.emit({
+        type: "log",
+        sessionId: job.sessionId,
+        level: "warn",
+        message: `SARIF Code Scanning upload failed (review still published): ${msg}`,
+        ts: nowIso(),
+      });
+    }
   }
 }
 

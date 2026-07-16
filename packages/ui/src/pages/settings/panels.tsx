@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
+import { Select } from "../../components/Select";
 import { useToast } from "../../components/Toast";
 import { Badge } from "../../components/ui";
 import {
@@ -22,6 +23,7 @@ const RUNTIME_GROUPS: Array<{ id: string; label: string }> = [
   { id: "debug", label: "Debug" },
 ];
 
+/** Install-wide runtime (Platform settings only). */
 export function RuntimeConfigPanel() {
   const toast = useToast();
   const [entries, setEntries] = useState<RuntimeConfigEntry[]>([]);
@@ -34,14 +36,16 @@ export function RuntimeConfigPanel() {
   function load() {
     setLoading(true);
     api
-      .getRuntimeConfig()
+      .getPlatformRuntimeConfig()
       .then((r) => {
         setEntries(r.entries);
         setNote(r.note ?? "");
         const d: Record<string, string> = {};
         for (const e of r.entries) {
-          // Draft shows DB value if any, else effective value for editing when unlocked
-          d[e.key] = e.dbValue ?? (e.source === "default" ? e.default : e.value);
+          // Platform draft: "" = unset (product default). Explicit values are install store.
+          const stored = e.platformValue ?? e.dbValue;
+          d[e.key] =
+            stored !== undefined && stored !== null && stored !== "" ? stored : "";
         }
         setDraft(d);
         setErr(null);
@@ -70,40 +74,21 @@ export function RuntimeConfigPanel() {
   async function save() {
     setBusy(true);
     try {
-      // Only send keys that are editable (not locked by env)
-      const values: Record<string, string | null> = {};
-      for (const e of entries) {
-        if (!e.editable) continue;
-        const v = draft[e.key];
-        if (v === undefined || v === "") {
-          // empty = clear DB override
-          if (e.dbValue !== undefined) values[e.key] = null;
-          continue;
-        }
-        if (v !== e.dbValue && v !== e.default) {
-          values[e.key] = v;
-        } else if (v === e.default && e.dbValue !== undefined) {
-          values[e.key] = null;
-        } else if (e.dbValue !== undefined && v === e.dbValue) {
-          /* unchanged */
-        } else if (v !== e.default) {
-          values[e.key] = v;
-        }
-      }
-      // Simpler: send all editable drafts; server stores them
       const payload: Record<string, string | null> = {};
       for (const e of entries) {
         if (e.envSet || e.envOnly) continue;
         const v = draft[e.key];
-        if (v === undefined || v === "" || v === e.default) {
-          payload[e.key] = null; // clear override → use default
+        if (v === undefined || v === "" || v === "__unset__") {
+          payload[e.key] = null;
+        } else if (e.type === "boolean") {
+          payload[e.key] = v === "1" || v === "true" || v === "yes" ? "1" : "0";
         } else {
           payload[e.key] = v;
         }
       }
-      const saved = await api.putRuntimeConfig(payload);
+      const saved = await api.putPlatformRuntimeConfig(payload);
       setEntries(saved.entries);
-      toast.success("Runtime config saved (env still wins when set)");
+      toast.success("Platform runtime saved (process env still wins when set)");
       void load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -114,6 +99,8 @@ export function RuntimeConfigPanel() {
 
   function sourceBadge(source: string) {
     if (source === "env") return <Badge tone="ok">env</Badge>;
+    if (source === "platform") return <Badge tone="running">platform</Badge>;
+    if (source === "org") return <Badge tone="running">org</Badge>;
     if (source === "db") return <Badge tone="running">ui/db</Badge>;
     return <Badge tone="nit">default</Badge>;
   }
@@ -122,20 +109,20 @@ export function RuntimeConfigPanel() {
     <div className="card stack" style={{ gridColumn: "1 / -1" }}>
       <div className="card-header">
         <h3 className="card-title" style={{ margin: 0 }}>
-          Runtime configuration
+          Platform runtime
         </h3>
         <div className="row" style={{ gap: 8 }}>
           <button type="button" className="ghost sm" disabled={loading || busy} onClick={() => void load()}>
             Refresh
           </button>
           <button type="button" className="primary sm" disabled={loading || busy} onClick={() => void save()}>
-            {busy ? "Saving…" : "Save to database"}
+            {busy ? "Saving…" : "Save install-wide"}
           </button>
         </div>
       </div>
       <p className="muted" style={{ fontSize: "0.85rem", margin: 0, lineHeight: 1.5 }}>
         {note ||
-          "Configure server knobs in the UI (stored per org in Postgres). If the same key is set as an environment variable, the env value always wins until you unset it and restart."}
+          "Install-wide knobs for this Codesteward fleet (clone, DeepAgents, graph, workers, …). Apply to all organizations. Booleans: Unset = product default, Off/On = force install-wide. Process env always wins until removed and restarted."}
       </p>
       {err && (
         <p style={{ color: "var(--danger)", fontSize: "0.85rem", margin: 0 }}>{err}</p>
@@ -150,7 +137,10 @@ export function RuntimeConfigPanel() {
             <div key={g.id} className="stack" style={{ gap: 10 }}>
               <h4 style={{ margin: "0.5rem 0 0", fontSize: "0.9rem" }}>{g.label}</h4>
               <div className="stack" style={{ gap: 12 }}>
-                {list.map((e) => (
+                {list.map((e) => {
+                  const draftVal = draft[e.key] ?? "";
+                  const locked = !e.editable;
+                  return (
                   <div
                     key={e.key}
                     style={{
@@ -173,68 +163,341 @@ export function RuntimeConfigPanel() {
                     <p className="muted" style={{ fontSize: "0.8rem", margin: "6px 0 8px", lineHeight: 1.45 }}>
                       {e.description}
                     </p>
-                    <div className="field" style={{ margin: 0 }}>
+                    <div className="field" style={{ margin: 0, maxWidth: 480 }}>
                       {e.type === "boolean" ? (
-                        <label className="row" style={{ cursor: e.editable ? "pointer" : "not-allowed" }}>
-                          <input
-                            type="checkbox"
-                            disabled={!e.editable}
-                            checked={
-                              (e.editable ? draft[e.key] : e.value) === "1" ||
-                              (e.editable ? draft[e.key] : e.value) === "true"
-                            }
-                            onChange={(ev) =>
-                              setDraft((d) => ({
-                                ...d,
-                                [e.key]: ev.target.checked ? "1" : "0",
-                              }))
-                            }
-                          />
+                        locked ? (
                           <span className="mono" style={{ fontSize: "0.85rem" }}>
-                            {(e.editable ? draft[e.key] : e.value) === "1" ||
-                            (e.editable ? draft[e.key] : e.value) === "true"
-                              ? "enabled (1)"
-                              : "disabled (0)"}
+                            {e.value === "1" || e.value === "true" ? "on (1)" : "off (0)"}
+                            {e.envSet ? " — from process env" : ""}
                           </span>
-                        </label>
+                        ) : (
+                          <Select
+                            aria-label={`${e.label} override`}
+                            size="sm"
+                            value={
+                              draftVal === "1" || draftVal === "true"
+                                ? "1"
+                                : draftVal === "0" || draftVal === "false"
+                                  ? "0"
+                                  : ""
+                            }
+                            onChange={(v) => setDraft((d) => ({ ...d, [e.key]: v }))}
+                            options={[
+                              {
+                                value: "",
+                                label: `Unset — product default (${e.default === "1" ? "on" : "off"})`,
+                              },
+                              { value: "0", label: "Off (0) — store install-wide" },
+                              { value: "1", label: "On (1) — store install-wide" },
+                            ]}
+                          />
+                        )
                       ) : e.type === "enum" && e.enumValues ? (
-                        <select
-                          disabled={!e.editable}
-                          value={e.editable ? draft[e.key] ?? e.default : e.value}
-                          onChange={(ev) =>
-                            setDraft((d) => ({ ...d, [e.key]: ev.target.value }))
-                          }
-                        >
-                          {e.enumValues.map((v) => (
-                            <option key={v} value={v}>
-                              {v}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          disabled={!e.editable}
-                          value={e.editable ? draft[e.key] ?? "" : e.value}
-                          onChange={(ev) =>
-                            setDraft((d) => ({ ...d, [e.key]: ev.target.value }))
-                          }
-                          placeholder={e.default}
-                          className="mono"
+                        <Select
+                          aria-label={`${e.label} override`}
+                          size="sm"
+                          disabled={locked}
+                          value={locked ? e.value : draftVal || ""}
+                          onChange={(v) => setDraft((d) => ({ ...d, [e.key]: v }))}
+                          options={[
+                            {
+                              value: "",
+                              label: `Unset — product default (${e.default})`,
+                            },
+                            ...e.enumValues.map((v) => ({ value: v, label: v })),
+                          ]}
                         />
+                      ) : e.type === "number" ? (
+                        <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                          <input
+                            type="number"
+                            disabled={locked}
+                            value={locked ? e.value : draftVal}
+                            onChange={(ev) =>
+                              setDraft((d) => ({ ...d, [e.key]: ev.target.value }))
+                            }
+                            placeholder={e.default}
+                            className="mono"
+                            style={{ flex: 1, minWidth: 120, maxWidth: 200 }}
+                            {...(e.key === "STEW_SUGGESTED_FIX_MIN_CONFIDENCE"
+                              ? { min: 0, max: 1, step: 0.05 }
+                              : { step: 1 })}
+                          />
+                          {!locked && draftVal !== "" && (
+                            <button
+                              type="button"
+                              className="ghost sm"
+                              onClick={() => setDraft((d) => ({ ...d, [e.key]: "" }))}
+                            >
+                              Unset
+                            </button>
+                          )}
+                          {e.key === "STEW_SUGGESTED_FIX_MIN_CONFIDENCE" && (
+                            <span className="muted" style={{ fontSize: "0.78rem" }}>
+                              0–1 (default {e.default})
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                          <input
+                            disabled={locked}
+                            value={locked ? e.value : draftVal}
+                            onChange={(ev) =>
+                              setDraft((d) => ({ ...d, [e.key]: ev.target.value }))
+                            }
+                            placeholder={`default: ${e.default}`}
+                            className="mono"
+                            style={{ flex: 1, minWidth: 160 }}
+                          />
+                          {!locked && draftVal !== "" && (
+                            <button
+                              type="button"
+                              className="ghost sm"
+                              onClick={() => setDraft((d) => ({ ...d, [e.key]: "" }))}
+                            >
+                              Unset
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
                     <div className="muted mono" style={{ fontSize: "0.7rem", marginTop: 4 }}>
                       effective: {e.value}
-                      {e.envSet ? ` (from env)` : e.dbValue != null ? ` (db override)` : ` (default ${e.default})`}
+                      {e.envSet
+                        ? " (process env — UI cannot clear this)"
+                        : e.platformValue != null
+                          ? ` (platform store=${e.platformValue})`
+                          : e.dbValue != null
+                            ? ` (stored=${e.dbValue})`
+                            : ` (unset → default ${e.default})`}
+                      {(e.key === "STEW_SUGGESTED_CODE_FIXES" ||
+                        e.key === "STEW_PUBLISH_SARIF") &&
+                      (e.platformValue === undefined || e.platformValue === "")
+                        ? " · orgs may override when unset here"
+                        : e.key === "STEW_SUGGESTED_CODE_FIXES" ||
+                            e.key === "STEW_PUBLISH_SARIF"
+                          ? " · forces all orgs"
+                          : ""}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           );
         })
       )}
     </div>
+  );
+}
+
+/**
+ * Shared org-level Unset / Off / On control for platform-overridable boolean runtime keys.
+ * Platform may force Off/On for all orgs (or env pins it). Org chooses only when platform is Unset.
+ */
+function OrgRuntimeBooleanPanel(props: {
+  configKey: string;
+  title: string;
+  blurb: ReactNode;
+  defaultLabel: string;
+  toastOn: string;
+  toastOff: string;
+  toastUnset: string;
+  selectId: string;
+}) {
+  const toast = useToast();
+  const [entry, setEntry] = useState<RuntimeConfigEntry | null>(null);
+  const [choice, setChoice] = useState<"" | "0" | "1">("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  function load() {
+    setLoading(true);
+    api
+      .getRuntimeConfig()
+      .then((r) => {
+        const e = r.entries.find((x) => x.key === props.configKey) ?? null;
+        setEntry(e);
+        const ov = e?.orgValue ?? e?.dbValue;
+        if (ov === "1" || ov === "true") setChoice("1");
+        else if (ov === "0" || ov === "false") setChoice("0");
+        else setChoice("");
+        setErr(null);
+      })
+      .catch((e: Error) => {
+        setErr(e.message);
+        setEntry(null);
+      })
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.configKey]);
+
+  async function save(next: "" | "0" | "1") {
+    setBusy(true);
+    try {
+      await api.putRuntimeConfig({
+        [props.configKey]: next === "" ? null : next,
+      });
+      setChoice(next);
+      toast.success(
+        next === "1" ? props.toastOn : next === "0" ? props.toastOff : props.toastUnset,
+      );
+      void load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+      void load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const lockedByEnv = Boolean(entry?.envSet);
+  const lockedByPlatform = Boolean(
+    entry &&
+      entry.platformValue !== undefined &&
+      entry.platformValue !== null &&
+      entry.platformValue !== "",
+  );
+  const canEdit =
+    Boolean(entry?.orgEditable ?? entry?.editable) && !lockedByEnv && !lockedByPlatform;
+  const effectiveOn = entry?.value === "1" || entry?.value === "true";
+
+  let statusLabel = effectiveOn ? "on" : "off";
+  if (lockedByEnv) statusLabel = effectiveOn ? "on · env" : "off · env";
+  else if (lockedByPlatform) statusLabel = effectiveOn ? "on · platform" : "off · platform";
+  else if (choice === "1") statusLabel = "on · this org";
+  else if (choice === "0") statusLabel = "off · this org";
+  else statusLabel = effectiveOn ? "on · default" : "off · default";
+
+  return (
+    <div className="card stack">
+      <div className="card-header">
+        <h3 style={{ margin: 0 }}>{props.title}</h3>
+        <Badge tone={effectiveOn ? "ok" : "nit"}>{statusLabel}</Badge>
+      </div>
+      <p className="muted" style={{ margin: 0, fontSize: "0.88rem", lineHeight: 1.55 }}>
+        {props.blurb}
+      </p>
+      {loading ? (
+        <p className="muted" style={{ margin: 0 }}>
+          Loading…
+        </p>
+      ) : err ? (
+        <p style={{ color: "var(--danger)", fontSize: "0.85rem", margin: 0 }}>{err}</p>
+      ) : !entry ? (
+        <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
+          This API build does not expose <span className="mono">{props.configKey}</span> yet.
+          Rebuild/restart the API, then refresh.
+        </p>
+      ) : (
+        <>
+          {canEdit ? (
+            <div className="field" style={{ margin: 0, maxWidth: 420 }}>
+              <label htmlFor={props.selectId}>This organization</label>
+              <Select
+                id={props.selectId}
+                size="sm"
+                disabled={busy}
+                value={choice}
+                onChange={(v) => void save(v as "" | "0" | "1")}
+                options={[
+                  { value: "", label: props.defaultLabel },
+                  { value: "0", label: "Off for this org" },
+                  { value: "1", label: "On for this org" },
+                ]}
+              />
+            </div>
+          ) : (
+            <p className="muted" style={{ margin: 0, fontSize: "0.88rem", lineHeight: 1.5 }}>
+              {lockedByEnv ? (
+                <>
+                  Locked by process environment on the API/worker (
+                  <span className="mono">
+                    {props.configKey}={entry.envValue ?? entry.value}
+                  </span>
+                  ). Operators must change/remove the env var and restart.
+                </>
+              ) : lockedByPlatform ? (
+                <>
+                  Locked by <strong>Platform</strong> install policy (
+                  <span className="mono">
+                    {entry.platformValue === "1" ? "On" : "Off"}
+                  </span>
+                  ). A platform operator must set <strong>{props.title}</strong> to{" "}
+                  <strong>Unset</strong> under Platform runtime before this org can choose.
+                </>
+              ) : (
+                <>Not editable with your current permissions.</>
+              )}
+            </p>
+          )}
+          <p className="mono muted" style={{ margin: 0, fontSize: "0.72rem" }}>
+            effective={entry.value} · source={entry.source}
+            {entry.platformValue != null && entry.platformValue !== ""
+              ? ` · platform=${entry.platformValue}`
+              : " · platform=unset"}
+            {entry.orgValue != null || entry.dbValue != null
+              ? ` · org=${entry.orgValue ?? entry.dbValue}`
+              : " · org=unset"}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Org preference: concrete code fixes on findings. */
+export function OrgSuggestedCodeFixesPanel() {
+  return (
+    <OrgRuntimeBooleanPanel
+      configKey="STEW_SUGGESTED_CODE_FIXES"
+      title="Suggested code fixes"
+      selectId="suggested-code-fixes-choice"
+      defaultLabel="Unset — product default (off)"
+      toastOn="This organization will request code fixes on findings"
+      toastOff="This organization will not request code fixes"
+      toastUnset="Cleared org preference — inherit product default (off) unless platform sets a policy"
+      blurb={
+        <>
+          When effectively <strong>on</strong>, specialists may attach a concrete{" "}
+          <span className="mono">suggestedFix</span> on findings (UI, reports, PR comments).
+          This control only works when Platform leaves the install policy{" "}
+          <strong>Unset</strong>. If Platform (or process env) forces Off or On, that applies to{" "}
+          <strong>every</strong> organization and your choice is ignored.
+        </>
+      }
+    />
+  );
+}
+
+/** Org preference: upload SARIF to GitHub Code Scanning (Security tab). */
+export function OrgPublishSarifPanel() {
+  return (
+    <OrgRuntimeBooleanPanel
+      configKey="STEW_PUBLISH_SARIF"
+      title="Publish SARIF to GitHub Code Scanning"
+      selectId="publish-sarif-choice"
+      defaultLabel="Unset — product default (on)"
+      toastOn="This organization will upload SARIF to GitHub Code Scanning on gate publish"
+      toastOff="This organization will not upload SARIF to GitHub Code Scanning"
+      toastUnset="Cleared org preference — inherit product default (on) unless platform sets a policy"
+      blurb={
+        <>
+          When effectively <strong>on</strong>, PR gate publish uploads findings as SARIF to
+          GitHub <strong>Security → Code scanning</strong> (in addition to PR comments and the
+          Checks tab). Requires code scanning enabled on the repo and{" "}
+          <span className="mono">security_events: write</span> on the GitHub App/token.
+          Same resolution as Suggested code fixes: Platform Unset → org may choose; Platform
+          Off/On forces every org.
+        </>
+      }
+    />
   );
 }
 

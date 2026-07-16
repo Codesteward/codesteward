@@ -5,6 +5,10 @@ import {
   type FindingCandidate,
 } from "@codesteward/core";
 import { z } from "zod";
+import {
+  applyProductConfidence,
+  scoreEmptyScanConfidence,
+} from "./confidence.js";
 
 const LlmFindingSchema = z
   .object({
@@ -30,9 +34,17 @@ const LlmFindingSchema = z
     symbolId: z.string().optional(),
     category: z.union([CategorySchema, z.string()]).optional(),
     severity: z.union([SeveritySchema, z.string()]).optional(),
-    // Models often return 0–100 or strings
+    // Models often return 0–100 or strings (self-report → modelConfidence)
     confidence: z.union([z.number(), z.string()]).optional(),
+    modelConfidence: z.union([z.number(), z.string()]).optional(),
     suggestion: z.string().optional(),
+    suggestedFix: z.string().optional(),
+    suggested_fix: z.string().optional(),
+    fix: z.string().optional(),
+    codeFix: z.string().optional(),
+    code_fix: z.string().optional(),
+    existingCode: z.string().optional(),
+    existing_code: z.string().optional(),
     ruleIds: z
       .union([z.array(z.union([z.string(), z.number()])), z.string()])
       .optional(),
@@ -55,6 +67,13 @@ function asConfidence(v: unknown): number | undefined {
   return n;
 }
 
+function pickString(...vals: unknown[]): string | undefined {
+  for (const v of vals) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
 function normalizeFinding(raw: unknown): {
   title: string;
   body: string;
@@ -64,8 +83,11 @@ function normalizeFinding(raw: unknown): {
   symbolId?: string;
   category: string;
   severity: string;
-  confidence?: number;
+  /** Specialist self-report only — maps to modelConfidence */
+  modelConfidence?: number;
   suggestion?: string;
+  suggestedFix?: string;
+  existingCode?: string;
   ruleIds?: string[];
 } | null {
   // Extremely defensive: if Zod is still picky, accept plain objects with a title
@@ -91,8 +113,16 @@ function normalizeFinding(raw: unknown): {
         symbolId: typeof o.symbolId === "string" ? o.symbolId : undefined,
         category: cat.success ? cat.data : "other",
         severity: sev.success ? sev.data : "medium",
-        confidence: asConfidence(o.confidence),
+        modelConfidence: asConfidence(o.modelConfidence ?? o.confidence),
         suggestion: typeof o.suggestion === "string" ? o.suggestion : undefined,
+        suggestedFix: pickString(
+          o.suggestedFix,
+          o.suggested_fix,
+          o.fix,
+          o.codeFix,
+          o.code_fix,
+        ),
+        existingCode: pickString(o.existingCode, o.existing_code),
         ruleIds: Array.isArray(o.ruleIds)
           ? o.ruleIds.map(String)
           : typeof o.ruleIds === "string"
@@ -128,16 +158,121 @@ function normalizeFinding(raw: unknown): {
     symbolId: f.symbolId,
     category: cat.success ? cat.data : "other",
     severity: sev.success ? sev.data : "medium",
-    confidence: asConfidence(f.confidence),
+    modelConfidence: asConfidence(f.modelConfidence ?? f.confidence),
     suggestion: f.suggestion,
+    suggestedFix: pickString(
+      f.suggestedFix,
+      f.suggested_fix,
+      f.fix,
+      f.codeFix,
+      f.code_fix,
+    ),
+    existingCode: pickString(f.existingCode, f.existing_code),
     ruleIds,
+  };
+}
+
+/**
+ * Platform runtime: STEW_SUGGESTED_FIX_MIN_CONFIDENCE (0–1, default 0.75).
+ * Below this, suggestedFix is dropped (plain suggestion kept).
+ */
+export function getSuggestedFixMinConfidence(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env.STEW_SUGGESTED_FIX_MIN_CONFIDENCE?.trim();
+  if (raw === undefined || raw === "") return 0.75;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 0.75;
+  return Math.min(1, Math.max(0, n));
+}
+
+/**
+ * Drop concrete code fixes when confidence is below the platform threshold.
+ * Safe to call anytime findings are merged or published.
+ */
+export function applySuggestedFixConfidenceGate<
+  T extends { confidence?: number; suggestedFix?: string },
+>(findings: T[], env: NodeJS.ProcessEnv = process.env): T[] {
+  const min = getSuggestedFixMinConfidence(env);
+  return findings.map((f) => {
+    if (!f.suggestedFix?.trim()) return f;
+    const conf = f.confidence ?? 0.7;
+    if (conf + 1e-9 >= min) return f;
+    return { ...f, suggestedFix: undefined };
+  });
+}
+
+export type ExtractLlmOptions = {
+  role: AgentRole;
+  sessionId?: string;
+  repoId?: string;
+  /** Completion-level mean token probability (from provider logprobs), when available. */
+  tokenConfidence?: number;
+};
+
+/**
+ * When findings is empty, parse specialist self-report that nothing was missed.
+ * Accepts emptyScanConfidence | empty_scan_confidence | confidence | scanConfidence.
+ */
+export function extractEmptyScanModelConfidence(
+  content: string,
+): number | undefined {
+  const json = peelJson(content);
+  if (!json || typeof json !== "object" || Array.isArray(json)) return undefined;
+  const obj = json as Record<string, unknown>;
+  const arr = obj.findings ?? obj.issues ?? obj.results;
+  // Only treat top-level confidence as empty-scan when there are no findings
+  if (Array.isArray(arr) && arr.length > 0) return undefined;
+  return asConfidence(
+    obj.emptyScanConfidence ??
+      obj.empty_scan_confidence ??
+      obj.scanConfidence ??
+      obj.scan_confidence ??
+      obj.confidence,
+  );
+}
+
+export function resolveSpecialistRunConfidence(input: {
+  findings: Array<{ confidence?: number }>;
+  responseContent?: string;
+  tokenConfidence?: number;
+  pathsReviewed?: number;
+  filesReviewed?: number;
+  usedGraph?: boolean;
+}): {
+  avgConfidence: number;
+  modelEmptyScanConfidence?: number;
+  emptyScan: boolean;
+} {
+  const confs = input.findings
+    .map((f) => f.confidence)
+    .filter((c): c is number => typeof c === "number" && Number.isFinite(c));
+  if (confs.length > 0) {
+    return {
+      avgConfidence: confs.reduce((a, b) => a + b, 0) / confs.length,
+      emptyScan: false,
+    };
+  }
+  const modelEmpty = extractEmptyScanModelConfidence(input.responseContent ?? "");
+  const validEmptyJson = Boolean(peelJson(input.responseContent ?? ""));
+  return {
+    avgConfidence: scoreEmptyScanConfidence({
+      modelConfidence: modelEmpty,
+      tokenConfidence: input.tokenConfidence,
+      pathsReviewed: input.pathsReviewed,
+      filesReviewed: input.filesReviewed,
+      usedGraph: input.usedGraph,
+      validEmptyJson,
+    }),
+    modelEmptyScanConfidence: modelEmpty,
+    emptyScan: true,
   };
 }
 
 /** Extract structured findings from LLM JSON (or fenced / noisy tool output). */
 export function extractFindingsFromLlm(
   content: string,
-  ctx: { role: AgentRole; sessionId?: string; repoId?: string },
+  ctx: ExtractLlmOptions,
 ): FindingCandidate[] {
   if (!content || !String(content).trim()) return [];
   const json = peelJson(content);
@@ -165,11 +300,11 @@ export function extractFindingsFromLlm(
           `[extract] role=${ctx.role} items=${arr.length} accepted=${out.length}`,
         );
       }
-      return out;
+      return applySuggestedFixConfidenceGate(out);
     }
     // single finding object
     const one = normalizeFinding(json);
-    if (one) return [toCandidate(one, ctx)];
+    if (one) return applySuggestedFixConfidenceGate([toCandidate(one, ctx)]);
   }
 
   if (Array.isArray(json)) {
@@ -178,7 +313,7 @@ export function extractFindingsFromLlm(
       const n = normalizeFinding(item);
       if (n) out.push(toCandidate(n, ctx));
     }
-    return out;
+    return applySuggestedFixConfidenceGate(out);
   }
 
   return [];
@@ -194,12 +329,32 @@ function toCandidate(
     symbolId?: string;
     category: string;
     severity: string;
-    confidence?: number;
+    modelConfidence?: number;
     suggestion?: string;
+    suggestedFix?: string;
+    existingCode?: string;
     ruleIds?: string[];
   },
-  ctx: { role: AgentRole; sessionId?: string; repoId?: string },
+  ctx: ExtractLlmOptions,
 ): FindingCandidate {
+  const modelConfidence = f.modelConfidence;
+  const tokenConfidence = ctx.tokenConfidence;
+  // Product confidence from evidence; model/token are weak secondaries only.
+  const scored = applyProductConfidence({
+    path: f.path,
+    startLine: f.startLine,
+    endLine: f.endLine,
+    body: f.body,
+    modelConfidence,
+    tokenConfidence,
+    agents: [ctx.role],
+  });
+  const confidence = scored.confidence ?? 0.5;
+  const min = getSuggestedFixMinConfidence();
+  const suggestedFix =
+    f.suggestedFix?.trim() && confidence + 1e-9 >= min
+      ? f.suggestedFix
+      : undefined;
   return {
     title: f.title,
     body: f.body,
@@ -209,8 +364,12 @@ function toCandidate(
     symbolId: f.symbolId,
     category: f.category as FindingCandidate["category"],
     severity: f.severity as FindingCandidate["severity"],
-    confidence: f.confidence ?? 0.7,
+    confidence,
+    modelConfidence,
+    tokenConfidence,
     suggestion: f.suggestion,
+    suggestedFix,
+    existingCode: f.existingCode,
     ruleIds: f.ruleIds ?? [],
     agents: [ctx.role],
     sessionId: ctx.sessionId,

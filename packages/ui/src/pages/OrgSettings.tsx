@@ -3,7 +3,13 @@ import { Link } from "react-router-dom";
 import { useToast } from "../components/Toast";
 import { Badge, PageHero } from "../components/ui";
 import { api, getOrgId, type AuthUser } from "../lib/api";
-import { OrgAuditLog, OrgLangfusePanel, OrgScimPanel } from "./settings/panels";
+import {
+  OrgAuditLog,
+  OrgLangfusePanel,
+  OrgPublishSarifPanel,
+  OrgScimPanel,
+  OrgSuggestedCodeFixesPanel,
+} from "./settings/panels";
 
 export function OrgSettings() {
   const toast = useToast();
@@ -252,6 +258,16 @@ export function OrgSettings() {
           )}
         </div>
 
+        {canAdmin && (
+          <div style={{ gridColumn: "1 / -1" }}>
+            <OrgSuggestedCodeFixesPanel />
+          </div>
+        )}
+        {canAdmin && (
+          <div style={{ gridColumn: "1 / -1" }}>
+            <OrgPublishSarifPanel />
+          </div>
+        )}
         <div style={{ gridColumn: "1 / -1" }}>
           <OrgLangfusePanel />
         </div>

@@ -111,6 +111,8 @@ export class SessionAuditCollector {
       title: scrubSecrets(f.title).slice(0, 200),
       severity: f.severity,
       confidence: f.confidence,
+      modelConfidence: f.modelConfidence,
+      tokenConfidence: f.tokenConfidence,
       path: f.path?.slice(0, 300),
       startLine: f.startLine,
       category: f.category,

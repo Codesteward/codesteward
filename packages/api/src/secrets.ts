@@ -47,7 +47,8 @@ export function encryptSecret(plaintext: string | undefined | null): string | un
     return plaintext;
   }
   const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  // authTagLength required for Semgrep gcm-no-tag-length (and correct GCM usage)
+  const cipher = createCipheriv("aes-256-gcm", key, iv, { authTagLength: 16 });
   const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
   return `${PREFIX}${iv.toString("base64url")}:${tag.toString("base64url")}:${ct.toString("base64url")}`;
@@ -61,7 +62,10 @@ export function decryptSecret(value: string | undefined | null): string | undefi
   const body = value.slice(PREFIX.length);
   const [ivB, tagB, ctB] = body.split(":");
   if (!ivB || !tagB || !ctB) throw new Error("Malformed encrypted secret");
-  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(ivB, "base64url"));
+  // authTagLength required for Semgrep gcm-no-tag-length (and correct GCM usage)
+  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(ivB, "base64url"), {
+    authTagLength: 16,
+  });
   decipher.setAuthTag(Buffer.from(tagB, "base64url"));
   return Buffer.concat([
     decipher.update(Buffer.from(ctB, "base64url")),

@@ -1,6 +1,7 @@
 export * from "./concurrency.js";
 export * from "./planner.js";
 export * from "./extract.js";
+export * from "./confidence.js";
 export * from "./specialists.js";
 export * from "./judge.js";
 export * from "./verifier.js";

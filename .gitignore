@@ -40,6 +40,7 @@ Thumbs.db
 # Local product / runtime state
 .codesteward/
 .steward-data/
+.saas-billing-data/
 data/
 *.db
 *.sqlite
@@ -71,5 +72,11 @@ workspace/
 # Generated eval / smoke artifacts (optional local)
 evals/**/tmp/
 evals/**/*.local.json
+
+# Local security scan outputs
+semgrep-out.json
+trivy-report.json
+sbom.cdx.json
+zizmor.sarif
 
 research/

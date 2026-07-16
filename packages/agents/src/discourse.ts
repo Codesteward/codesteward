@@ -8,6 +8,7 @@ import type { ModelRouter } from "@codesteward/model-router";
 import type { GraphClient } from "@codesteward/graph-client";
 import type { Policy } from "@codesteward/policy";
 import type { ReviewUnit } from "@codesteward/core";
+import { applyProductConfidence } from "./confidence.js";
 import { extractFindingsFromLlm } from "./extract.js";
 import { runSpecialist, type SpecialistContext } from "./specialists.js";
 
@@ -154,6 +155,7 @@ async function runCorrectnessVariant(
     role: "correctness",
     sessionId: ctx.sessionId,
     repoId: ctx.repoId,
+    tokenConfidence: res.tokenConfidence,
   });
 }
 
@@ -300,10 +302,8 @@ function mergeDiscourseFindings(input: {
     }
     const k = keyOf(f);
     const prev = byKey.get(k);
-    const confBoost = agreed.has(nt) ? 0.1 : surfaced.has(nt) ? 0.05 : 0;
-    const next: FindingCandidate = {
+    const withDiscourse: FindingCandidate = {
       ...f,
-      confidence: Math.min(1, (f.confidence ?? 0.7) + confBoost),
       agents: [...new Set([...(f.agents ?? []), "discourse" as const, "correctness" as const])],
       evidence: [
         ...(f.evidence ?? []),
@@ -322,6 +322,11 @@ function mergeDiscourseFindings(input: {
       sessionId: f.sessionId ?? input.sessionId,
       repoId: f.repoId ?? input.repoId,
     };
+    // Rescore product confidence from evidence + discourse signals (not raw self-report boost)
+    const next = applyProductConfidence(withDiscourse, {
+      discourseAgree: agreed.has(nt) || surfaced.has(nt),
+      discourseChallenge: challenged.has(nt) && !agreed.has(nt),
+    });
     if (!prev) {
       byKey.set(k, next);
       return;

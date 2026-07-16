@@ -36,11 +36,15 @@ interface FindingRow {
   category: string;
   severity: string;
   confidence: number;
+  model_confidence: number | null;
+  token_confidence: number | null;
   fingerprint: string;
   status: string;
   agents: unknown;
   rule_ids: unknown;
   suggestion: string | null;
+  suggested_fix: string | null;
+  existing_code: string | null;
   evidence: unknown;
   verification: unknown;
   scm_comment_id: string | null;
@@ -66,11 +70,17 @@ function mapFinding(row: FindingRow): Finding {
     category: row.category as Finding["category"],
     severity: row.severity as Finding["severity"],
     confidence: Number(row.confidence),
+    modelConfidence:
+      row.model_confidence != null ? Number(row.model_confidence) : undefined,
+    tokenConfidence:
+      row.token_confidence != null ? Number(row.token_confidence) : undefined,
     fingerprint: row.fingerprint,
     status: row.status as Finding["status"],
     agents: asArray(row.agents) as Finding["agents"],
     ruleIds: asArray<string>(row.rule_ids),
     suggestion: row.suggestion ?? undefined,
+    suggestedFix: row.suggested_fix ?? undefined,
+    existingCode: row.existing_code ?? undefined,
     evidence: asArray(row.evidence) as Finding["evidence"],
     verification: row.verification
       ? (asRecord(row.verification) as Finding["verification"])
@@ -124,11 +134,15 @@ export class FindingsRepository {
       category: candidate.category,
       severity: candidate.severity,
       confidence: candidate.confidence ?? 0.7,
+      modelConfidence: candidate.modelConfidence,
+      tokenConfidence: candidate.tokenConfidence,
       fingerprint,
       status: "open",
       agents: candidate.agents ?? [],
       ruleIds: candidate.ruleIds ?? [],
       suggestion: candidate.suggestion,
+      suggestedFix: candidate.suggestedFix,
+      existingCode: candidate.existingCode,
       evidence: candidate.evidence ?? [],
       verification: candidate.verification,
       scmCommentId: candidate.scmCommentId,
@@ -145,14 +159,16 @@ export class FindingsRepository {
     await this.db.query(
       `INSERT INTO findings (
         id, session_id, org_id, repo_id, tenant_id, path, start_line, end_line,
-        symbol_id, title, body, category, severity, confidence, fingerprint, status,
-        agents, rule_ids, suggestion, evidence, verification, scm_comment_id,
+        symbol_id, title, body, category, severity, confidence, model_confidence, token_confidence,
+        fingerprint, status,
+        agents, rule_ids, suggestion, suggested_fix, existing_code, evidence, verification, scm_comment_id,
         cross_repo_origin_repo_id, tags, created_at, updated_at
       ) VALUES (
         $1,$2,$3,$4,$5,$6,$7,$8,
         $9,$10,$11,$12,$13,$14,$15,$16,
-        $17::jsonb,$18::jsonb,$19,$20::jsonb,$21::jsonb,$22,
-        $23,$24::jsonb,$25,$26
+        $17,$18,
+        $19::jsonb,$20::jsonb,$21,$22,$23,$24::jsonb,$25::jsonb,$26,
+        $27,$28::jsonb,$29,$30
       )
       ON CONFLICT (id) DO NOTHING`,
       [
@@ -170,11 +186,15 @@ export class FindingsRepository {
         finding.category,
         finding.severity,
         finding.confidence,
+        finding.modelConfidence ?? null,
+        finding.tokenConfidence ?? null,
         finding.fingerprint,
         finding.status,
         jsonParam(finding.agents),
         jsonParam(finding.ruleIds),
         finding.suggestion ?? null,
+        finding.suggestedFix ?? null,
+        finding.existingCode ?? null,
         jsonParam(finding.evidence),
         finding.verification ? jsonParam(finding.verification) : null,
         finding.scmCommentId ?? null,
@@ -204,10 +224,12 @@ export class FindingsRepository {
         session_id = $2, org_id = $3, repo_id = $4, tenant_id = $5,
         path = $6, start_line = $7, end_line = $8, symbol_id = $9,
         title = $10, body = $11, category = $12, severity = $13,
-        confidence = $14, fingerprint = $15, status = $16,
-        agents = $17::jsonb, rule_ids = $18::jsonb, suggestion = $19,
-        evidence = $20::jsonb, verification = $21::jsonb, scm_comment_id = $22,
-        cross_repo_origin_repo_id = $23, tags = $24::jsonb, updated_at = $25
+        confidence = $14, model_confidence = $15, token_confidence = $16,
+        fingerprint = $17, status = $18,
+        agents = $19::jsonb, rule_ids = $20::jsonb, suggestion = $21,
+        suggested_fix = $22, existing_code = $23,
+        evidence = $24::jsonb, verification = $25::jsonb, scm_comment_id = $26,
+        cross_repo_origin_repo_id = $27, tags = $28::jsonb, updated_at = $29
       WHERE id = $1`,
       [
         next.id,
@@ -224,11 +246,15 @@ export class FindingsRepository {
         next.category,
         next.severity,
         next.confidence,
+        next.modelConfidence ?? null,
+        next.tokenConfidence ?? null,
         next.fingerprint,
         next.status,
         jsonParam(next.agents),
         jsonParam(next.ruleIds),
         next.suggestion ?? null,
+        next.suggestedFix ?? null,
+        next.existingCode ?? null,
         jsonParam(next.evidence),
         next.verification ? jsonParam(next.verification) : null,
         next.scmCommentId ?? null,

@@ -36,6 +36,7 @@ export interface BuildSessionReportInput {
     category?: string;
     agents?: string[];
     suggestion?: string;
+    suggestedFix?: string;
   }>;
   units: ReviewUnit[];
   dropped?: Array<{ title: string; reason: string }>;
@@ -84,7 +85,9 @@ function subagentAuditSection(audit?: SessionAudit | null): string {
       r.durationMs != null ? `${(r.durationMs / 1000).toFixed(1)}s` : "?";
     const conf =
       r.avgConfidence != null
-        ? ` · avg confidence ${(r.avgConfidence * 100).toFixed(0)}%`
+        ? (r.findingCount ?? 0) === 0
+          ? ` · empty-scan confidence ${(r.avgConfidence * 100).toFixed(0)}%`
+          : ` · avg confidence ${(r.avgConfidence * 100).toFixed(0)}%`
         : "";
     const scope =
       r.pathsReviewed?.length
@@ -103,10 +106,17 @@ function subagentAuditSection(audit?: SessionAudit | null): string {
         ? r.findingsSummary
             .slice(0, 8)
             .map((f) => {
-              const c =
-                f.confidence != null
-                  ? ` conf=${(f.confidence * 100).toFixed(0)}%`
-                  : "";
+              const parts: string[] = [];
+              if (f.confidence != null) {
+                parts.push(`product=${(f.confidence * 100).toFixed(0)}%`);
+              }
+              if (f.modelConfidence != null) {
+                parts.push(`model=${(f.modelConfidence * 100).toFixed(0)}%`);
+              }
+              if (f.tokenConfidence != null) {
+                parts.push(`token=${(f.tokenConfidence * 100).toFixed(0)}%`);
+              }
+              const c = parts.length ? ` ${parts.join(" ")}` : "";
               const loc = f.path
                 ? ` @ ${f.path}${f.startLine != null ? ":" + f.startLine : ""}`
                 : "";
@@ -153,11 +163,15 @@ function findingsSection(findings: BuildSessionReportInput["findings"]): string 
       const sug = f.suggestion?.trim()
         ? `\n  - **Suggestion:** ${f.suggestion.trim().slice(0, 280)}`
         : "";
+      const fix = f.suggestedFix?.trim()
+        ? `\n  - **Proposed fix:**\n\`\`\`\n${f.suggestedFix.trim().slice(0, 800)}\n\`\`\``
+        : "";
       return (
         `${i + 1}. **[${String(f.severity).toUpperCase()}]** ${f.title}\n` +
         `   - ${loc}${f.category ? ` · ${f.category}` : ""}${agents}\n` +
         (body ? `   - ${body.replace(/\n+/g, " ")}${body.length >= 400 ? "…" : ""}` : "") +
-        sug
+        sug +
+        fix
       );
     })
     .join("\n\n");

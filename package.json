@@ -36,5 +36,11 @@
     "check:category-leader": "node scripts/category-leader-check.mjs && node scripts/category-acceptance.mjs"
   },
   "author": "bitkaio LLC",
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "pnpm": {
+    "overrides": {
+      "undici": ">=6.24.0",
+      "picomatch@>=4 <4.0.4": "4.0.4"
+    }
+  }
 }

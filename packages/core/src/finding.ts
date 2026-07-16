@@ -29,12 +29,32 @@ export const FindingSchema = z.object({
   body: z.string().default(""),
   category: CategorySchema,
   severity: SeveritySchema,
+  /**
+   * Product confidence (0–1) — evidence-derived, used for gates/audit/UI primary score.
+   * Not the model’s self-report.
+   */
   confidence: z.number().min(0).max(1).default(0.7),
+  /**
+   * Specialist self-reported confidence from JSON (0–1). Diagnostic only; never sole gate input.
+   */
+  modelConfidence: z.number().min(0).max(1).optional(),
+  /**
+   * Mean token probability from provider logprobs when available (0–1). Optional; not all providers expose it.
+   */
+  tokenConfidence: z.number().min(0).max(1).optional(),
   fingerprint: z.string(),
   status: FindingStatusSchema.default("open"),
   agents: z.array(AgentRoleSchema).default([]),
   ruleIds: z.array(z.string()).default([]),
+  /** Plain-language remediation guidance (always optional). */
   suggestion: z.string().optional(),
+  /**
+   * Concrete code that would fix the issue (replacement snippet or small patch body).
+   * Populated when org runtime STEW_SUGGESTED_CODE_FIXES=1.
+   */
+  suggestedFix: z.string().optional(),
+  /** Optional excerpt of current code for grounding / line relocate. */
+  existingCode: z.string().optional(),
   evidence: z.array(EvidenceSchema).default([]),
   verification: z
     .object({
@@ -67,6 +87,8 @@ export const FindingCandidateSchema = FindingSchema.omit({
   ruleIds: true,
   tags: true,
   confidence: true,
+  modelConfidence: true,
+  tokenConfidence: true,
   body: true,
 }).extend({
   title: z.string().min(1),

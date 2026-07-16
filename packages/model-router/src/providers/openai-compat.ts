@@ -82,6 +82,17 @@ export function createOpenAICompatModel(
         body.response_format = { type: "json_object" };
       }
 
+      // Optional logprobs for tokenConfidence (not all models support it).
+      const wantLogprobs =
+        req.logprobs === true ||
+        (req.logprobs !== false &&
+          process.env.STEW_REQUEST_LOGPROBS !== "0" &&
+          !isGpt5Family);
+      if (wantLogprobs) {
+        body.logprobs = true;
+        body.top_logprobs = 0;
+      }
+
       const base = (target.baseUrl ?? "").replace(/\/+$/, "").replace(/\/v1\/v1$/i, "/v1");
       const url = `${base}/chat/completions`;
       const headers: Record<string, string> = {
@@ -104,11 +115,34 @@ export function createOpenAICompatModel(
         headers["X-OpenRouter-Title"] = title;
       }
 
-      const res = await fetch(url, {
+      let res = await fetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify(body),
       });
+
+      // Some gateways reject logprobs — retry once without them.
+      if (!res.ok && wantLogprobs) {
+        const errText = await res.text();
+        if (/logprob/i.test(errText) || res.status === 400) {
+          delete body.logprobs;
+          delete body.top_logprobs;
+          res = await fetch(url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(body),
+          });
+        } else {
+          throw new Error(
+            `LLM ${provider} error ${res.status} ${url}: ${errText.slice(0, 500)}` +
+              (res.status === 401
+                ? provider === "openrouter"
+                  ? " — check org OpenRouter API key under Models (or OPENROUTER_API_KEY)."
+                  : " — check org LiteLLM/OpenAI API key under Models (not host env alone)."
+                : ""),
+          );
+        }
+      }
 
       if (!res.ok) {
         const text = await res.text();
@@ -132,6 +166,9 @@ export function createOpenAICompatModel(
             }>;
           };
           finish_reason?: string;
+          logprobs?: {
+            content?: Array<{ token?: string; logprob?: number | null }>;
+          } | null;
         }>;
         usage?: {
           prompt_tokens?: number;
@@ -148,6 +185,9 @@ export function createOpenAICompatModel(
         completionTokens: data.usage?.completion_tokens ?? 0,
         totalTokens: data.usage?.total_tokens ?? 0,
       };
+      const tokenConfidence = meanTokenConfidenceFromLogprobs(
+        choice?.logprobs?.content,
+      );
 
       return {
         content: msg?.content ?? "",
@@ -161,9 +201,26 @@ export function createOpenAICompatModel(
         model: data.model ?? target.model,
         provider,
         raw: data,
+        tokenConfidence,
       };
     },
   };
+}
+
+/** Mean exp(logprob) over completion tokens; undefined when logprobs absent. */
+function meanTokenConfidenceFromLogprobs(
+  tokens: Array<{ logprob?: number | null }> | undefined | null,
+): number | undefined {
+  if (!tokens?.length) return undefined;
+  const probs: number[] = [];
+  for (const t of tokens) {
+    if (typeof t.logprob === "number" && Number.isFinite(t.logprob)) {
+      probs.push(Math.exp(t.logprob));
+    }
+  }
+  if (!probs.length) return undefined;
+  const mean = probs.reduce((a, b) => a + b, 0) / probs.length;
+  return Math.min(1, Math.max(0, mean));
 }
 
 /**

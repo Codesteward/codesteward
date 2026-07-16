@@ -178,6 +178,7 @@ export function Findings() {
               <thead>
                 <tr>
                   <th>Severity</th>
+                  <th>Conf</th>
                   <th>Repo</th>
                   <th>Category</th>
                   <th>Title</th>
@@ -195,6 +196,25 @@ export function Findings() {
                       <td>
                         <Badge tone={f.severity}>{f.severity}</Badge>
                       </td>
+                      <td
+                        className="mono muted"
+                        style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }}
+                        title={[
+                          f.confidence != null
+                            ? `Product (evidence): ${Math.round(f.confidence * 100)}%`
+                            : null,
+                          f.modelConfidence != null
+                            ? `Model self-report: ${Math.round(f.modelConfidence * 100)}%`
+                            : null,
+                          f.tokenConfidence != null
+                            ? `Token/logprobs: ${Math.round(f.tokenConfidence * 100)}%`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join("\n")}
+                      >
+                        {f.confidence != null ? `${Math.round(f.confidence * 100)}%` : "—"}
+                      </td>
                       <td className="mono muted" style={{ fontSize: "0.72rem", maxWidth: 140 }}>
                         {f.repoId ?? "—"}
                       </td>
@@ -206,6 +226,33 @@ export function Findings() {
                             {f.body.slice(0, 120)}
                             {f.body.length > 120 ? "…" : ""}
                           </div>
+                        )}
+                        {f.suggestion?.trim() && (
+                          <div className="muted" style={{ fontSize: "0.75rem", marginTop: 4, maxWidth: 420 }}>
+                            <strong style={{ fontWeight: 600 }}>Suggestion:</strong>{" "}
+                            {f.suggestion.trim().slice(0, 160)}
+                            {f.suggestion.trim().length > 160 ? "…" : ""}
+                          </div>
+                        )}
+                        {f.suggestedFix?.trim() && (
+                          <pre
+                            className="mono"
+                            style={{
+                              fontSize: "0.72rem",
+                              marginTop: 6,
+                              maxWidth: 440,
+                              maxHeight: 140,
+                              overflow: "auto",
+                              padding: "0.45rem 0.55rem",
+                              borderRadius: 8,
+                              border: "1px solid var(--border)",
+                              background: "var(--bg-panel, rgba(0,0,0,0.25))",
+                              whiteSpace: "pre-wrap",
+                            }}
+                          >
+                            {f.suggestedFix.trim().slice(0, 1200)}
+                            {f.suggestedFix.trim().length > 1200 ? "\n…" : ""}
+                          </pre>
                         )}
                         {(f.evidence ?? []).some(
                           (e) => e.type === "graph" || e.type === "tool" || e.summary,

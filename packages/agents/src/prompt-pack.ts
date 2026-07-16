@@ -68,8 +68,45 @@ export type PromptRenderVars = {
   [key: string]: string | undefined;
 };
 
-const OUTPUT_FORMAT_DEFAULT =
-  'Respond ONLY with JSON: {"findings":[{"title","body","path","startLine","endLine","category","severity","confidence","suggestion","ruleIds","existingCode"}]}';
+const OUTPUT_FORMAT_BASE =
+  'Respond ONLY with JSON: {"findings":[...],"emptyScanConfidence":0.0-1.0}. ' +
+  'Each finding: {"title","body","path","startLine","endLine","category","severity","confidence","suggestion","ruleIds","existingCode"}. ' +
+  "Per-finding confidence = your self-assessed certainty 0–1 (diagnostic only; the product computes its own evidence-based score). " +
+  "When findings is empty, always set emptyScanConfidence 0–1 for how sure you are that nothing actionable was missed in the packed context.";
+
+const OUTPUT_FORMAT_WITH_CODE_FIX =
+  'Respond ONLY with JSON: {"findings":[...],"emptyScanConfidence":0.0-1.0}. ' +
+  'Each finding: {"title","body","path","startLine","endLine","category","severity","confidence","suggestion","suggestedFix","existingCode","ruleIds"}. ' +
+  "Per-finding confidence = your self-assessed certainty 0–1 (diagnostic only; the product computes its own evidence-based score). " +
+  "When findings is empty, always set emptyScanConfidence 0–1 for how sure you are that nothing actionable was missed. " +
+  "For each finding: suggestion = short plain-language guidance; suggestedFix = the concrete code that would fix the issue " +
+  "(a drop-in replacement snippet for the cited lines, or a minimal multi-line fragment — not a full file rewrite). " +
+  "existingCode = the current lines being replaced when helpful for grounding. " +
+  "Omit suggestedFix only when a safe concrete fix cannot be proposed from the context.";
+
+const CODE_FIX_GUIDANCE =
+  "CODE FIXES ENABLED: Prefer actionable findings with a concrete suggestedFix. " +
+  "Keep suggestedFix minimal and correct; match the file's style. " +
+  "Do not invent APIs or imports that are not present in the packed context. " +
+  "Only set suggestedFix when the fix is well-grounded in path/line context " +
+  "(the product gates suggestedFix on evidence-based confidence, not your self-score alone). " +
+  "suggestion remains the human-readable explanation; suggestedFix is the code.";
+
+/** Org/runtime: STEW_SUGGESTED_CODE_FIXES=1 enables concrete fix snippets on findings. */
+export function isSuggestedCodeFixesEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const v = env.STEW_SUGGESTED_CODE_FIXES?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
+export function outputFormatBody(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return isSuggestedCodeFixesEnabled(env)
+    ? OUTPUT_FORMAT_WITH_CODE_FIX
+    : OUTPUT_FORMAT_BASE;
+}
 
 const GROUNDING_DEFAULT =
   "Ground findings in SOURCE CODE first (Context FILE excerpts / diffs). The structural graph is supporting evidence for callers, auth, and cross-file edges — not a substitute for reading code.\nWhen graph hits support a finding, cite symbols/callers in the body. Prefer structural evidence over style opinions.";
@@ -163,9 +200,9 @@ function defaultSystemForRole(role: string, deep = false): PromptComponent[] {
     );
   }
   parts.push(
-    comp("output_format", "Output format (required)", "system", OUTPUT_FORMAT_DEFAULT, {
+    comp("output_format", "Output format (required)", "system", outputFormatBody(), {
       description:
-        "Product contract for finding extraction (simple + DeepAgents). Not editable — changing this would break the review pipeline.",
+        "Product contract for finding extraction (simple + DeepAgents). Not editable — changing this would break the review pipeline. Includes suggestedFix when STEW_SUGGESTED_CODE_FIXES=1.",
     }),
     comp("severity", "Severity bar", "editable", SEVERITY_DEFAULT, {
       description: "Quality bar; {{severity_floor}} is filled from policy.",
@@ -366,6 +403,40 @@ export function ensureDeepTools(system: PromptComponent[]): PromptComponent[] {
   return [system[0]!, deep, ...system.slice(1)];
 }
 
+/**
+ * Ensure output_format matches the org runtime flag for concrete code fixes.
+ * Always rewrites the locked system component so DB-saved packs stay correct.
+ */
+export function ensureSuggestedCodeFixOutput(
+  system: PromptComponent[],
+  env: NodeJS.ProcessEnv = process.env,
+): PromptComponent[] {
+  const body = isSuggestedCodeFixesEnabled(env)
+    ? `${outputFormatBody(env)}\n\n${CODE_FIX_GUIDANCE}`
+    : outputFormatBody(env);
+  const hasFormat = system.some((c) => c.id === "output_format");
+  if (!hasFormat) {
+    return [
+      ...system,
+      comp("output_format", "Output format (required)", "system", body, {
+        description:
+          "Product contract for finding extraction. Includes suggestedFix when STEW_SUGGESTED_CODE_FIXES=1.",
+      }),
+    ];
+  }
+  return system.map((c) =>
+    c.id === "output_format"
+      ? {
+          ...c,
+          kind: "system" as const,
+          body,
+          description:
+            "Product contract for finding extraction. Includes suggestedFix when STEW_SUGGESTED_CODE_FIXES=1.",
+        }
+      : c,
+  );
+}
+
 export function renderComponents(
   components: PromptComponent[],
   vars: PromptRenderVars,
@@ -386,9 +457,10 @@ export function renderSpecialistSystem(
   vars: PromptRenderVars,
   opts?: { deep?: boolean },
 ): string {
-  let tpl = resolveRoleTemplate(pack, role);
+  const tpl = resolveRoleTemplate(pack, role);
   let system = tpl.system;
   if (opts?.deep) system = ensureDeepTools(system);
+  system = ensureSuggestedCodeFixOutput(system);
   return renderComponents(system, vars);
 }
 
@@ -624,7 +696,7 @@ export const PROMPT_COMPONENT_MAX_CHARS: Record<PromptComponentId, number> = {
   persona: 2_000,
   grounding: 3_000,
   deep_tools: 3_000,
-  output_format: 1_200, // locked; cap if ever unlocked
+  output_format: 2_400, // locked; larger when suggestedFix schema is included
   severity: 800,
   path_rules: 4_000, // runtime content at review time is separate
   org_learning: 6_000, // injected learning has its own budget in buildOrgLearningPrompt

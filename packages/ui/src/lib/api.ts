@@ -1018,6 +1018,7 @@ export const api = {
   jobs: () =>
     req<{ jobs: Job[]; worker?: WorkerStatus; message?: string }>("/v1/jobs"),
 
+  /** Org-overridable prefs only (e.g. suggested code fixes). */
   getRuntimeConfig: () =>
     req<{
       orgId: string;
@@ -1026,6 +1027,17 @@ export const api = {
     }>("/v1/org/runtime-config"),
   putRuntimeConfig: (values: Record<string, string | null>) =>
     req<{ orgId: string; entries: RuntimeConfigEntry[] }>("/v1/org/runtime-config", {
+      method: "PUT",
+      body: JSON.stringify({ values }),
+    }),
+  /** Install-wide runtime (clone, DeepAgents, graph, worker, …). Platform operators only. */
+  getPlatformRuntimeConfig: () =>
+    req<{
+      entries: RuntimeConfigEntry[];
+      note: string;
+    }>("/v1/platform/runtime-config"),
+  putPlatformRuntimeConfig: (values: Record<string, string | null>) =>
+    req<{ entries: RuntimeConfigEntry[] }>("/v1/platform/runtime-config", {
       method: "PUT",
       body: JSON.stringify({ values }),
     }),
@@ -1039,13 +1051,20 @@ export interface RuntimeConfigEntry {
   enumValues?: string[];
   group: string;
   default: string;
+  scope?: "platform" | "org";
   value: string;
-  source: "env" | "db" | "default";
+  source: "env" | "platform" | "org" | "db" | "default";
   envSet: boolean;
   envValue?: string;
+  /** Install-wide UI/DB value when set */
+  platformValue?: string;
+  /** Org override when set */
+  orgValue?: string;
+  /** @deprecated use orgValue / platformValue */
   dbValue?: string;
   editable: boolean;
   envOnly?: boolean;
+  orgEditable?: boolean;
 }
 
 /** Session report list item for /v1/reports */
@@ -1249,7 +1268,10 @@ export interface SpecialistRunAudit {
   findingsSummary?: Array<{
     title: string;
     severity?: string;
+    /** Product (evidence-derived) confidence */
     confidence?: number;
+    modelConfidence?: number;
+    tokenConfidence?: number;
     path?: string;
     startLine?: number;
     category?: string;
@@ -1364,11 +1386,19 @@ export interface Finding {
   startLine?: number;
   endLine?: number;
   repoId?: string;
+  /** Product (evidence-derived) confidence — primary UI/audit score */
   confidence?: number;
+  /** Specialist self-report (diagnostic) */
+  modelConfidence?: number;
+  /** Mean token probability from logprobs when provider supports it */
+  tokenConfidence?: number;
   fingerprint?: string;
   agents?: string[];
   ruleIds?: string[];
   suggestion?: string;
+  /** Concrete code fix when STEW_SUGGESTED_CODE_FIXES is enabled for the org */
+  suggestedFix?: string;
+  existingCode?: string;
   evidence?: FindingEvidence[];
   tags?: string[];
   createdAt?: string;

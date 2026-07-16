@@ -1,19 +1,68 @@
-FROM node:22-bookworm-slim AS base
-# git: SCM clone (stewardship/gate workspaces). ca-certificates: HTTPS remotes.
-# openssh-client: optional ssh:// clone URLs.
+# Multi-stage app image (API + worker monorepo).
+# Build: compile server packages only. Runtime: production node_modules (no pnpm CLI, no UI).
+FROM node:22-bookworm-slim AS build
+# hadolint ignore=DL3008
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates openssh-client \
-  && rm -rf /var/lib/apt/lists/* \
-  && git --version
+  && apt-get install -y --no-install-recommends git ca-certificates python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml tsconfig.base.json ./
+COPY package.json pnpm-workspace.yaml tsconfig.base.json pnpm-lock.yaml ./
 COPY packages ./packages
 COPY services ./services
-RUN pnpm install --no-frozen-lockfile
-RUN pnpm -r run build
+# Full install for compile (deepagents, etc.). (actions/ GitHub Action is not part of this image)
+RUN pnpm install --frozen-lockfile=false
+# UI ships via Dockerfile.ui; evals / review-action not needed in the API/worker image
+RUN pnpm -r \
+  --filter '!@codesteward/ui' \
+  --filter '!@codesteward/evals' \
+  --filter '!@codesteward/review-action' \
+  run build
+# Production reinstall keeps pnpm workspace links (plain `pnpm prune` can break package resolution)
+# and drops devDeps (esbuild/vite) that inflate Trivy gobinary noise.
+ENV CI=true
+RUN rm -rf node_modules packages/*/node_modules services/*/node_modules \
+  && pnpm install --frozen-lockfile --prod \
+  && rm -rf packages/ui packages/evals \
+  && find node_modules -type d \( -name 'esbuild' -o -name '@esbuild' -o -name 'pulsar-client' \) -prune -exec rm -rf {} + 2>/dev/null || true \
+  && find node_modules/.pnpm -maxdepth 1 \( -name '*esbuild*' -o -name '*pulsar-client*' -o -name '*@actions+*' \) -exec rm -rf {} + 2>/dev/null || true \
+  && find . -type d -name '__tests__' -prune -exec rm -rf {} + 2>/dev/null || true \
+  && find . -name '*.map' -delete 2>/dev/null || true \
+  && rm -rf /root/.local/share/pnpm /root/.cache /tmp/*
 
+FROM node:22-bookworm-slim AS runtime
+# hadolint ignore=DL3008
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git ca-certificates openssh-client bash \
+  && rm -rf /var/lib/apt/lists/* \
+  && git --version \
+  && groupadd --system --gid 1001 steward \
+  && useradd --system --uid 1001 --gid steward --home-dir /app --shell /usr/sbin/nologin steward \
+  && mkdir -p /data/checkpoints /data/workspaces /workspace /tmp/codesteward-sandbox \
+  && chown -R steward:steward /data /workspace /tmp/codesteward-sandbox \
+  # Node image ships npm/yarn/corepack trees unused at runtime; strip to avoid Trivy node-pkg noise.
+  && rm -rf \
+    /usr/local/lib/node_modules/npm \
+    /usr/local/lib/node_modules/corepack \
+    /usr/local/bin/npm \
+    /usr/local/bin/npx \
+    /usr/local/bin/corepack \
+    /opt/yarn* \
+    /usr/local/share/.cache
+WORKDIR /app
+COPY --from=build --chown=steward:steward /app/package.json /app/pnpm-workspace.yaml /app/tsconfig.base.json ./
+COPY --from=build --chown=steward:steward /app/node_modules ./node_modules
+COPY --from=build --chown=steward:steward /app/packages ./packages
+COPY --from=build --chown=steward:steward /app/services ./services
+# Entrypoint starts as root, chowns STEW_DATA_DIR (compose named volumes are root-owned), then drops to steward.
+COPY deploy/compose/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 755 /usr/local/bin/docker-entrypoint.sh
+ENV NODE_ENV=production \
+    STEW_DATA_DIR=/data \
+    STEW_WORKSPACE_DIR=/workspace \
+    HOME=/tmp
 ARG SERVICE=api
 ENV SERVICE=${SERVICE}
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 # api lives in packages/api; worker in services/worker
 CMD ["sh", "-c", "if [ \"$SERVICE\" = \"worker\" ]; then node services/worker/dist/index.js; elif [ \"$SERVICE\" = \"api\" ]; then node packages/api/dist/server.js; else node services/${SERVICE}/dist/index.js || node packages/${SERVICE}/dist/server.js; fi"]

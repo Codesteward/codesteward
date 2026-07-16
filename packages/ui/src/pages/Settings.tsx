@@ -40,7 +40,8 @@ export function Settings() {
       to: "/settings/organization",
       kicker: "Tenant",
       title: "Organization",
-      body: "Rename org, members, models, Langfuse, connectors, prompts, SCIM, and audit.",
+      body:
+        "Rename org, members, models, suggested code fixes (when platform allows), Langfuse, SCIM, and audit.",
       audience: "Org admins manage; members can view links",
     },
   ];
@@ -49,7 +50,7 @@ export function Settings() {
       to: "/settings/platform",
       kicker: "Install",
       title: "Platform",
-      body: "License, runtime knobs, health, GitHub App enforce, and graph tools for the whole install.",
+      body: "License, install-wide runtime (clone, DeepAgents, graph, workers), GitHub App enforce, and health.",
       audience: "Platform operator",
     });
   }

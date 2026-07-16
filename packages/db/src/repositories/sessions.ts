@@ -288,12 +288,13 @@ export class SessionsRepository {
   ): Promise<ReviewSession> {
     const cur = await this.get(id);
     if (!cur) throw new Error(`Session not found: ${id}`);
-    const next: ReviewSession = {
-      ...cur,
-      ...patch,
-      id: cur.id,
-      updatedAt: nowIso(),
-    };
+    // Apply own keys only so `error: undefined` clears a previous failure string.
+    const next: ReviewSession = { ...cur, id: cur.id, updatedAt: nowIso() };
+    for (const key of Object.keys(patch) as (keyof ReviewSession)[]) {
+      if (Object.prototype.hasOwnProperty.call(patch, key)) {
+        (next as Record<string, unknown>)[key as string] = patch[key] as unknown;
+      }
+    }
     await this.db.query(
       `UPDATE review_sessions SET
         org_id = $2, tenant_id = $3, repo_id = $4, repo_path = $5,

@@ -42,12 +42,12 @@ One finding schema. One policy model. Multi-provider LLMs. Product UI, CLI, GitH
 
 - **Graph-aware agents** — specialists use Codesteward Graph (MCP) for structure, not only the patch  
 - **Dual mode** — PR gate + continuous branch stewardship on one platform  
-- **Identity that scales** — Keycloak OIDC (SPA PKCE); API validates JWTs (no sticky sessions)  
-- **Multi-tenant orgs** — members, connectors, policy, learning, SCIM path `/scim/v2/orgs/{slug}`  
+- **Identity** — Keycloak OIDC (SPA PKCE); API validates JWTs (no sticky sessions)  
+- **Orgs & policy** — members, connectors, STEWARD.md / path rules, learning, optional SCIM  
 - **Learning loop** — 👍/👎, dismissals, org memories → quieter next reviews  
 - **Multi-SCM** — GitHub App/webhooks, GitLab, Bitbucket, Azure DevOps, Gitea  
 - **Horizontal scale** — API/UI stateless; workers × concurrent specialists; optional queue broker + KEDA  
-- **Self-hosted** — your cloud, your models, your keys  
+- **Self-hosted** — your cloud, your models, your keys
 
 ---
 
@@ -138,6 +138,12 @@ pnpm stew -- ask "What does a review unit cover?"
 ### GitHub Action
 
 ```yaml
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+  security-events: write   # Code Scanning / Security tab SARIF upload
+
 - uses: ./actions/review-action
   with:
     risk-tier: full
@@ -146,7 +152,18 @@ pnpm stew -- ask "What does a review unit cover?"
     sarif-output: codesteward.sarif
   env:
     OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    # Worker/API path also uploads SARIF when publishing to GitHub (set 0 to disable)
+    STEW_PUBLISH_SARIF: "1"
+
+# Optional: upload the Action-written file via CodeQL action (needs security-events)
+- uses: github/codeql-action/upload-sarif@v4
+  if: always()
+  with:
+    sarif_file: codesteward.sarif
+    category: codesteward/gate
 ```
+
+**Security tab:** Codesteward can push SARIF into **Security → Code scanning** when code scanning is enabled on the repo and the token/app has `security_events: write`. That is separate from PR review comments and the **Checks** tab (`codesteward/gate` check run).
 
 ---
 
@@ -154,7 +171,7 @@ pnpm stew -- ask "What does a review unit cover?"
 
 ### Review pipeline
 
-Specialists (correctness, security, performance, testing, rules, …) → optional discourse (thorough) → verifier → judge → noise filter → gate verdict → SCM publish (inline comments + check run).
+Specialists (correctness, security, performance, testing, rules, …) → optional discourse (thorough) → verifier → judge → noise filter → gate verdict → SCM publish (inline comments + check run + optional **SARIF → Code Scanning / Security tab**).
 
 ### Policy
 
@@ -176,10 +193,10 @@ Override with `STEW_MENTION_TOKEN`. Events: `pull_request` (opened / synchronize
 
 ### Identity & orgs
 
-- **Keycloak** as multi-tenant identity SoT (groups `/orgs/{slug}`, roles `steward-admin|reviewer|viewer`)  
+- **Keycloak** as identity SoT (groups `/orgs/{slug}`, roles `steward-admin|reviewer|viewer`)  
 - SPA OIDC login; API validates access tokens via JWKS  
-- Org slug auto-generated from name; **unique per tenant** (409 on collision)  
-- SCIM: `/scim/v2/orgs/{orgId|slug}` with per-org bearer  
+- Org slug auto-generated from name (409 on collision)  
+- Optional SCIM: `/scim/v2/orgs/{orgId|slug}` with per-org bearer
 
 ### Learning
 
@@ -294,7 +311,12 @@ Images (lowercased repo path on GHCR):
 |-------|------------|
 | `ghcr.io/<owner>/<repo>` | `deploy/compose/Dockerfile.node` (API default; `SERVICE=worker` for workers) |
 | `ghcr.io/<owner>/<repo>/ui` | `deploy/compose/Dockerfile.ui` |
-| `ghcr.io/<owner>/<repo>/saas-billing` | `services/saas-billing/Dockerfile` |
+
+**Codesteward Graph** (MCP) image used by compose stacks:
+
+| Image | Source |
+|-------|--------|
+| `ghcr.io/codesteward/codesteward-graph` | [Codesteward/codesteward-graph](https://github.com/Codesteward/codesteward-graph/pkgs/container/codesteward-graph) |
 
 Also: weekly security scans, OpenSSF Scorecard, Renovate (`renovate.json`).
 
@@ -302,9 +324,9 @@ Also: weekly security scans, OpenSSF Scorecard, Renovate (`renovate.json`).
 
 ## Status
 
-Self-hosted dual-mode review platform with product UI, Keycloak identity, multi-tenant orgs, webhooks, and horizontal workers.
+Self-hosted dual-mode review platform with product UI, Keycloak identity, orgs, webhooks, and horizontal workers.
 
-**This release** is free to run under Apache-2.0 (self-host with your own models, keys, and infra). A hosted **SaaS** product and optional **commercial support** are planned; those are separate offerings and are not promised as free forever or as “enterprise included in OSS for life.”
+**This release** is free to run under Apache-2.0 — use your own models, keys, and infra.
 
 Further reading in-repo:
 
@@ -318,14 +340,9 @@ Further reading in-repo:
 
 **Codesteward Review** is licensed under the **Apache License, Version 2.0** — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
-| | |
-|--|--|
-| **This release** | Free under Apache-2.0: use, modify, and self-host. |
-| **What that means** | You get the rights the Apache License grants for **this** codebase as published. |
-| **What we are not promising** | That every future product surface (hosted SaaS, branded enterprise packages, paid support) will always be free or identical to this release. |
-| **Planned (separate)** | Commercial **SaaS** and optional **support** — details later; not required to run this OSS self-host path. |
+You may use, modify, and self-host this software under the terms of that license.
 
-Codesteward Graph (when used as a dependency or service) is separately distributed under Apache-2.0.
+**Codesteward Graph** (when used as a dependency or service) is separately distributed under Apache-2.0.
 
 ---
 

@@ -7,7 +7,10 @@ import {
 import type { Policy } from "@codesteward/policy";
 import type { Sandbox } from "@codesteward/sandbox";
 import { createSandbox } from "@codesteward/sandbox";
-import { extractFindingsFromLlm } from "./extract.js";
+import {
+  extractFindingsFromLlm,
+  resolveSpecialistRunConfidence,
+} from "./extract.js";
 import type { AgentRunner, RunnerDeps } from "./runner.js";
 import { SimpleAgentRunner } from "./runner.js";
 import type { SpecialistContext } from "./specialists.js";
@@ -289,6 +292,7 @@ export class DeepAgentRunner implements AgentRunner {
         role,
         sessionId: ctx.sessionId,
         repoId: ctx.repoId,
+        // deepagents path does not currently surface provider logprobs
       });
       if (findings.length === 0 && content.length > 50) {
         console.warn(
@@ -296,9 +300,33 @@ export class DeepAgentRunner implements AgentRunner {
         );
       }
       if (runId && ctx.audit) {
-        const confs = findings
-          .map((f) => f.confidence)
-          .filter((c): c is number => typeof c === "number" && Number.isFinite(c));
+        const runConf = resolveSpecialistRunConfidence({
+          findings,
+          responseContent: content,
+          pathsReviewed: unit.paths.length,
+          usedGraph: true,
+        });
+        const findingsSummary =
+          findings.length > 0
+            ? findings.map((f) => ({
+                title: f.title,
+                severity: f.severity,
+                confidence: f.confidence,
+                modelConfidence: f.modelConfidence,
+                tokenConfidence: f.tokenConfidence,
+                path: f.path,
+                startLine: f.startLine,
+                category: f.category,
+              }))
+            : [
+                {
+                  title: "No findings",
+                  severity: "info",
+                  confidence: runConf.avgConfidence,
+                  modelConfidence: runConf.modelEmptyScanConfidence,
+                  category: "other",
+                },
+              ];
         ctx.audit.endRun(runId, {
           status: "ok",
           findingCount: findings.length,
@@ -306,18 +334,8 @@ export class DeepAgentRunner implements AgentRunner {
           toolCallCount: tools.length,
           usedGraph: true,
           pathsReviewed: unit.paths,
-          avgConfidence:
-            confs.length > 0
-              ? confs.reduce((a, b) => a + b, 0) / confs.length
-              : undefined,
-          findingsSummary: findings.map((f) => ({
-            title: f.title,
-            severity: f.severity,
-            confidence: f.confidence,
-            path: f.path,
-            startLine: f.startLine,
-            category: f.category,
-          })),
+          avgConfidence: runConf.avgConfidence,
+          findingsSummary,
         });
       }
       void ctx.onEvent?.({

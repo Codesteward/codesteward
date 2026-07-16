@@ -51,7 +51,10 @@ export type ContextReceipt = z.infer<typeof ContextReceiptSchema>;
 export const SpecialistFindingSummarySchema = z.object({
   title: z.string(),
   severity: z.string().optional(),
+  /** Product (evidence-derived) confidence */
   confidence: z.number().min(0).max(1).optional(),
+  modelConfidence: z.number().min(0).max(1).optional(),
+  tokenConfidence: z.number().min(0).max(1).optional(),
   path: z.string().optional(),
   startLine: z.number().optional(),
   category: z.string().optional(),

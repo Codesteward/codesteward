@@ -9,10 +9,11 @@ import { getAccessToken, oidcReady, startOidcLogin } from "../lib/oidc";
 /**
  * Login entrypoint.
  *
- * Keycloak mode: SPA OIDC (PKCE) in the browser — tokens stay client-side;
- * API only validates JWT. No API session for IdP users.
+ * Keycloak mode (STEW_IDENTITY_MODE=keycloak or SPA OIDC configured):
+ *   Always redirect to IdP. Local email/password is NOT shown except break-glass
+ *   `/login?local=1`.
  *
- * Local mode: email/password form when OIDC is not configured.
+ * Local / open mode (no Keycloak): email/password or bootstrap form.
  */
 export function Login() {
   const toast = useToast();
@@ -27,7 +28,9 @@ export function Login() {
   const [mode, setMode] = useState("…");
   const [redirectError, setRedirectError] = useState<string | null>(null);
   const [statusLine, setStatusLine] = useState("Checking login…");
+  /** IdP shell (no password form). True whenever Keycloak/SPA OIDC is the identity path. */
   const [idpOnly, setIdpOnly] = useState(false);
+  const forceLocal = searchParams.get("local") === "1";
 
   useEffect(() => {
     let alive = true;
@@ -45,6 +48,21 @@ export function Login() {
         return;
       }
 
+      // Explicit break-glass: skip IdP redirect and show local form only.
+      if (forceLocal) {
+        try {
+          const s = await api.authStatus();
+          if (!alive) return;
+          setMode(s.mode);
+          setBootstrapRequired(Boolean(s.bootstrapRequired));
+        } catch {
+          setMode("unreachable");
+        }
+        setIdpOnly(false);
+        setLoading(false);
+        return;
+      }
+
       // Already have Keycloak access token
       try {
         const at = await getAccessToken();
@@ -57,14 +75,14 @@ export function Login() {
               return;
             }
           } catch {
-            /* continue */
+            /* token present but API rejected — continue to IdP or error shell */
           }
         }
       } catch {
         /* continue */
       }
 
-      // Legacy session token (local identity)
+      // Legacy session token (local identity) — only useful outside Keycloak
       if (getSessionToken() || localStorage.getItem("cs-api-key")) {
         try {
           const me = await api.authMe();
@@ -78,6 +96,8 @@ export function Login() {
         }
       }
 
+      const spa = await oidcReady().catch(() => false);
+
       try {
         const s = await api.authStatus();
         if (!alive) return;
@@ -85,18 +105,30 @@ export function Login() {
 
         const keycloakMode =
           Boolean(s.keycloakIdentity) || s.identityMode === "keycloak";
-        const spa = await oidcReady();
 
-        if (keycloakMode && spa) {
+        // Keycloak (or SPA OIDC ready): never fall through to local password form
+        if (keycloakMode || spa) {
           setIdpOnly(true);
+          if (!spa) {
+            setRedirectError(
+              "Platform identity is Keycloak, but OIDC is not configured for the UI (issuer/client).",
+            );
+            setStatusLine("Sign-in unavailable");
+            setLoading(false);
+            return;
+          }
           setStatusLine("Redirecting to sign-in…");
           const from =
             searchParams.get("returnTo") ||
             (typeof window !== "undefined" &&
               (window.history.state as { from?: string } | null)?.from) ||
             "/dashboard";
+          const dest =
+            typeof from === "string" && from.startsWith("/") && !from.startsWith("/login")
+              ? from
+              : "/dashboard";
           try {
-            await startOidcLogin(typeof from === "string" && from.startsWith("/") ? from : "/dashboard");
+            await startOidcLogin(dest);
             return;
           } catch (err) {
             setRedirectError(
@@ -107,21 +139,27 @@ export function Login() {
           }
         }
 
-        if (keycloakMode && !spa) {
+        // True local / open install (no Keycloak)
+        setBootstrapRequired(Boolean(s.bootstrapRequired));
+        setIdpOnly(false);
+        setLoading(false);
+      } catch {
+        // API down (e.g. Postgres recovery). If SPA OIDC is baked in, stay on IdP path —
+        // never show the local password form just because the API is unreachable.
+        if (!alive) return;
+        setMode("unreachable");
+        if (spa) {
           setIdpOnly(true);
           setRedirectError(
-            "Platform identity is Keycloak, but OIDC is not configured for the UI (issuer/client).",
+            "API is unreachable (database or API may be restarting). " +
+              "This install uses Keycloak for sign-in — local password login is not available. " +
+              "Wait for the API to recover, then try again.",
           );
           setStatusLine("Sign-in unavailable");
           setLoading(false);
           return;
         }
-
-        setBootstrapRequired(Boolean(s.bootstrapRequired));
         setIdpOnly(false);
-        setLoading(false);
-      } catch {
-        setMode("unreachable");
         setLoading(false);
       }
     })();
@@ -129,7 +167,7 @@ export function Login() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigate, searchParams, setSearchParams]);
+  }, [navigate, searchParams, setSearchParams, forceLocal]);
 
   async function submitLocal(e: React.FormEvent) {
     e.preventDefault();
@@ -175,8 +213,14 @@ export function Login() {
     setStatusLine("Redirecting to sign-in…");
     setLoading(true);
     try {
+      // Re-check API briefly so a recovering DB is noticed
+      try {
+        await api.authStatus();
+      } catch {
+        /* still start IdP — browser can reach Keycloak even if API is down */
+      }
       const from = searchParams.get("returnTo") || "/dashboard";
-      await startOidcLogin(from.startsWith("/") ? from : "/dashboard");
+      await startOidcLogin(from.startsWith("/") && !from.startsWith("/login") ? from : "/dashboard");
     } catch (err) {
       setRedirectError(err instanceof Error ? err.message : "Could not start sign-in");
       setLoading(false);
@@ -239,15 +283,19 @@ export function Login() {
           <p className="muted login-tagline">Self-hosted review · gate &amp; stewardship</p>
         </div>
 
-        <div className="login-badge mono">{bootstrapRequired ? "bootstrap" : "local"}</div>
+        <div className="login-badge mono">
+          {forceLocal ? "break-glass local" : bootstrapRequired ? "bootstrap" : "local"}
+        </div>
 
         <h2 style={{ margin: "0 0 0.35rem", fontSize: "1.25rem" }}>
           {bootstrapRequired ? "Create admin" : "Sign in"}
         </h2>
         <p className="muted" style={{ marginTop: 0, fontSize: "0.88rem" }}>
-          {bootstrapRequired
-            ? "First-run bootstrap — this account gets the admin role."
-            : "Local identity mode (Keycloak is not configured for this deployment)."}
+          {forceLocal
+            ? "Break-glass local identity (/login?local=1). Prefer Keycloak for normal sign-in."
+            : bootstrapRequired
+              ? "First-run bootstrap — this account gets the admin role."
+              : "Local identity mode (Keycloak is not configured for this deployment)."}
         </p>
 
         <form className="stack" onSubmit={(e) => void submitLocal(e)}>

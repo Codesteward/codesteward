@@ -1,8 +1,11 @@
+import { gzipSync } from "node:zlib";
 import type {
   CheckRunInput,
+  CodeScanningSarifUpload,
   DiffFile,
   Issue,
   PostedCheckRun,
+  PostedCodeScanningSarif,
   PostedComment,
   PostedReview,
   PullRequest,
@@ -300,6 +303,46 @@ export class GitHubScm implements ScmProvider {
       page += 1;
     }
     return all;
+  }
+
+  /**
+   * Upload SARIF to Code Scanning (Security → Code scanning / quality alerts).
+   * @see https://docs.github.com/en/rest/code-scanning/code-scanning#upload-an-analysis-as-sarif-data
+   *
+   * Requires: code scanning enabled on the repo; token with `security_events: write`
+   * (GitHub App) or equivalent fine-grained PAT permission.
+   */
+  async uploadCodeScanningSarif(
+    owner: string,
+    repo: string,
+    input: CodeScanningSarifUpload,
+  ): Promise<PostedCodeScanningSarif> {
+    const json =
+      typeof input.sarif === "string"
+        ? input.sarif
+        : JSON.stringify(input.sarif);
+    // GitHub requires gzip + base64 of the SARIF payload
+    const sarifB64 = gzipSync(Buffer.from(json, "utf8")).toString("base64");
+    const body: Record<string, unknown> = {
+      commit_sha: input.commitSha,
+      ref: input.ref,
+      sarif: sarifB64,
+    };
+    if (input.checkoutUri) body.checkout_uri = input.checkoutUri;
+    if (input.startedAt) body.started_at = input.startedAt;
+    if (input.toolName) body.tool_name = input.toolName;
+
+    const res = await this.api<{ id?: string; url?: string; sarif_id?: string }>(
+      `/repos/${owner}/${repo}/code-scanning/sarifs`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    );
+    return {
+      id: String(res.id ?? res.sarif_id ?? "uploaded"),
+      url: res.url,
+    };
   }
 
   /**

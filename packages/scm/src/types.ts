@@ -81,6 +81,32 @@ export interface PostedCheckRun {
   conclusion?: string;
 }
 
+/** Upload third-party analysis to GitHub Code Scanning (Security tab). */
+export interface CodeScanningSarifUpload {
+  /** Full commit SHA the analysis applies to */
+  commitSha: string;
+  /**
+   * Git ref, e.g. `refs/heads/main` or `refs/pull/12/head`.
+   * Required by GitHub Code Scanning upload API.
+   */
+  ref: string;
+  /** SARIF 2.1.0 object or already-stringified JSON */
+  sarif: unknown;
+  /** Optional checkout URI (file:///… or https://…) */
+  checkoutUri?: string;
+  /** Optional wall-clock start of analysis (ISO-8601) */
+  startedAt?: string;
+  /** Tool name override when not present in SARIF driver */
+  toolName?: string;
+}
+
+export interface PostedCodeScanningSarif {
+  /** GitHub analysis id / sarif id */
+  id: string;
+  /** URL to poll analysis status when returned */
+  url?: string;
+}
+
 /** GitHub reaction content values (+ common aliases). */
 export type ScmReactionContent =
   | "+1"
@@ -110,6 +136,15 @@ export interface ScmProvider {
     number: number,
     body: string,
   ): Promise<PostedComment>;
+  /**
+   * Upload SARIF to GitHub Code Scanning so findings appear under Security → Code scanning.
+   * GitHub only; requires code scanning enabled and token with `security_events: write`.
+   */
+  uploadCodeScanningSarif?(
+    owner: string,
+    repo: string,
+    input: CodeScanningSarifUpload,
+  ): Promise<PostedCodeScanningSarif>;
   /**
    * Optional SCM reaction (GitHub: eyes/rocket/etc on issue/PR or issue comment).
    * Used for "agent saw your request" feedback on webhook-triggered reviews only.

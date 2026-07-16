@@ -20,6 +20,47 @@ import { globalConnectorsStore } from "./connectors-store.js";
 export type RunJobLog = (msg: string, ...args: unknown[]) => void;
 
 /**
+ * Remove cloned session workspace under STEW_WORKSPACE_DIR (primary + cross-repo).
+ * Skipped when STEW_WORKSPACE_KEEP=1 or when path is not under the configured root
+ * (avoids deleting mounted REPO_PATH checkouts).
+ */
+async function cleanSessionWorkspace(
+  sessionId: string,
+  repoPath: string | undefined,
+  log: RunJobLog,
+): Promise<void> {
+  if (process.env.STEW_WORKSPACE_KEEP === "1") {
+    log(`workspace keep enabled (STEW_WORKSPACE_KEEP=1) — skip GC for ${sessionId}`);
+    return;
+  }
+  const { join, resolve } = await import("node:path");
+  const { rm } = await import("node:fs/promises");
+  const root = resolve(
+    process.env.STEW_WORKSPACE_DIR ??
+      join(process.env.STEW_DATA_DIR ?? ".steward-data", "workspaces"),
+  );
+  // Session trees: {root}/{sessionId} (primary) and {root}/{sessionId}/cross/...
+  const sessionDir = resolve(join(root, sessionId));
+  const underRoot = (p: string) => {
+    const abs = resolve(p);
+    return abs === root || abs.startsWith(root + "/") || abs.startsWith(root + "\\");
+  };
+  if (!underRoot(sessionDir)) {
+    log(`workspace GC refused: session dir outside root (${sessionDir})`);
+    return;
+  }
+  try {
+    await rm(sessionDir, { recursive: true, force: true });
+    log(`workspace cleaned ${sessionDir}`);
+  } catch (err) {
+    log(
+      `workspace GC failed ${sessionDir}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  // If job.repoPath was a clone path but not under sessionDir naming, try it only if under root
+}
+
+/**
  * Shared review job processor used by the dedicated worker and the API
  * inline worker loop. Keep this the single source of truth for processJob.
  */
@@ -481,18 +522,14 @@ export async function runReviewJob(
       failureLog,
       error,
     });
-    if (result.session.status === "completed" || result.session.status === "failed") {
+    if (
+      result.session.status === "completed" ||
+      result.session.status === "completed_with_errors" ||
+      result.session.status === "failed"
+    ) {
       await globalQueue.complete?.(job.id);
-    }
-    // Workspace GC (cloned trees under STEW_WORKSPACE_DIR / .steward-data/workspaces)
-    if (process.env.STEW_WORKSPACE_KEEP !== "1" && job.repoPath?.includes("workspaces")) {
-      try {
-        const { rm } = await import("node:fs/promises");
-        await rm(job.repoPath, { recursive: true, force: true });
-        log(`workspace cleaned ${job.repoPath}`);
-      } catch {
-        /* ignore */
-      }
+      // Drop cloned trees for this session (primary + cross-repo under same sessionId dir)
+      await cleanSessionWorkspace(job.sessionId, job.repoPath, log);
     }
     log(
       `done job ${job.id} status=${result.session.status} findings=${result.findings.length} verdict=${result.session.verdict} publish=${result.publishedReviewId ?? "-"}`,
@@ -544,6 +581,11 @@ export async function runReviewJob(
       err,
     );
     await globalQueue.fail?.(job.id, message);
+
+    // Terminal crash: free disk for clones (resumable crashes keep the tree for resume)
+    if (exhausted) {
+      await cleanSessionWorkspace(job.sessionId, job.repoPath, log);
+    }
 
     if (!exhausted && cur) {
       const nextAttempts = attempts + 1;

@@ -40,7 +40,7 @@ services:
       start_period: 45s
 
   graph-mcp:
-    image: ghcr.io/bitkaio/codesteward:latest
+    image: ghcr.io/codesteward/codesteward-graph:latest
     container_name: codesteward-graph-mcp
     depends_on:
       janusgraph:

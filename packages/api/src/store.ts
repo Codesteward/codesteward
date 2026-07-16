@@ -337,9 +337,16 @@ export class PgSessionStore extends SessionStore {
   override update(id: string, patch: Partial<ReviewSession>): ReviewSession {
     const cur = this.sessions.get(id);
     if (!cur) throw new Error(`Session not found: ${id}`);
-    const next = { ...cur, ...patch, id: cur.id, updatedAt: nowIso() };
+    // Explicitly apply keys present on patch (including null/undefined clears).
+    const next: ReviewSession = { ...cur, id: cur.id, updatedAt: nowIso() };
+    for (const key of Object.keys(patch) as (keyof ReviewSession)[]) {
+      if (Object.prototype.hasOwnProperty.call(patch, key)) {
+        (next as Record<string, unknown>)[key as string] = patch[key] as unknown;
+      }
+    }
     this.sessions.set(id, next);
-    void this.ensureDb().then((db) => db.sessions.update(id, patch));
+    // Persist full merged session so error: undefined clears the column
+    void this.ensureDb().then((db) => db.sessions.update(id, next));
     return next;
   }
 

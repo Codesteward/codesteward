@@ -327,8 +327,24 @@ export class CheckpointStore {
     }
 
     const file = this.pathFor(payload.sessionId);
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(next, null, 2), "utf8");
+    try {
+      await mkdir(dirname(file), { recursive: true });
+      await writeFile(file, JSON.stringify(next, null, 2), "utf8");
+    } catch (err) {
+      const code =
+        err && typeof err === "object" && "code" in err
+          ? String((err as { code?: string }).code)
+          : "";
+      if (code === "EACCES" || code === "EPERM") {
+        throw new Error(
+          `Cannot write checkpoint ${file}: permission denied. ` +
+            `Ensure STEW_DATA_DIR (${this.dir}) is writable by the process user, ` +
+            `or rebuild the app image so docker-entrypoint can chown the volume.`,
+          { cause: err },
+        );
+      }
+      throw err;
+    }
   }
 
   async load(sessionId: string): Promise<SessionCheckpointPayload | null> {

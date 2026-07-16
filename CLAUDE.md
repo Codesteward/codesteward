@@ -78,6 +78,18 @@ pnpm stew -- findings export --sarif -s <sessionId>
 - Thorough mode (`riskTier` or `depth` = `thorough`) runs discourse (dual correctness + AGREE/CHALLENGE/CONNECT/SURFACE)
 - Incremental gate uses `last_reviewed_sha` in learning store; pass `fullReview` to force full
 - Env SCM tokens: `GITHUB_TOKEN`, `GITLAB_TOKEN`, `BITBUCKET_TOKEN`+`BITBUCKET_USERNAME`, `AZURE_DEVOPS_TOKEN`, `GITEA_TOKEN`
+
+## CI / release gates (do not regress)
+
+Jobs that blocked `v1.0.0`: **Semgrep**, **zizmor**, **Trivy** (CI + release container gate).
+
+- **zizmor**: every `actions/setup-node` must set `package-manager-cache: false` (do not re-add `cache: pnpm`).
+- **Semgrep**: no `curl | sh` installs in workflows; pin Trivy/Syft release tarballs; AES-GCM uses `authTagLength: 16`; keep `.semgrepignore` + `--exclude scripts,evals`.
+- **Trivy**: multi-stage `deploy/compose/Dockerfile.node` (prod reinstall, no global npm, non-root `steward`); scan flags `--scanners vuln --ignore-unfixed --severity HIGH,CRITICAL`; keep `pnpm.overrides` for known HIGH transitive CVEs (`undici`, `picomatch`).
+- Local check: `zizmor --min-severity high .github/workflows/` and  
+  `docker build -f deploy/compose/Dockerfile.node -t codesteward-review:scan . && trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --scanners vuln codesteward-review:scan`
+- **Always update `CHANGELOG.md` (`## [Unreleased]`) when a feature, fix, or behavior change is finished** — do not leave release notes for “later”
+- Runtime knobs: install-wide → Platform runtime (`/v1/platform/runtime-config`); org may override only `STEW_SUGGESTED_CODE_FIXES` when platform leaves it Unset
 - PR mention trigger (webhook `issue_comment`): default **`@codesteward`** via `STEW_MENTION_TOKEN` (override if needed). Example: `@codesteward review`
 - Job queue: **Postgres by default** (`DATABASE_URL`). Optional dispatch broker: `STEW_QUEUE_BROKER=nats|rabbitmq|pulsar` (+ URL) — hybrid SoT+broker for KEDA; see `deploy/compose/docker-compose.queue.yml`
 

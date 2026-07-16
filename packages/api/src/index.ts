@@ -39,7 +39,12 @@ export {
 export {
   applyOrgRuntimeToProcess,
   getRuntimeConfigView,
+  getOrgRuntimeConfigView,
+  getPlatformRuntimeConfigView,
   putRuntimeConfig,
+  putOrgRuntimeConfig,
+  putPlatformRuntimeConfig,
   RUNTIME_CONFIG_CATALOG,
+  ORG_OVERRIDABLE_RUNTIME_KEYS,
 } from "./runtime-config.js";
 

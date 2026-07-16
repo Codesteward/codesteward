@@ -1166,10 +1166,15 @@ export function Sessions() {
               </div>
             )}
 
+            {/* Only show terminal failure banner when not actively running/queued.
+                Resume clears session.error, but old failureLog/unit errors must not
+                look like the current run already failed. */}
             {(selected.status === "failed" ||
-              selected.error ||
-              (selected.failureLog?.length ?? 0) > 0 ||
-              selected.units?.some((u) => u.error)) && (
+              selected.status === "completed_with_errors") &&
+              (selected.error ||
+                selected.metadata?.failureSummary ||
+                (selected.failureLog?.length ?? 0) > 0 ||
+                selected.units?.some((u) => u.error)) && (
               <div
                 className="banner warn"
                 role="alert"
@@ -1179,7 +1184,11 @@ export function Sessions() {
                 }}
               >
                 <div className="row" style={{ justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                  <strong>Why this session failed</strong>
+                  <strong>
+                    {selected.status === "completed_with_errors"
+                      ? "Completed with errors"
+                      : "Why this session failed"}
+                  </strong>
                   <CopyId id={selected.id} n={22} />
                 </div>
                 {selected.error || selected.metadata?.failureSummary ? (
@@ -1894,8 +1903,16 @@ function ReviewAuditPanel({ session }: { session: Session }) {
                         <span className="muted">findings</span>
                       </span>
                       {r.avgConfidence != null && (
-                        <span className="muted">
-                          conf {(r.avgConfidence * 100).toFixed(0)}%
+                        <span
+                          className="muted"
+                          title={
+                            (r.findingCount ?? 0) === 0
+                              ? "Empty-scan confidence: how sure the step is that nothing actionable was missed"
+                              : "Average product (evidence-derived) confidence across findings"
+                          }
+                        >
+                          {(r.findingCount ?? 0) === 0 ? "empty-scan conf " : "conf "}
+                          {(r.avgConfidence * 100).toFixed(0)}%
                         </span>
                       )}
                       {r.durationMs != null && (
@@ -1930,8 +1947,15 @@ function ReviewAuditPanel({ session }: { session: Session }) {
                           <li key={fi}>
                             <strong>[{(f.severity ?? "?").toUpperCase()}]</strong> {f.title}
                             {f.confidence != null
-                              ? ` (${(f.confidence * 100).toFixed(0)}%)`
+                              ? ` (${(f.confidence * 100).toFixed(0)}% product`
                               : ""}
+                            {f.modelConfidence != null
+                              ? ` · model ${(f.modelConfidence * 100).toFixed(0)}%`
+                              : ""}
+                            {f.tokenConfidence != null
+                              ? ` · token ${(f.tokenConfidence * 100).toFixed(0)}%`
+                              : ""}
+                            {f.confidence != null ? ")" : ""}
                             {f.path ? (
                               <span className="muted mono">
                                 {" "}

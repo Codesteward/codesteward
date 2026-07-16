@@ -6,7 +6,7 @@ image:
   pullPolicy: IfNotPresent
 
 graphImage:
-  repository: ghcr.io/bitkaio/codesteward
+  repository: ghcr.io/codesteward/codesteward-graph
   tag: latest
 
 # Graph backend: graphqlite | neo4j | janusgraph

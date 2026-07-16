@@ -17,6 +17,8 @@ export interface SarifRun {
     };
   };
   results: SarifResult[];
+  /** GitHub Code Scanning category id (prefer trailing `/`) */
+  automationDetails?: { id: string };
   invocations?: Array<{
     executionSuccessful: boolean;
     endTimeUtc?: string;
@@ -59,6 +61,11 @@ export interface SarifExportOptions {
   toolVersion?: string;
   informationUri?: string;
   baseUri?: string;
+  /**
+   * GitHub Code Scanning category / automationDetails.id (should end with `/`).
+   * Used to separate Codesteward runs from CodeQL in the Security tab.
+   */
+  category?: string;
 }
 
 function severityToLevel(s: Severity): SarifLevel {
@@ -142,12 +149,16 @@ export function findingsToSarif(
       properties: {
         severity: f.severity,
         confidence: f.confidence,
+        modelConfidence: f.modelConfidence,
+        tokenConfidence: f.tokenConfidence,
         category: f.category,
         sessionId: f.sessionId,
         findingId: f.id,
         status: f.status,
         agents: f.agents,
         suggestion: f.suggestion,
+        suggestedFix: f.suggestedFix,
+        existingCode: f.existingCode,
       },
     };
   });
@@ -168,6 +179,13 @@ export function findingsToSarif(
           },
         },
         results,
+        // GitHub Code Scanning uses this id as the analysis "category"
+        automationDetails: {
+          id: (() => {
+            const c = (opts.category ?? "codesteward/review").replace(/\/?$/, "/");
+            return c;
+          })(),
+        },
         invocations: [
           {
             executionSuccessful: true,

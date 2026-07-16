@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { accessSync, constants } from "node:fs";
 import { mkdir, cp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -34,10 +35,12 @@ export class LocalSandbox implements Sandbox {
   async createSession(opts: CreateSessionOpts): Promise<SandboxSession> {
     const id = createId("sbx");
     const hostDir = join(tmpdir(), "codesteward-sandbox", id);
-    await mkdir(hostDir, { recursive: true });
+    const repoDir = join(hostDir, "repo");
+    // Always create repoDir — spawn(cwd) throws ENOENT if cwd is missing
+    await mkdir(repoDir, { recursive: true });
     if (opts.repoPath) {
       try {
-        await cp(opts.repoPath, join(hostDir, "repo"), {
+        await cp(opts.repoPath, repoDir, {
           recursive: true,
           filter: (src) => !src.includes("node_modules") && !src.includes(".git"),
         });
@@ -49,7 +52,7 @@ export class LocalSandbox implements Sandbox {
       id,
       provider: this.useDocker ? "docker" : "local",
       repoPath: opts.repoPath,
-      workdir: this.useDocker ? "/workspace" : join(hostDir, "repo"),
+      workdir: this.useDocker ? "/workspace" : repoDir,
       sha: opts.sha,
       status: "ready",
       createdAt: nowIso(),
@@ -167,18 +170,44 @@ function dirnameSafe(p: string): string {
   return i >= 0 ? p.slice(0, i) : ".";
 }
 
+function resolveShell(): { cmd: string; argsPrefix: string[] } {
+  // Prefer absolute paths — slim images may lack `bash` on PATH for restricted envs.
+  const absolute = [
+    { cmd: "/bin/bash", argsPrefix: ["-lc"] },
+    { cmd: "/usr/bin/bash", argsPrefix: ["-lc"] },
+    { cmd: "/bin/sh", argsPrefix: ["-c"] },
+  ];
+  for (const c of absolute) {
+    try {
+      accessSync(c.cmd, constants.X_OK);
+      return c;
+    } catch {
+      /* try next */
+    }
+  }
+  return { cmd: "sh", argsPrefix: ["-c"] };
+}
+
 function runShell(
   command: string,
   opts: { cwd: string; timeoutMs: number; env?: Record<string, string> },
 ): Promise<ExecResult> {
   // Host exec: only pass explicit env + PATH — never full process.env (SCM/model keys)
   const safeEnv: Record<string, string> = {
-    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    PATH: process.env.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     HOME: process.env.HOME ?? "/tmp",
     LANG: process.env.LANG ?? "C.UTF-8",
     ...(opts.env ?? {}),
   };
-  return runCommand("bash", ["-lc", command], opts.timeoutMs, opts.cwd, safeEnv, true);
+  const shell = resolveShell();
+  return runCommand(
+    shell.cmd,
+    [...shell.argsPrefix, command],
+    opts.timeoutMs,
+    opts.cwd,
+    safeEnv,
+    true,
+  );
 }
 
 function runCommand(
@@ -192,35 +221,72 @@ function runCommand(
 ): Promise<ExecResult> {
   const start = Date.now();
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, {
-      cwd,
-      env: replaceEnv
-        ? (env as NodeJS.ProcessEnv)
-        : env
-          ? ({ ...process.env, ...env } as NodeJS.ProcessEnv)
-          : process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    let settled = false;
+    const finish = (result: ExecResult) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(cmd, args, {
+        cwd,
+        env: replaceEnv
+          ? (env as NodeJS.ProcessEnv)
+          : env
+            ? ({ ...process.env, ...env } as NodeJS.ProcessEnv)
+            : process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      finish({
+        exitCode: 127,
+        stdout: "",
+        stderr: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - start,
+      });
+      return;
+    }
+
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      resolve({
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* ignore */
+      }
+      finish({
         exitCode: 124,
         stdout,
         stderr: stderr + "\n[timeout]",
         durationMs: Date.now() - start,
       });
     }, timeoutMs);
-    child.stdout.on("data", (d: Buffer) => {
+    child.stdout?.on("data", (d: Buffer) => {
       stdout += d.toString();
     });
-    child.stderr.on("data", (d: Buffer) => {
+    child.stderr?.on("data", (d: Buffer) => {
       stderr += d.toString();
+    });
+    // Critical: without this, spawn ENOENT (missing binary or cwd) crashes the whole worker.
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      finish({
+        exitCode: 127,
+        stdout,
+        stderr:
+          stderr +
+          (stderr ? "\n" : "") +
+          `[spawn error] ${err.message}` +
+          (cwd ? ` (cwd=${cwd})` : ""),
+        durationMs: Date.now() - start,
+      });
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      resolve({
+      finish({
         exitCode: code ?? 1,
         stdout,
         stderr,
