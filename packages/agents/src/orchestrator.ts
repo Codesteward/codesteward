@@ -154,6 +154,16 @@ export class ReviewOrchestrator {
     return this.deps.onEvent?.(event);
   }
 
+  /** Enter a named pipeline stage (closes previous stage timing automatically). */
+  private async enterStage(
+    sessionId: string,
+    stage: ReviewSession["stage"],
+    message?: string,
+  ): Promise<void> {
+    this.deps.audit?.startStage(stage, message);
+    await this.emit(stageEvent(sessionId, stage, message));
+  }
+
   async run(
     session: ReviewSession,
     job: ReviewJob,
@@ -171,7 +181,8 @@ export class ReviewOrchestrator {
       ? await this.checkpoints.load(session.id)
       : null;
 
-    await this.emit(stageEvent(session.id, "policy", "Loaded policy"));
+    this.deps.audit?.beginSession(session.createdAt ?? nowIso());
+    await this.enterStage(session.id, "policy", "Loaded policy");
     current = { ...current, stage: "policy" };
 
     if (learning && policy.ignoreRules.length) {
@@ -392,7 +403,7 @@ export class ReviewOrchestrator {
 
     let packedContext: string | undefined;
     if (!skipBootstrap) {
-      await this.emit(stageEvent(session.id, "graph", "Checking graph"));
+      await this.enterStage(session.id, "graph", "Checking graph");
       current = { ...current, stage: "graph" };
       try {
         const status = await graph.status({
@@ -563,7 +574,7 @@ export class ReviewOrchestrator {
         failureLog,
       };
     } else {
-      await this.emit(stageEvent(session.id, "planning", "Planning review units"));
+      await this.enterStage(session.id, "planning", "Planning review units");
       current = { ...current, stage: "planning" };
       units = planReviewUnits({
         sessionId: session.id,
@@ -619,12 +630,10 @@ export class ReviewOrchestrator {
       current = { ...current, units };
     }
 
-    await this.emit(
-      stageEvent(
-        session.id,
-        "specialists",
-        `Running ${units.length} units (self-heal enabled)`,
-      ),
+    await this.enterStage(
+      session.id,
+      "specialists",
+      `Running ${units.length} units (roles parallel per unit; barrier before verify)`,
     );
     current = { ...current, stage: "specialists" };
 
@@ -790,6 +799,15 @@ export class ReviewOrchestrator {
         unit.error = "linked repo not materialized";
         unit.completedAt = nowIso();
         unitIndex.set(unit.id, unit);
+        this.deps.audit?.recordUnitTiming({
+          unitId: unit.id,
+          unitLabel: unit.label,
+          startedAt: unit.startedAt,
+          endedAt: unit.completedAt,
+          status: "skipped",
+          roles: specialistRoles,
+          findingCount: 0,
+        });
         await this.emit({
           type: "unit",
           sessionId: session.id,
@@ -899,6 +917,16 @@ export class ReviewOrchestrator {
       Object.assign(unit, result.unit);
       unitIndex.set(unit.id, unit);
 
+      this.deps.audit?.recordUnitTiming({
+        unitId: unit.id,
+        unitLabel: unit.label,
+        startedAt: unit.startedAt,
+        endedAt: unit.completedAt ?? nowIso(),
+        status: unit.status,
+        roles: specialistRoles,
+        findingCount: result.findings.length,
+      });
+
       await this.emit({
         type: "unit",
         sessionId: session.id,
@@ -935,7 +963,7 @@ export class ReviewOrchestrator {
     let discourseSummary: Record<string, unknown> | undefined;
     let afterDiscourse = candidates;
     if (shouldRunDiscourse({ riskTier: job.riskTier, depth: job.depth })) {
-      await this.emit(stageEvent(session.id, "discourse", "Discourse: dual correctness + synthesis"));
+      await this.enterStage(session.id, "discourse", "Discourse: dual correctness + synthesis");
       current = { ...current, stage: "discourse" };
       try {
         const disc = await runDiscourse(
@@ -995,10 +1023,18 @@ export class ReviewOrchestrator {
       }
     }
 
-    await this.emit(stageEvent(session.id, "verification", "Verifying findings"));
+    await this.enterStage(
+      session.id,
+      "verification",
+      "Senior verification (specialist barrier complete)",
+    );
     current = { ...current, stage: "verification" };
     // SAST candidates already merged into `candidates` early; afterDiscourse includes them.
-    const verified = await verifyFindings(afterDiscourse, policy, modelRouter);
+    // Specialists ran in parallel per unit; we only proceed here after all units finished.
+    const verified = await verifyFindings(afterDiscourse, policy, modelRouter, {
+      contextText: packedContext,
+      learningGuidance: learningGuidance || undefined,
+    });
 
     let suppressedFingerprints: Set<string> | undefined;
     let negativePatterns: string[] | undefined;
@@ -1030,7 +1066,7 @@ export class ReviewOrchestrator {
       }
     }
 
-    await this.emit(stageEvent(session.id, "judge", "Judging / noise stack"));
+    await this.enterStage(session.id, "judge", "Judging / noise stack");
     current = { ...current, stage: "judge" };
     const judged = judgeFindings(verified, policy, {
       suppressedFingerprints,
@@ -1064,13 +1100,12 @@ export class ReviewOrchestrator {
       ? (policy.proveOnSeverity ?? (job.riskTier === "thorough" ? "critical" : undefined))
       : undefined;
     if (!allowProve && (policy.proveOnSeverity || job.riskTier === "thorough")) {
-      await this.emit(
-        stageEvent(
-          session.id,
-          "prove",
-          "Prove skipped — license does not include prove entitlement",
-        ),
+      await this.enterStage(
+        session.id,
+        "prove",
+        "Prove skipped — license does not include prove entitlement",
       );
+      this.deps.audit?.endStage("prove");
     }
     if (proveThreshold && (this.deps.sandbox || job.repoPath)) {
       const rank: Record<string, number> = {
@@ -1086,8 +1121,10 @@ export class ReviewOrchestrator {
         .filter((f) => (rank[f.severity] ?? 0) >= floor)
         .slice(0, 3);
       if (toProve.length) {
-        await this.emit(
-          stageEvent(session.id, "prove", `Prove tier on ${toProve.length} findings`),
+        await this.enterStage(
+          session.id,
+          "prove",
+          `Prove tier on ${toProve.length} findings`,
         );
         current = { ...current, stage: "prove" };
         const useDocker = await dockerAvailable().catch(() => false);
@@ -1271,7 +1308,7 @@ export class ReviewOrchestrator {
 
     let publishedReviewId: string | undefined;
     if (job.scm?.publish && this.deps.scm && job.mode === "gate") {
-      await this.emit(stageEvent(session.id, "publish", "Publishing review to SCM"));
+      await this.enterStage(session.id, "publish", "Publishing review to SCM");
       current = { ...current, stage: "publish" };
       try {
         publishedReviewId = await this.publishScm(
@@ -1376,6 +1413,9 @@ export class ReviewOrchestrator {
         toolCalls: audit.tools.total,
         zeroFindingsReason: audit.zeroFindings?.reason,
         message: audit.zeroFindings?.message,
+        totalDurationMs: audit.timings?.totalDurationMs,
+        longestStage: audit.timings?.summary?.longestStage,
+        longestStageMs: audit.timings?.summary?.longestStageMs,
         ts: nowIso(),
       });
     }
@@ -1487,6 +1527,8 @@ export class ReviewOrchestrator {
         },
         // Full audit also in metadata for PG JSONB path (typed session.audit for clients)
         audit: audit ?? current.metadata?.audit,
+        /** Denormalized timings for analytics without unpacking full audit */
+        timings: audit?.timings ?? current.metadata?.timings,
         auditHeadline: audit
           ? {
               source: audit.context.source,
@@ -1494,6 +1536,9 @@ export class ReviewOrchestrator {
               specialistRuns: audit.specialistRuns.length,
               toolCalls: audit.tools.total,
               zeroFindingsReason: audit.zeroFindings?.reason,
+              totalDurationMs: audit.timings?.totalDurationMs,
+              longestStage: audit.timings?.summary?.longestStage,
+              longestStageMs: audit.timings?.summary?.longestStageMs,
             }
           : undefined,
         report: sessionReport,

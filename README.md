@@ -12,8 +12,7 @@
 <p align="center">
   <a href="https://codesteward.ai">codesteward.ai</a> ·
   <a href="deploy/compose/docker-compose.category.yml">Category stack</a> ·
-  <a href="deploy/helm/codesteward">Helm</a> ·
-  <a href="docs/ENTERPRISE_GAPS.md">Enterprise notes</a>
+  <a href="deploy/helm/codesteward">Helm</a>
 </p>
 
 <p align="center">
@@ -330,7 +329,7 @@ Self-hosted dual-mode review platform with product UI, Keycloak identity, orgs, 
 
 Further reading in-repo:
 
-- [`docs/ENTERPRISE_GAPS.md`](docs/ENTERPRISE_GAPS.md) — enterprise gaps and hard edges  
+- [`docs/REVIEW_PIPELINE.md`](docs/REVIEW_PIPELINE.md) — **how a review works** (units, specialists, turns, dataflow)  
 - [`docs/ENTERPRISE_SESSION_AUDIT.md`](docs/ENTERPRISE_SESSION_AUDIT.md) — session / audit notes  
 - [`deploy/helm/codesteward/README.md`](deploy/helm/codesteward/README.md) — production chart  
 

@@ -72,6 +72,30 @@ export async function runSpecialist(
     filesReviewed: filesFromContext.length ? filesFromContext : undefined,
   });
 
+  const { emitSpecialistProgress, startSpecialistHeartbeat } = await import(
+    "./specialist-progress.js"
+  );
+  const startedAtMs = Date.now();
+  emitSpecialistProgress(ctx.onEvent, {
+    sessionId: ctx.sessionId,
+    unitId: ctx.unit.id,
+    unitLabel: ctx.unit.label,
+    role,
+    status: "started",
+    model: modelLabel,
+    runner: ctx.runnerKind ?? "simple",
+  });
+  const stopHeartbeat = startSpecialistHeartbeat({
+    onEvent: ctx.onEvent,
+    sessionId: ctx.sessionId,
+    unitId: ctx.unit.id,
+    unitLabel: ctx.unit.label,
+    role,
+    model: modelLabel,
+    runner: ctx.runnerKind ?? "simple",
+    startedAtMs,
+  });
+
   let toolCalls = 0;
   // Graph grounding — multi-path structural context for security / correctness / evidence
   let graphContext = "";
@@ -198,6 +222,8 @@ export async function runSpecialist(
           const existing = Array.isArray(f.evidence) ? f.evidence : [];
           const withEv = {
             ...f,
+            // Keep specialist reasoning; only append graph grounding
+            reasoning: f.reasoning,
             evidence: [
               ...existing,
               {
@@ -259,19 +285,21 @@ export async function runSpecialist(
         findingsSummary,
       });
     }
-    void ctx.onEvent?.({
-      type: "specialist_run",
+    stopHeartbeat();
+    emitSpecialistProgress(ctx.onEvent, {
       sessionId: ctx.sessionId,
       unitId: ctx.unit.id,
+      unitLabel: ctx.unit.label,
       role,
       status: "completed",
       model: modelLabel,
-      findingCount: findings.length,
       runner: ctx.runnerKind ?? "simple",
-      ts: nowIso(),
+      findingCount: findings.length,
+      durationMs: Date.now() - startedAtMs,
     });
     return findings;
   } catch (err) {
+    stopHeartbeat();
     const msg = err instanceof Error ? err.message : String(err);
     if (runId && ctx.audit) {
       ctx.audit.endRun(runId, {
@@ -282,16 +310,16 @@ export async function runSpecialist(
         toolCallCount: toolCalls,
       });
     }
-    void ctx.onEvent?.({
-      type: "specialist_run",
+    emitSpecialistProgress(ctx.onEvent, {
       sessionId: ctx.sessionId,
       unitId: ctx.unit.id,
+      unitLabel: ctx.unit.label,
       role,
       status: "failed",
       model: modelLabel,
-      error: msg,
       runner: ctx.runnerKind ?? "simple",
-      ts: nowIso(),
+      error: msg,
+      durationMs: Date.now() - startedAtMs,
     });
     throw err;
   }

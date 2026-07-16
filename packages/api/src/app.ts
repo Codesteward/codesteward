@@ -1231,6 +1231,31 @@ export function createApp() {
   });
 
   /** Install-wide runtime knobs (clone, DeepAgents, graph, worker, …). */
+  /**
+   * Platform operator performance analytics (all orgs, last N days).
+   * Not tenant product analytics — for install operators / SRE.
+   */
+  app.get("/v1/platform/analytics", async (c) => {
+    try {
+      const user = c.get("user");
+      const authMode = c.get("authMode") as string | undefined;
+      const { requirePlatformAdmin } = await import("./platform-admin.js");
+      requirePlatformAdmin(user ?? null, authMode);
+      const days = Number(c.req.query("days") ?? 14);
+      const { buildPlatformAnalytics } = await import("./platform-analytics.js");
+      const analytics = await buildPlatformAnalytics({
+        sessions: globalSessionStore,
+        queue: globalQueue,
+        days: Number.isFinite(days) ? days : 14,
+      });
+      return c.json(analytics);
+    } catch (err) {
+      const e = err as Error & { status?: number };
+      if (e.status === 403) return c.json({ error: e.message }, 403);
+      throw err;
+    }
+  });
+
   app.get("/v1/platform/runtime-config", async (c) => {
     const authMode = c.get("authMode") as string | undefined;
     const user = c.get("user") as import("./auth-store.js").PublicAuthUser | undefined;

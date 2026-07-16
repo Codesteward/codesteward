@@ -71,6 +71,55 @@ function unitSummary(units: ReviewUnit[]): string {
   return lines.join("\n");
 }
 
+function timingsSection(audit?: SessionAudit | null): string {
+  const t = audit?.timings;
+  if (!t?.stages?.length && !t?.summary) {
+    return "_No stage timings recorded (re-run with current worker)._";
+  }
+  const lines: string[] = [];
+  if (t.totalDurationMs != null) {
+    lines.push(`- **Total:** ${(t.totalDurationMs / 1000).toFixed(1)}s`);
+  }
+  const s = t.summary;
+  if (s?.byStageMs && Object.keys(s.byStageMs).length) {
+    lines.push("- **By stage:**");
+    const ordered = Object.entries(s.byStageMs).sort((a, b) => b[1] - a[1]);
+    for (const [stage, ms] of ordered) {
+      lines.push(`  - \`${stage}\`: ${(ms / 1000).toFixed(1)}s`);
+    }
+  }
+  if (s?.longestSpecialistRole && s.longestSpecialistMs != null) {
+    lines.push(
+      `- **Slowest specialist:** \`${s.longestSpecialistRole}\` ${(s.longestSpecialistMs / 1000).toFixed(1)}s`,
+    );
+  }
+  if (s?.longestUnitId && s.longestUnitMs != null) {
+    lines.push(
+      `- **Slowest unit:** \`${s.longestUnitId}\` ${(s.longestUnitMs / 1000).toFixed(1)}s`,
+    );
+  }
+  if (s?.specialistRunsSumMs != null && s.specialistRunsCount) {
+    lines.push(
+      `- **Specialist CPU-time sum:** ${(s.specialistRunsSumMs / 1000).toFixed(1)}s across ${s.specialistRunsCount} run(s) (parallel roles overlap)`,
+    );
+  }
+  if (t.units?.length) {
+    lines.push("- **Units (wall):**");
+    for (const u of t.units.slice(0, 20)) {
+      const dur = u.durationMs != null ? `${(u.durationMs / 1000).toFixed(1)}s` : "?";
+      lines.push(
+        `  - ${u.unitLabel ?? u.unitId}: ${dur}` +
+          (u.status ? ` · ${u.status}` : "") +
+          (u.specialistMaxMs != null
+            ? ` · max specialist ${(u.specialistMaxMs / 1000).toFixed(1)}s`
+            : ""),
+      );
+    }
+    if (t.units.length > 20) lines.push(`  - … +${t.units.length - 20} more`);
+  }
+  return lines.join("\n") || "_Timings present but empty._";
+}
+
 function subagentAuditSection(audit?: SessionAudit | null): string {
   const runs = audit?.specialistRuns ?? [];
   if (!runs.length) {
@@ -79,12 +128,25 @@ function subagentAuditSection(audit?: SessionAudit | null): string {
   const sorted = [...runs].sort(
     (a, b) => (a.stepIndex ?? 0) - (b.stepIndex ?? 0) || a.startedAt.localeCompare(b.startedAt),
   );
+  const timedOut = sorted.filter((r) => r.timedOut || r.status === "truncated");
+  const header =
+    timedOut.length > 0
+      ? [
+          `> **Coverage incomplete:** ${timedOut.length} specialist run(s) **timed out** ` +
+            `(${[...new Set(timedOut.map((r) => r.role))].join(", ")}). ` +
+            `Those roles did **not** finish a full review — missing findings must **not** be read as a clean pass for them.`,
+          "",
+        ].join("\n")
+      : "";
+
   const blocks = sorted.map((r, i) => {
     const step = r.stepIndex != null ? r.stepIndex + 1 : i + 1;
     const dur =
       r.durationMs != null ? `${(r.durationMs / 1000).toFixed(1)}s` : "?";
-    const conf =
-      r.avgConfidence != null
+    const isTimeout = r.timedOut === true || r.status === "truncated";
+    const conf = isTimeout
+      ? " · **NOT an empty scan (timed out)**"
+      : r.avgConfidence != null
         ? (r.findingCount ?? 0) === 0
           ? ` · empty-scan confidence ${(r.avgConfidence * 100).toFixed(0)}%`
           : ` · avg confidence ${(r.avgConfidence * 100).toFixed(0)}%`
@@ -125,11 +187,14 @@ function subagentAuditSection(audit?: SessionAudit | null): string {
             .join("\n")
         : r.findingCount
           ? `    - (${r.findingCount} finding(s); titles not retained)`
-          : "    - _(no findings)_";
+          : isTimeout
+            ? "    - **TIMED OUT — incomplete review (not a clean empty scan)**"
+            : "    - _(no findings)_";
     return [
-      `### Step ${step}: \`${r.role}\` on **${r.unitLabel ?? r.unitId}**`,
+      `### Step ${step}: \`${r.role}\` on **${r.unitLabel ?? r.unitId}**` +
+        (isTimeout ? " ⚠️ TIMEOUT" : ""),
       "",
-      `- **Status:** ${r.status} · **${dur}**${conf}`,
+      `- **Status:** ${isTimeout ? "truncated (timeout)" : r.status} · **${dur}**${conf}`,
       r.model ? `- **Model:** \`${r.model}\` (${r.runner})` : `- **Runner:** ${r.runner}`,
       `- **Scope:** ${scope}`,
       meta ? `- **Activity:** ${meta}` : null,
@@ -137,6 +202,9 @@ function subagentAuditSection(audit?: SessionAudit | null): string {
         ? `- **Response integrity:** sha256 \`${r.responseSha256.slice(0, 16)}…\` (${r.completionChars ?? "?"} chars)`
         : null,
       r.error ? `- **Error:** ${r.error.slice(0, 200)}` : null,
+      isTimeout
+        ? `- **Coverage:** Incomplete for \`${r.role}\` — do not treat missing findings as a clean pass for this role.`
+        : null,
       `- **Findings this step:**`,
       findingLines,
       "",
@@ -144,7 +212,7 @@ function subagentAuditSection(audit?: SessionAudit | null): string {
       .filter(Boolean)
       .join("\n");
   });
-  return blocks.join("\n");
+  return header + blocks.join("\n");
 }
 
 function findingsSection(findings: BuildSessionReportInput["findings"]): string {
@@ -288,6 +356,16 @@ export function buildSessionReportMarkdown(input: BuildSessionReportInput): {
       ? `- **Specialist runs:** ${audit.specialistRuns.length} (${audit.specialistRuns.map((r) => r.role).join(", ")})`
       : `- **Units:** ${units.length}`,
     discourseNotes > 0 ? `- **Discourse notes:** ${discourseNotes}` : null,
+    audit?.timings?.totalDurationMs != null
+      ? `- **Wall time:** ${(audit.timings.totalDurationMs / 1000).toFixed(1)}s` +
+        (audit.timings.summary?.longestStage
+          ? ` (longest stage: **${audit.timings.summary.longestStage}** ${(audit.timings.summary.longestStageMs! / 1000).toFixed(1)}s)`
+          : "")
+      : null,
+    "",
+    "## Timing / bottlenecks",
+    "",
+    timingsSection(audit),
     "",
     "## Unit outcomes",
     "",

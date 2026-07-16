@@ -3,16 +3,22 @@ import {
   createId,
   nowIso,
   type ContextReceipt,
+  type CoverageGaps,
   type JudgeNoiseSummary,
   type SessionAudit,
+  type SessionTimings,
   type SpecialistRun,
+  type StageTiming,
+  type TimingsSummary,
   type ToolTraceEntry,
+  type UnitTiming,
   type ZeroFindingsRationale,
 } from "@codesteward/core";
 
 const MAX_TOOL_ENTRIES = 200;
 const MAX_DROPPED = 50;
 const MAX_FILES = 500;
+const MAX_UNIT_TIMINGS = 500;
 
 export class SessionAuditCollector {
   private context: ContextReceipt | null = null;
@@ -26,8 +32,101 @@ export class SessionAuditCollector {
     | { recoveredUnits?: number; failedUnits?: number; failureCount?: number }
     | undefined;
   private readonly openRuns = new Map<string, SpecialistRun>();
+  private sessionStartedAt = nowIso();
+  private stages: StageTiming[] = [];
+  private openStage: StageTiming | null = null;
+  private units: UnitTiming[] = [];
 
   constructor(private readonly sessionId: string) {}
+
+  /** Mark orchestrator start (call once at beginning of run). */
+  beginSession(startedAt?: string): void {
+    this.sessionStartedAt = startedAt ?? nowIso();
+  }
+
+  /**
+   * Enter a pipeline stage. Closes any open stage first (barrier semantics).
+   */
+  startStage(stage: string, message?: string): void {
+    this.endStage();
+    this.openStage = {
+      stage,
+      startedAt: nowIso(),
+      message: message?.slice(0, 300),
+    };
+  }
+
+  /** Close the current stage (or a named one if still open under that name). */
+  endStage(stage?: string): void {
+    if (!this.openStage) return;
+    if (stage && this.openStage.stage !== stage) return;
+    const endedAt = nowIso();
+    const started = Date.parse(this.openStage.startedAt);
+    const durationMs = Number.isFinite(started)
+      ? Math.max(0, Date.now() - started)
+      : undefined;
+    this.stages.push({
+      ...this.openStage,
+      endedAt,
+      durationMs,
+    });
+    this.openStage = null;
+  }
+
+  recordUnitTiming(input: {
+    unitId: string;
+    unitLabel?: string;
+    startedAt?: string;
+    endedAt?: string;
+    status?: string;
+    roles?: string[];
+    findingCount?: number;
+  }): void {
+    if (this.units.length >= MAX_UNIT_TIMINGS) return;
+    const startedAt = input.startedAt;
+    const endedAt = input.endedAt ?? nowIso();
+    let durationMs: number | undefined;
+    if (startedAt) {
+      const a = Date.parse(startedAt);
+      const b = Date.parse(endedAt);
+      if (Number.isFinite(a) && Number.isFinite(b)) {
+        durationMs = Math.max(0, b - a);
+      }
+    }
+    // Correlate specialist runs for this unit
+    const unitRuns = this.runs.filter((r) => r.unitId === input.unitId);
+    const openForUnit = [...this.openRuns.values()].filter((r) => r.unitId === input.unitId);
+    const all = [...unitRuns, ...openForUnit];
+    const durs = all
+      .map((r) => r.durationMs)
+      .filter((d): d is number => typeof d === "number" && Number.isFinite(d));
+    const specialistMaxMs = durs.length ? Math.max(...durs) : undefined;
+    const specialistSumMs = durs.length ? durs.reduce((a, b) => a + b, 0) : undefined;
+    const findingCount =
+      input.findingCount ??
+      unitRuns.reduce((n, r) => n + (r.findingCount ?? 0), 0);
+
+    const row: UnitTiming = {
+      unitId: input.unitId,
+      unitLabel: input.unitLabel,
+      startedAt,
+      endedAt,
+      durationMs,
+      status: input.status,
+      roles: input.roles,
+      specialistMaxMs,
+      specialistSumMs,
+      findingCount,
+    };
+    const idx = this.units.findIndex((u) => u.unitId === input.unitId);
+    if (idx >= 0) this.units[idx] = row;
+    else this.units.push(row);
+  }
+
+  /** Snapshot of timings so far (for mid-run UI / checkpoints). */
+  peekTimings(): SessionTimings {
+    return this.buildTimings(false);
+  }
 
   setContext(ctx: ContextReceipt): void {
     this.context = {
@@ -89,6 +188,8 @@ export class SessionAuditCollector {
       usedGraph?: boolean;
       filesReviewed?: string[];
       pathsReviewed?: string[];
+      timedOut?: boolean;
+      timeoutMs?: number;
     },
   ): void {
     const run = this.openRuns.get(id) ?? this.runs.find((r) => r.id === id);
@@ -121,7 +222,9 @@ export class SessionAuditCollector {
       ...run,
       endedAt,
       durationMs,
-      status: patch.status ?? (patch.error ? "error" : "ok"),
+      status:
+        patch.status ??
+        (patch.timedOut ? "truncated" : patch.error ? "error" : "ok"),
       findingCount: patch.findingCount ?? run.findingCount,
       error: patch.error ? scrubSecrets(patch.error) : undefined,
       responseSha256,
@@ -134,9 +237,35 @@ export class SessionAuditCollector {
       usedGraph: patch.usedGraph ?? run.usedGraph,
       filesReviewed: patch.filesReviewed?.slice(0, 80) ?? run.filesReviewed,
       pathsReviewed: patch.pathsReviewed?.slice(0, 50) ?? run.pathsReviewed,
+      timedOut: patch.timedOut ?? run.timedOut,
+      timeoutMs: patch.timeoutMs ?? run.timeoutMs,
     };
     this.openRuns.delete(id);
-    this.runs.push(finished);
+    // Replace if already pushed (re-end); else append
+    const existingIdx = this.runs.findIndex((r) => r.id === id);
+    if (existingIdx >= 0) this.runs[existingIdx] = finished;
+    else this.runs.push(finished);
+  }
+
+  /**
+   * Close open specialist runs matching unit+role (e.g. SimpleAgentRunner outer timeout).
+   */
+  endOpenRunsForUnitRole(
+    unitId: string,
+    role: string,
+    patch: {
+      status?: SpecialistRun["status"];
+      findingCount?: number;
+      error?: string;
+      timedOut?: boolean;
+      timeoutMs?: number;
+    },
+  ): void {
+    for (const [id, run] of [...this.openRuns.entries()]) {
+      if (run.unitId === unitId && run.role === role) {
+        this.endRun(id, patch);
+      }
+    }
   }
 
   recordTool(entry: Omit<ToolTraceEntry, "id" | "ts"> & { id?: string; ts?: string }): void {
@@ -186,6 +315,8 @@ export class SessionAuditCollector {
     for (const [id] of this.openRuns) {
       this.endRun(id, { status: "error", error: "run incomplete at finalize" });
     }
+    // Close open stage so total timings are complete
+    this.endStage();
 
     const context =
       this.context ??
@@ -201,6 +332,8 @@ export class SessionAuditCollector {
         preparedAt: nowIso(),
       } satisfies ContextReceipt);
 
+    const coverageGaps = buildCoverageGaps(this.runs);
+
     let zeroFindings: ZeroFindingsRationale | undefined;
     if (opts.findingCount === 0) {
       zeroFindings = buildZeroFindingsRationale({
@@ -209,8 +342,12 @@ export class SessionAuditCollector {
         judge: this.judge,
         emptyDiff: opts.emptyDiff,
         unitsFailed: opts.unitsFailed,
+        coverageGaps,
       });
     }
+
+    const completedAt = nowIso();
+    const timings = this.buildTimings(true, completedAt);
 
     return {
       version: 1,
@@ -226,10 +363,130 @@ export class SessionAuditCollector {
       },
       judge: this.judge,
       zeroFindings,
+      coverageGaps,
       heal: this.heal,
-      completedAt: nowIso(),
+      timings,
+      completedAt,
     };
   }
+
+  private buildTimings(final: boolean, sessionEndedAt?: string): SessionTimings {
+    // Include still-open stage as in-progress snapshot when not finalizing
+    const stages = [...this.stages];
+    if (!final && this.openStage) {
+      const started = Date.parse(this.openStage.startedAt);
+      stages.push({
+        ...this.openStage,
+        durationMs: Number.isFinite(started)
+          ? Math.max(0, Date.now() - started)
+          : undefined,
+      });
+    }
+
+    const endedAt = sessionEndedAt ?? (final ? nowIso() : undefined);
+    const startMs = Date.parse(this.sessionStartedAt);
+    const endMs = endedAt ? Date.parse(endedAt) : Date.now();
+    const totalDurationMs =
+      Number.isFinite(startMs) && Number.isFinite(endMs)
+        ? Math.max(0, endMs - startMs)
+        : undefined;
+
+    const summary = buildTimingsSummary({
+      stages,
+      units: this.units,
+      runs: this.runs,
+      tools: this.tools,
+    });
+
+    return {
+      sessionStartedAt: this.sessionStartedAt,
+      sessionEndedAt: endedAt,
+      totalDurationMs,
+      stages,
+      units: this.units,
+      summary,
+    };
+  }
+}
+
+export function buildTimingsSummary(input: {
+  stages: StageTiming[];
+  units: UnitTiming[];
+  runs: SpecialistRun[];
+  tools: ToolTraceEntry[];
+}): TimingsSummary {
+  const byStageMs: Record<string, number> = {};
+  for (const s of input.stages) {
+    if (s.durationMs == null) continue;
+    // Sum if stage appears multiple times (resume / retry)
+    byStageMs[s.stage] = (byStageMs[s.stage] ?? 0) + s.durationMs;
+  }
+
+  let longestStage: string | undefined;
+  let longestStageMs: number | undefined;
+  for (const [stage, ms] of Object.entries(byStageMs)) {
+    if (longestStageMs == null || ms > longestStageMs) {
+      longestStage = stage;
+      longestStageMs = ms;
+    }
+  }
+
+  let longestUnitId: string | undefined;
+  let longestUnitMs: number | undefined;
+  for (const u of input.units) {
+    if (u.durationMs == null) continue;
+    if (longestUnitMs == null || u.durationMs > longestUnitMs) {
+      longestUnitId = u.unitId;
+      longestUnitMs = u.durationMs;
+    }
+  }
+
+  let longestSpecialistRole: string | undefined;
+  let longestSpecialistMs: number | undefined;
+  let specialistRunsSumMs = 0;
+  let specialistRunsCount = 0;
+  for (const r of input.runs) {
+    if (r.durationMs == null) continue;
+    specialistRunsCount += 1;
+    specialistRunsSumMs += r.durationMs;
+    if (longestSpecialistMs == null || r.durationMs > longestSpecialistMs) {
+      longestSpecialistMs = r.durationMs;
+      longestSpecialistRole = r.role;
+    }
+  }
+
+  let toolsSumMs = 0;
+  let toolsWithMs = 0;
+  for (const t of input.tools) {
+    if (t.durationMs == null) continue;
+    toolsSumMs += t.durationMs;
+    toolsWithMs += 1;
+  }
+
+  return {
+    longestStage,
+    longestStageMs,
+    longestUnitId,
+    longestUnitMs,
+    longestSpecialistRole,
+    longestSpecialistMs,
+    byStageMs,
+    specialistsMs: byStageMs.specialists,
+    verificationMs: byStageMs.verification,
+    discourseMs: byStageMs.discourse,
+    judgeMs: byStageMs.judge,
+    proveMs: byStageMs.prove,
+    publishMs: byStageMs.publish,
+    graphMs: byStageMs.graph,
+    planningMs: byStageMs.planning,
+    policyMs: byStageMs.policy,
+    specialistRunsCount: specialistRunsCount || input.runs.length,
+    specialistRunsSumMs: specialistRunsCount ? specialistRunsSumMs : undefined,
+    specialistRunsMaxMs: longestSpecialistMs,
+    toolsCount: input.tools.length,
+    toolsSumMs: toolsWithMs ? toolsSumMs : undefined,
+    unitCount: input.units.length,
+  };
 }
 
 /** Scrub secrets from any durable audit string (notes, errors, excerpts). */
@@ -248,12 +505,36 @@ function redactExcerpt(s: string): string {
   return scrubSecrets(s);
 }
 
+export function buildCoverageGaps(runs: SpecialistRun[]): CoverageGaps | undefined {
+  const timed = runs.filter(
+    (r) => r.timedOut === true || r.status === "truncated",
+  );
+  if (!timed.length) return undefined;
+  const roles = timed.map((r) => r.role);
+  const unitLabels = [
+    ...new Set(timed.map((r) => r.unitLabel ?? r.unitId).filter(Boolean)),
+  ];
+  const criticalRolesAffected = roles.some((r) => r === "security");
+  const uniqueRoles = [...new Set(roles)];
+  return {
+    specialistTimeouts: timed.length,
+    roles,
+    unitLabels,
+    criticalRolesAffected,
+    message:
+      `${timed.length} specialist run(s) timed out (${uniqueRoles.join(", ")})` +
+      (criticalRolesAffected ? " — includes security" : "") +
+      ". Those roles did **not** complete a clean scan; do not interpret missing findings as a clean pass for timed-out roles.",
+  };
+}
+
 export function buildZeroFindingsRationale(input: {
   context: ContextReceipt;
   runs: SpecialistRun[];
   judge?: JudgeNoiseSummary;
   emptyDiff?: boolean;
   unitsFailed?: boolean;
+  coverageGaps?: CoverageGaps;
 }): ZeroFindingsRationale {
   const evidence: string[] = [];
   evidence.push(
@@ -276,8 +557,12 @@ export function buildZeroFindingsRationale(input: {
     evidence.push(`Graph last_build: ${input.context.graph.lastBuild}`);
 
   const okRuns = input.runs.filter((r) => r.status === "ok");
+  const timedRuns = input.runs.filter(
+    (r) => r.timedOut === true || r.status === "truncated",
+  );
   evidence.push(
     `${input.runs.length} specialist run(s), ${okRuns.length} ok` +
+      (timedRuns.length ? `, ${timedRuns.length} timed out` : "") +
       (input.runs.length
         ? ` · roles: ${[...new Set(input.runs.map((r) => r.role))].join(", ")}`
         : ""),
@@ -300,6 +585,20 @@ export function buildZeroFindingsRationale(input: {
       reason: "context_missing",
       message:
         "0 findings: code context may be missing or bound to an unverified local mount — treat as incomplete review.",
+      evidence,
+    };
+  }
+  // Timeouts before "all clean" — never claim a clean pass when a role did not finish
+  if (input.coverageGaps?.specialistTimeouts || timedRuns.length) {
+    const roles = input.coverageGaps?.roles?.length
+      ? [...new Set(input.coverageGaps.roles)]
+      : [...new Set(timedRuns.map((r) => r.role))];
+    evidence.push(...timedRuns.map((r) => `TIMEOUT ${r.role} on ${r.unitLabel ?? r.unitId}`));
+    return {
+      reason: "specialist_timeouts",
+      message:
+        `0 product findings, but ${roles.join(", ")} specialist(s) **timed out** — ` +
+        "this is **not** a clean empty scan for those roles. Coverage is incomplete.",
       evidence,
     };
   }

@@ -9,6 +9,7 @@ import {
   EmptyState,
   PageHero,
   StagePipeline,
+  formatDurationMs,
   formatRelative,
   shortId,
 } from "../components/ui";
@@ -204,6 +205,30 @@ export function Sessions() {
   const [lastJobId, setLastJobId] = useState<string | null>(null);
   const [stuckWarning, setStuckWarning] = useState(false);
   const startWatch = useRef<{ id: string; stage: string; at: number } | null>(null);
+  /** Live specialist roles (unitId|role → startedAt + meta) for heartbeat UI */
+  const [activeSpecialists, setActiveSpecialists] = useState<
+    Record<
+      string,
+      {
+        unitId: string;
+        unitLabel?: string;
+        role: string;
+        model?: string;
+        runner?: string;
+        startedAt: number;
+        lastBeatAt: number;
+        message?: string;
+      }
+    >
+  >({});
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  /** Live stage enter tracking for pipeline animation + elapsed */
+  const [stageEnteredAt, setStageEnteredAt] = useState<number | null>(null);
+  const [visitedStages, setVisitedStages] = useState<string[]>([]);
+  const [liveStageDurations, setLiveStageDurations] = useState<Record<string, number>>(
+    {},
+  );
+  const stageEnteredRef = useRef<{ stage: string; at: number } | null>(null);
 
   // Start form — mode/pr/repoId seeded from query (nav: Gate / Steward, PRs page)
   const [repoId, setRepoId] = useState(() => searchParams.get("repoId") ?? "codesteward");
@@ -323,10 +348,25 @@ export function Sessions() {
     }
   }, [sessions, detail]);
 
+  // Live elapsed for specialists + active pipeline stage (1s tick)
+  useEffect(() => {
+    const needTick =
+      Object.keys(activeSpecialists).length > 0 ||
+      Boolean(stageEnteredAt && detail?.status === "running");
+    if (!needTick) return;
+    const id = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [activeSpecialists, stageEnteredAt, detail?.status]);
+
   useEffect(() => {
     if (!selectedId) return;
     setTimeline([]);
     setUnits([]);
+    setActiveSpecialists({});
+    setStageEnteredAt(null);
+    setVisitedStages([]);
+    setLiveStageDurations({});
+    stageEnteredRef.current = null;
     const es = new EventSource(api.eventsUrl(selectedId));
     /** Client-side dedupe: SSE reconnects replay backlog; ignore repeats. */
     const seen = new Set<string>();
@@ -410,9 +450,27 @@ export function Sessions() {
       const dkey = eventDedupeKey(evType, parsed, data, lastEventId);
 
       if (evType === "stage") {
-        const msg = `Stage → ${parsed.stage ?? "?"}${parsed.message ? `: ${parsed.message}` : ""}`;
+        const nextStage = parsed.stage ?? "?";
+        const tEnter = Date.parse(ts) || Date.now();
+        // Close previous stage with wall duration (for pipeline labels)
+        const prev = stageEnteredRef.current;
+        if (prev && prev.stage !== nextStage) {
+          const closedMs = Math.max(0, tEnter - prev.at);
+          setLiveStageDurations((d) => ({ ...d, [prev.stage]: closedMs }));
+          push(
+            `Stage ${prev.stage} done · ${formatDurationMs(closedMs)}`,
+            "default",
+            ts,
+            `stage-done|${prev.stage}|${tEnter}`,
+          );
+        }
+        stageEnteredRef.current = { stage: nextStage, at: tEnter };
+        setStageEnteredAt(tEnter);
+        setVisitedStages((v) => (v.includes(nextStage) ? v : [...v, nextStage]));
+
+        const msg = `Stage → ${nextStage}${parsed.message ? `: ${parsed.message}` : ""}`;
         const kind =
-          isGraphOrEvidenceMessage(evType, msg) || /discourse|evidence|graph/i.test(parsed.stage ?? "")
+          isGraphOrEvidenceMessage(evType, msg) || /discourse|evidence|graph/i.test(nextStage)
             ? "evidence"
             : "default";
         push(msg, kind, ts, dkey);
@@ -440,6 +498,82 @@ export function Sessions() {
             else next.push(row);
             return next;
           });
+          if (parsed.status === "completed" || parsed.status === "failed" || parsed.status === "skipped") {
+            setActiveSpecialists((prev) => {
+              const next = { ...prev };
+              for (const k of Object.keys(next)) {
+                if (k.startsWith(`${parsed.unitId}|`)) delete next[k];
+              }
+              return next;
+            });
+          }
+        }
+      } else if (evType === "specialist_run") {
+        const role = parsed.role ?? "?";
+        const unitLabel = parsed.unitLabel ?? parsed.label ?? parsed.unitId ?? "?";
+        const key = `${parsed.unitId ?? "u"}|${role}`;
+        const st = parsed.status ?? "started";
+        if (st === "started" || st === "running") {
+          const elapsed =
+            typeof parsed.durationMs === "number"
+              ? parsed.durationMs
+              : undefined;
+          const msg =
+            st === "running"
+              ? `Still running: ${role} on ${unitLabel}${parsed.message ? ` · ${parsed.message}` : elapsed != null ? ` · ${Math.round(elapsed / 1000)}s` : ""}`
+              : `Specialist started: ${role} on ${unitLabel}${parsed.model ? ` (${parsed.model})` : ""}`;
+          // Heartbeats dedupe by second so the timeline isn't flooded
+          const beatKey =
+            st === "running"
+              ? `${key}|hb|${Math.floor(Date.now() / 15000)}`
+              : dkey;
+          push(msg, "evidence", ts, beatKey);
+          setActiveSpecialists((prev) => {
+            const existing = prev[key];
+            const startedAt =
+              existing?.startedAt ??
+              (elapsed != null ? Date.now() - elapsed : Date.now());
+            return {
+              ...prev,
+              [key]: {
+                unitId: parsed.unitId ?? "u",
+                unitLabel: parsed.unitLabel ?? parsed.label,
+                role,
+                model: parsed.model ?? existing?.model,
+                runner: parsed.runner ?? existing?.runner,
+                startedAt,
+                lastBeatAt: Date.now(),
+                message: parsed.message,
+              },
+            };
+          });
+        } else {
+          const dur =
+            typeof parsed.durationMs === "number"
+              ? ` · ${(parsed.durationMs / 1000).toFixed(1)}s`
+              : "";
+          const findings =
+            parsed.findingCount != null ? ` · ${parsed.findingCount} finding(s)` : "";
+          const timedOut = st === "timeout" || parsed.timedOut;
+          push(
+            timedOut
+              ? `Specialist TIMEOUT: ${role} on ${unitLabel}${dur}` +
+                  (parsed.timeoutMs
+                    ? ` (budget ${(parsed.timeoutMs / 1000).toFixed(0)}s)`
+                    : "") +
+                  " — no findings from this role; coverage gap recorded"
+              : st === "failed"
+                ? `Specialist failed: ${role} on ${unitLabel}${dur}${parsed.error ? ` — ${parsed.error}` : ""}`
+                : `Specialist done: ${role} on ${unitLabel}${findings}${dur}`,
+            timedOut || st === "failed" ? "error" : "default",
+            ts,
+            dkey,
+          );
+          setActiveSpecialists((prev) => {
+            const next = { ...prev };
+            delete next[key];
+            return next;
+          });
         }
       } else if (evType === "agent") {
         const heal =
@@ -464,12 +598,22 @@ export function Sessions() {
           });
         }
       } else if (evType === "completed") {
+        // Seal final open stage duration
+        const prev = stageEnteredRef.current;
+        if (prev) {
+          const tEnd = Date.parse(ts) || Date.now();
+          const closedMs = Math.max(0, tEnd - prev.at);
+          setLiveStageDurations((d) => ({ ...d, [prev.stage]: closedMs }));
+          stageEnteredRef.current = null;
+          setStageEnteredAt(null);
+        }
         push(
           `Completed · ${parsed.status ?? "done"} · ${parsed.findingCount ?? "?"} findings`,
           parsed.status === "failed" ? "error" : "heal",
           ts,
           dkey,
         );
+        setActiveSpecialists({});
         void refresh();
         if (selectedId) {
           void api.sessionFindings(selectedId).then((r) => setSessionFindings(r.findings)).catch(() => undefined);
@@ -542,6 +686,7 @@ export function Sessions() {
       "stage",
       "unit",
       "agent",
+      "specialist_run",
       "finding",
       "completed",
       "error",
@@ -550,6 +695,7 @@ export function Sessions() {
       "healing",
       "retry",
       "unit_recovered",
+      "audit_summary",
     ]) {
       es.addEventListener(t, handle(t));
     }
@@ -1166,6 +1312,47 @@ export function Sessions() {
               </div>
             )}
 
+            {selected.status === "running" && Object.keys(activeSpecialists).length > 0 && (
+              <div
+                className="banner"
+                role="status"
+                style={{
+                  borderColor: "rgba(56,189,248,0.4)",
+                  background: "rgba(56,189,248,0.08)",
+                }}
+              >
+                <strong>Live specialists</strong>
+                <div className="stack" style={{ gap: 4, marginTop: 8 }}>
+                  {Object.values(activeSpecialists)
+                    .sort((a, b) => a.startedAt - b.startedAt)
+                    .map((sp) => {
+                      const elapsed = Math.max(0, nowTick - sp.startedAt);
+                      const sec = Math.floor(elapsed / 1000);
+                      const label =
+                        sec < 60
+                          ? `${sec}s`
+                          : `${Math.floor(sec / 60)}m ${sec % 60}s`;
+                      return (
+                        <div
+                          key={`${sp.unitId}|${sp.role}`}
+                          className="mono"
+                          style={{ fontSize: "0.8rem" }}
+                        >
+                          <Badge tone="info">{sp.role}</Badge>{" "}
+                          on {sp.unitLabel ?? sp.unitId} · still running · {label}
+                          {sp.model ? (
+                            <span className="muted"> · {sp.model}</span>
+                          ) : null}
+                          {sp.message ? (
+                            <span className="muted"> · {sp.message}</span>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+
             {/* Only show terminal failure banner when not actively running/queued.
                 Resume clears session.error, but old failureLog/unit errors must not
                 look like the current run already failed. */}
@@ -1263,6 +1450,23 @@ export function Sessions() {
               <StagePipeline
                 stage={selected.stage}
                 failed={selected.status === "failed" || selected.status === "cancelled"}
+                durationsMs={mergeStageDurations(selected, liveStageDurations)}
+                activeEnteredAt={
+                  selected.status === "running" ? stageEnteredAt : null
+                }
+                visitedStages={
+                  visitedStages.length
+                    ? visitedStages
+                    : stagesVisitedFromSession(selected)
+                }
+                nowMs={nowTick}
+              />
+              <SessionStageTimings
+                session={selected}
+                liveDurations={liveStageDurations}
+                activeStage={selected.status === "running" ? selected.stage : null}
+                activeEnteredAt={stageEnteredAt}
+                nowMs={nowTick}
               />
             </div>
 
@@ -1479,6 +1683,138 @@ function resolveSessionAudit(session: Session): SessionAudit | null {
   const meta = session.metadata?.audit;
   if (meta && typeof meta === "object") return meta as SessionAudit;
   return null;
+}
+
+type SessionTimingsLike = {
+  totalDurationMs?: number;
+  stages?: Array<{ stage: string; durationMs?: number }>;
+  summary?: {
+    byStageMs?: Record<string, number>;
+    longestStage?: string;
+    longestStageMs?: number;
+    longestSpecialistRole?: string;
+    longestSpecialistMs?: number;
+  };
+};
+
+function resolveSessionTimings(session: Session): SessionTimingsLike | null {
+  const audit = resolveSessionAudit(session);
+  if (audit?.timings) return audit.timings as SessionTimingsLike;
+  const meta = session.metadata as Record<string, unknown> | undefined;
+  if (meta?.timings && typeof meta.timings === "object") {
+    return meta.timings as SessionTimingsLike;
+  }
+  return null;
+}
+
+function mergeStageDurations(
+  session: Session,
+  live: Record<string, number>,
+): Record<string, number> {
+  const fromAudit = resolveSessionTimings(session)?.summary?.byStageMs ?? {};
+  // Live SSE closures win for in-progress view; audit wins when finished and fuller
+  return { ...fromAudit, ...live };
+}
+
+function stagesVisitedFromSession(session: Session): string[] {
+  const t = resolveSessionTimings(session);
+  if (t?.stages?.length) return t.stages.map((s) => s.stage);
+  if (t?.summary?.byStageMs) return Object.keys(t.summary.byStageMs);
+  return session.stage ? [session.stage] : [];
+}
+
+function SessionStageTimings({
+  session,
+  liveDurations,
+  activeStage,
+  activeEnteredAt,
+  nowMs,
+}: {
+  session: Session;
+  liveDurations: Record<string, number>;
+  activeStage: string | null;
+  activeEnteredAt: number | null;
+  nowMs: number;
+}) {
+  const merged = mergeStageDurations(session, liveDurations);
+  const rows: Array<{ stage: string; ms: number; live?: boolean }> = Object.entries(merged)
+    .filter(([, ms]) => typeof ms === "number" && ms >= 0)
+    .map(([stage, ms]) => ({ stage, ms }))
+    .sort((a, b) => b.ms - a.ms);
+
+  if (
+    activeStage &&
+    activeEnteredAt &&
+    session.status === "running" &&
+    !rows.some((r) => r.stage === activeStage)
+  ) {
+    rows.unshift({
+      stage: activeStage,
+      ms: Math.max(0, nowMs - activeEnteredAt),
+      live: true,
+    });
+  } else if (activeStage && activeEnteredAt && session.status === "running") {
+    const i = rows.findIndex((r) => r.stage === activeStage);
+    if (i >= 0) {
+      rows[i] = {
+        stage: activeStage,
+        ms: Math.max(rows[i]!.ms, nowMs - activeEnteredAt),
+        live: true,
+      };
+    }
+  }
+
+  const timings = resolveSessionTimings(session);
+  const total =
+    timings?.totalDurationMs ??
+    (rows.length ? rows.reduce((a, r) => a + r.ms, 0) : null);
+  const maxBar = Math.max(1, ...rows.map((r) => r.ms));
+
+  if (!rows.length && total == null) {
+    if (session.status === "running") {
+      return (
+        <p className="muted" style={{ marginTop: 10, fontSize: "0.8rem" }}>
+          Stage times appear as each step finishes. Active step shows a live timer on the
+          pipeline above.
+        </p>
+      );
+    }
+    return null;
+  }
+
+  return (
+    <div className="stage-timings" aria-label="Stage durations">
+      {rows.slice(0, 10).map((r) => (
+        <div
+          key={r.stage}
+          className={`stage-timings-row${r.live ? " is-active" : ""}`}
+        >
+          <span className="mono muted">{r.stage}</span>
+          <div className="bar-track">
+            <div
+              className="bar-fill"
+              style={{ width: `${Math.min(100, (r.ms / maxBar) * 100)}%` }}
+            />
+          </div>
+          <span className="mono" style={{ textAlign: "right" }}>
+            {formatDurationMs(r.ms)}
+            {r.live ? " ·" : ""}
+          </span>
+        </div>
+      ))}
+      {total != null && (
+        <div className="stage-timings-total muted mono">
+          Total wall {formatDurationMs(total)}
+          {timings?.summary?.longestStage
+            ? ` · longest ${timings.summary.longestStage} (${formatDurationMs(timings.summary.longestStageMs)})`
+            : ""}
+          {timings?.summary?.longestSpecialistRole
+            ? ` · slowest role ${timings.summary.longestSpecialistRole} (${formatDurationMs(timings.summary.longestSpecialistMs)})`
+            : ""}
+        </div>
+      )}
+    </div>
+  );
 }
 
 type SessionReportMeta = {
@@ -1832,6 +2168,35 @@ function ReviewAuditPanel({ session }: { session: Session }) {
             )}
           </div>
 
+          {a.coverageGaps && a.coverageGaps.specialistTimeouts > 0 && (
+            <div
+              className="banner warn"
+              style={{
+                margin: 0,
+                padding: "0.65rem 0.75rem",
+                borderColor: "rgba(248,113,113,0.5)",
+                background: "rgba(248,113,113,0.1)",
+              }}
+              role="alert"
+            >
+              <strong style={{ fontSize: "0.85rem" }}>
+                Incomplete specialist coverage
+              </strong>
+              <p style={{ margin: "0.35rem 0 0", fontSize: "0.8rem" }}>
+                {a.coverageGaps.message}
+              </p>
+              <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.75rem" }}>
+                Timed-out roles:{" "}
+                <span className="mono">
+                  {[...new Set(a.coverageGaps.roles ?? [])].join(", ") || "—"}
+                </span>
+                {a.coverageGaps.criticalRolesAffected
+                  ? " · includes security — do not treat as a clean security pass"
+                  : ""}
+              </p>
+            </div>
+          )}
+
           {a.zeroFindings && (
             <div
               className="banner warn"
@@ -1886,7 +2251,20 @@ function ReviewAuditPanel({ session }: { session: Session }) {
                       <span className="muted mono" style={{ fontSize: "0.68rem" }}>
                         #{(r.stepIndex ?? idx) + 1}
                       </span>
-                      <Badge tone={r.status === "ok" ? "ok" : "failed"}>{r.role}</Badge>
+                      <Badge
+                        tone={
+                          r.timedOut || r.status === "truncated"
+                            ? "failed"
+                            : r.status === "ok"
+                              ? "ok"
+                              : "failed"
+                        }
+                      >
+                        {r.role}
+                      </Badge>
+                      {(r.timedOut || r.status === "truncated") && (
+                        <Badge tone="failed">TIMEOUT · incomplete</Badge>
+                      )}
                       {r.unitLabel && (
                         <span className="muted" style={{ fontSize: "0.75rem" }}>
                           {r.unitLabel}
@@ -1902,7 +2280,15 @@ function ReviewAuditPanel({ session }: { session: Session }) {
                         <strong>{r.findingCount}</strong>{" "}
                         <span className="muted">findings</span>
                       </span>
-                      {r.avgConfidence != null && (
+                      {r.timedOut || r.status === "truncated" ? (
+                        <span
+                          className="muted"
+                          style={{ color: "var(--danger)", fontWeight: 600 }}
+                          title="This role did not finish — missing findings are NOT a clean empty scan"
+                        >
+                          not a clean empty scan
+                        </span>
+                      ) : r.avgConfidence != null ? (
                         <span
                           className="muted"
                           title={
@@ -1914,7 +2300,7 @@ function ReviewAuditPanel({ session }: { session: Session }) {
                           {(r.findingCount ?? 0) === 0 ? "empty-scan conf " : "conf "}
                           {(r.avgConfidence * 100).toFixed(0)}%
                         </span>
-                      )}
+                      ) : null}
                       {r.durationMs != null && (
                         <span className="muted mono">
                           {(r.durationMs / 1000).toFixed(1)}s
@@ -1925,6 +2311,19 @@ function ReviewAuditPanel({ session }: { session: Session }) {
                       )}
                     </div>
                     </div>
+                    {(r.timedOut || r.status === "truncated") && (
+                      <div
+                        style={{
+                          marginTop: 6,
+                          fontSize: "0.75rem",
+                          color: "var(--danger)",
+                          fontWeight: 550,
+                        }}
+                      >
+                        Timed out — <code>{r.role}</code> did not complete review of this unit.
+                        Do not treat absence of {r.role} findings as a clean pass.
+                      </div>
+                    )}
                     {(r.pathsReviewed?.length || r.filesReviewed?.length) && (
                       <div className="muted mono" style={{ fontSize: "0.68rem", marginTop: 4 }}>
                         {r.pathsReviewed?.length

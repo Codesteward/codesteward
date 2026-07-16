@@ -1317,6 +1317,44 @@ label {
 .pipeline-step.done .pipeline-label {
   color: var(--text);
 }
+.pipeline-step.skipped .pipeline-label {
+  color: var(--text-faint);
+  opacity: 0.65;
+}
+.pipeline-step.skipped .pipeline-dot {
+  border-color: var(--border);
+  background: var(--bg-panel);
+  color: var(--text-faint);
+  font-size: 0.65rem;
+}
+.pipeline-dur {
+  margin-top: 0.15rem;
+  font-size: 0.55rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--text-muted);
+  line-height: 1.1;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  min-height: 0.85em;
+}
+.pipeline-dur--live {
+  color: var(--accent);
+  font-weight: 650;
+  animation: pipeline-dur-pulse 1.2s ease infinite;
+}
+.pipeline-dur--skip {
+  color: var(--text-faint);
+  opacity: 0.7;
+}
+.pipeline-dur--placeholder {
+  visibility: hidden;
+}
+.pipeline-step.active {
+  z-index: 1;
+}
 
 @keyframes pulse-ring {
   0%,
@@ -1326,6 +1364,52 @@ label {
   50% {
     box-shadow: 0 0 0 5px var(--accent-dim);
   }
+}
+
+@keyframes pipeline-dur-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* Full stage timing bars under pipeline */
+.stage-timings {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.stage-timings-row {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr 3.5rem;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.75rem;
+}
+.stage-timings-row .bar-track {
+  height: 6px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+.stage-timings-row .bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--accent), var(--teal, #2dd4bf));
+  min-width: 2px;
+  transition: width 0.35s ease;
+}
+.stage-timings-row.is-active .bar-fill {
+  background: var(--accent);
+  animation: pipeline-dur-pulse 1.2s ease infinite;
+}
+.stage-timings-total {
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
 }
 
 /* ── Timeline ───────────────────────────────────────────────── */
@@ -1839,10 +1923,20 @@ label {
 .connector-icon--brand {
   background: rgba(255, 255, 255, 0.06);
 }
+[data-theme="light"] .connector-icon--brand {
+  background: rgba(15, 23, 42, 0.05);
+}
 .connector-icon--brand svg {
   width: 24px;
   height: 24px;
   display: block;
+}
+/* Monochrome brands (GitHub octocat): follow theme text for contrast */
+.connector-icon--brand-adaptive {
+  color: var(--text);
+}
+.connector-icon--brand-adaptive svg path {
+  fill: currentColor;
 }
 .connector-icon--lucide {
   background: var(--accent-dim);

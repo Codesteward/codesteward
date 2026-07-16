@@ -144,11 +144,20 @@ export function PlatformSettings() {
       <PageHero
         kicker="Install"
         title="Platform"
-        subtitle="Install-wide health, license, and runtime knobs. Separated from tenant org admin."
+        subtitle="Install-wide health, license, and runtime knobs. Separated from tenant org admin. Performance dashboards: Platform ops."
         actions={
-          <Link to="/settings" className="ghost sm" style={{ textDecoration: "none" }}>
-            All settings
-          </Link>
+          <div className="row" style={{ gap: 8 }}>
+            <Link
+              to="/settings/platform/ops"
+              className="ghost sm"
+              style={{ textDecoration: "none" }}
+            >
+              Platform ops
+            </Link>
+            <Link to="/settings" className="ghost sm" style={{ textDecoration: "none" }}>
+              All settings
+            </Link>
+          </div>
         }
       />
 

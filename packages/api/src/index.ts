@@ -7,7 +7,6 @@ export {
 } from "./app.js";
 export { SessionStore, PgSessionStore, createSessionStore } from "./store.js";
 export {
-  FileJobQueue,
   PgJobQueue,
   HybridJobQueue,
   createJobQueue,

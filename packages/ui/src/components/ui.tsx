@@ -187,16 +187,75 @@ export const STAGES = [
   "completed",
 ] as const;
 
-export function StagePipeline({ stage, failed }: { stage: string; failed?: boolean }) {
+/** Optional stages often skipped — dim unless they actually ran. */
+const OPTIONAL_STAGES = new Set(["discourse", "prove", "publish"]);
+
+export function formatDurationMs(ms: number | undefined | null): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  const rem = Math.round(s % 60);
+  return `${m}m ${rem}s`;
+}
+
+export type StagePipelineProps = {
+  stage: string;
+  failed?: boolean;
+  /** Closed stage wall times (from audit.timings or live tracking). */
+  durationsMs?: Record<string, number>;
+  /**
+   * When the current stage was entered (ISO or epoch ms).
+   * Drives live elapsed under the active step.
+   */
+  activeEnteredAt?: string | number | null;
+  /** Stages that actually started (SSE). Optional stages not listed are shown as skipped. */
+  visitedStages?: string[];
+  /** Force re-render for live elapsed (pass Date.now() from a 1s tick). */
+  nowMs?: number;
+};
+
+export function StagePipeline({
+  stage,
+  failed,
+  durationsMs,
+  activeEnteredAt,
+  visitedStages,
+  nowMs,
+}: StagePipelineProps) {
   const idx = STAGES.indexOf(stage as (typeof STAGES)[number]);
-  const activeIdx = stage === "failed" || stage === "cancelled" ? -1 : idx >= 0 ? idx : 0;
+  const activeIdx =
+    stage === "failed" || stage === "cancelled" ? -1 : idx >= 0 ? idx : 0;
+  const visited = new Set(visitedStages ?? []);
+  const now = nowMs ?? Date.now();
+
+  let liveElapsed: string | null = null;
+  if (activeEnteredAt != null && stage !== "completed" && stage !== "failed") {
+    const t0 =
+      typeof activeEnteredAt === "number"
+        ? activeEnteredAt
+        : Date.parse(String(activeEnteredAt));
+    if (Number.isFinite(t0)) {
+      liveElapsed = formatDurationMs(Math.max(0, now - t0));
+    }
+  }
 
   return (
     <div className="pipeline" role="list" aria-label="Review pipeline">
       {STAGES.map((s, i) => {
+        const optional = OPTIONAL_STAGES.has(s);
+        const wasVisited = visited.has(s) || Boolean(durationsMs?.[s]);
+        const isSkippedOptional =
+          optional &&
+          !wasVisited &&
+          (stage === "completed" || (activeIdx >= 0 && i < activeIdx));
+
         let cls = "";
         if (failed && (stage === "failed" || stage === "cancelled")) {
           cls = i === 0 ? "failed" : "";
+        } else if (isSkippedOptional) {
+          cls = "skipped";
         } else if (s === "completed" && stage === "completed") {
           cls = "done";
         } else if (i < activeIdx || stage === "completed") {
@@ -204,10 +263,42 @@ export function StagePipeline({ stage, failed }: { stage: string; failed?: boole
         } else if (i === activeIdx) {
           cls = stage === "completed" ? "done" : "active";
         }
+
+        const dur =
+          cls === "active" && liveElapsed
+            ? liveElapsed
+            : durationsMs?.[s] != null
+              ? formatDurationMs(durationsMs[s])
+              : null;
+
         return (
-          <div key={s} className={`pipeline-step ${cls}`} role="listitem">
-            <div className="pipeline-dot">{cls === "done" ? "✓" : i + 1}</div>
+          <div
+            key={s}
+            className={`pipeline-step ${cls}`}
+            role="listitem"
+            title={
+              isSkippedOptional
+                ? `${s} (skipped)`
+                : dur
+                  ? `${s}: ${dur}`
+                  : s
+            }
+          >
+            <div className="pipeline-dot">
+              {cls === "done" ? "✓" : cls === "skipped" ? "–" : i + 1}
+            </div>
             <div className="pipeline-label">{s}</div>
+            {dur && cls !== "skipped" ? (
+              <div
+                className={`pipeline-dur${cls === "active" ? " pipeline-dur--live" : ""}`}
+              >
+                {cls === "active" ? `· ${dur}` : dur}
+              </div>
+            ) : isSkippedOptional ? (
+              <div className="pipeline-dur pipeline-dur--skip">skip</div>
+            ) : (
+              <div className="pipeline-dur pipeline-dur--placeholder">&nbsp;</div>
+            )}
           </div>
         );
       })}

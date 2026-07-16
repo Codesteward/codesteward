@@ -125,6 +125,7 @@ function createMemoryFindingsStore(filePath?: string): FindingsStore {
         suggestion: candidate.suggestion,
         suggestedFix: candidate.suggestedFix,
         existingCode: candidate.existingCode,
+        reasoning: candidate.reasoning,
         evidence: candidate.evidence ?? [],
         verification: candidate.verification,
         scmCommentId: candidate.scmCommentId,

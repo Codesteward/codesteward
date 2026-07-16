@@ -90,6 +90,10 @@ export const SpecialistRunSchema = z.object({
   /** Graph / tool grounding used */
   usedGraph: z.boolean().optional(),
   stepIndex: z.number().int().nonnegative().optional(),
+  /** True when STEW_SPECIALIST_TIMEOUT_MS (or equivalent) aborted this run. */
+  timedOut: z.boolean().optional(),
+  /** Configured timeout budget that fired (ms). */
+  timeoutMs: z.number().int().nonnegative().optional(),
 });
 export type SpecialistRun = z.infer<typeof SpecialistRunSchema>;
 
@@ -153,12 +157,98 @@ export const ZeroFindingsRationaleSchema = z.object({
     "all_candidates_dropped",
     "units_failed",
     "context_missing",
+    "specialist_timeouts",
     "unknown",
   ]),
   message: z.string(),
   evidence: z.array(z.string()).default([]),
 });
 export type ZeroFindingsRationale = z.infer<typeof ZeroFindingsRationaleSchema>;
+
+/**
+ * Explicit incomplete-review signal when one or more specialists timed out.
+ * Prevents false confidence that a role "looked and found nothing."
+ */
+export const CoverageGapsSchema = z.object({
+  specialistTimeouts: z.number().int().nonnegative().default(0),
+  /** Roles that timed out (may repeat across units). */
+  roles: z.array(z.string()).default([]),
+  /** Human unit labels for context */
+  unitLabels: z.array(z.string()).default([]),
+  message: z.string(),
+  /** True when security (or other high-trust) roles timed out */
+  criticalRolesAffected: z.boolean().default(false),
+});
+export type CoverageGaps = z.infer<typeof CoverageGapsSchema>;
+
+/** One pipeline stage wall-clock (policy → publish). */
+export const StageTimingSchema = z.object({
+  stage: z.string(),
+  startedAt: z.string(),
+  endedAt: z.string().optional(),
+  durationMs: z.number().int().nonnegative().optional(),
+  message: z.string().optional(),
+});
+export type StageTiming = z.infer<typeof StageTimingSchema>;
+
+/** One review unit wall-clock (file batch). */
+export const UnitTimingSchema = z.object({
+  unitId: z.string(),
+  unitLabel: z.string().optional(),
+  startedAt: z.string().optional(),
+  endedAt: z.string().optional(),
+  durationMs: z.number().int().nonnegative().optional(),
+  status: z.string().optional(),
+  roles: z.array(z.string()).optional(),
+  /** Max parallel specialist duration for this unit (when known). */
+  specialistMaxMs: z.number().int().nonnegative().optional(),
+  /** Sum of specialist run durations (overlap ignored — use for cost, not wall). */
+  specialistSumMs: z.number().int().nonnegative().optional(),
+  findingCount: z.number().int().nonnegative().optional(),
+});
+export type UnitTiming = z.infer<typeof UnitTimingSchema>;
+
+/** Rollups for bottleneck analysis without scanning full arrays. */
+export const TimingsSummarySchema = z.object({
+  longestStage: z.string().optional(),
+  longestStageMs: z.number().int().nonnegative().optional(),
+  longestUnitId: z.string().optional(),
+  longestUnitMs: z.number().int().nonnegative().optional(),
+  longestSpecialistRole: z.string().optional(),
+  longestSpecialistMs: z.number().int().nonnegative().optional(),
+  /** Wall times by stage name (closed stages only). */
+  byStageMs: z.record(z.number()).default({}),
+  specialistsMs: z.number().int().nonnegative().optional(),
+  verificationMs: z.number().int().nonnegative().optional(),
+  discourseMs: z.number().int().nonnegative().optional(),
+  judgeMs: z.number().int().nonnegative().optional(),
+  proveMs: z.number().int().nonnegative().optional(),
+  publishMs: z.number().int().nonnegative().optional(),
+  graphMs: z.number().int().nonnegative().optional(),
+  planningMs: z.number().int().nonnegative().optional(),
+  policyMs: z.number().int().nonnegative().optional(),
+  specialistRunsCount: z.number().int().nonnegative().optional(),
+  specialistRunsSumMs: z.number().int().nonnegative().optional(),
+  specialistRunsMaxMs: z.number().int().nonnegative().optional(),
+  toolsCount: z.number().int().nonnegative().optional(),
+  toolsSumMs: z.number().int().nonnegative().optional(),
+  unitCount: z.number().int().nonnegative().optional(),
+});
+export type TimingsSummary = z.infer<typeof TimingsSummarySchema>;
+
+/**
+ * Durable session timing ledger for bottleneck analysis.
+ * Prefer this over replaying event logs.
+ */
+export const SessionTimingsSchema = z.object({
+  sessionStartedAt: z.string(),
+  sessionEndedAt: z.string().optional(),
+  totalDurationMs: z.number().int().nonnegative().optional(),
+  stages: z.array(StageTimingSchema).default([]),
+  units: z.array(UnitTimingSchema).default([]),
+  summary: TimingsSummarySchema.optional(),
+});
+export type SessionTimings = z.infer<typeof SessionTimingsSchema>;
 
 export const SessionAuditSchema = z.object({
   version: z.literal(1),
@@ -174,6 +264,11 @@ export const SessionAuditSchema = z.object({
   }),
   judge: JudgeNoiseSummarySchema.optional(),
   zeroFindings: ZeroFindingsRationaleSchema.optional(),
+  /**
+   * Incomplete specialist coverage (timeouts). Always set when any role hits
+   * STEW_SPECIALIST_TIMEOUT_MS — even if other findings exist.
+   */
+  coverageGaps: CoverageGapsSchema.optional(),
   heal: z
     .object({
       recoveredUnits: z.number().optional(),
@@ -181,6 +276,8 @@ export const SessionAuditSchema = z.object({
       failureCount: z.number().optional(),
     })
     .optional(),
+  /** Stage / unit / specialist timing for bottleneck analysis. */
+  timings: SessionTimingsSchema.optional(),
   completedAt: z.string().optional(),
 });
 export type SessionAudit = z.infer<typeof SessionAuditSchema>;

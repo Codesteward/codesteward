@@ -6,9 +6,8 @@
 #   3. release    — GitHub Release with changelog notes + scan assets
 #
 # Images (GHCR, lowercased repository path):
-#   ghcr.io/<owner>/<repo>              — monorepo app (API + worker)
-#   ghcr.io/<owner>/<repo>/ui           — product UI (nginx)
-#   ghcr.io/<owner>/<repo>/saas-billing — private SaaS billing control plane
+#   ghcr.io/<owner>/<repo>     — monorepo app (API + worker)
+#   ghcr.io/<owner>/<repo>/ui  — product UI (nginx)
 #
 # Cosign keyless signing via GitHub OIDC. No Docker Hub credentials required.
 
@@ -100,7 +99,6 @@ jobs:
           REPO_LC=$(echo "$REPO" | tr '[:upper:]' '[:lower:]')
           echo "IMAGE_APP=${REGISTRY}/${REPO_LC}" >> "$GITHUB_ENV"
           echo "IMAGE_UI=${REGISTRY}/${REPO_LC}/ui" >> "$GITHUB_ENV"
-          echo "IMAGE_BILLING=${REGISTRY}/${REPO_LC}/saas-billing" >> "$GITHUB_ENV"
           echo "REPO_LC=${REPO_LC}" >> "$GITHUB_ENV"
 
       - name: Set up QEMU
@@ -125,16 +123,6 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_UI }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
-
-      - name: Extract Docker metadata (saas-billing)
-        id: meta-billing
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_BILLING }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -225,21 +213,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build and push SaaS billing
-        id: push-billing
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: services/saas-billing/Dockerfile
-          push: true
-          tags: ${{ steps.meta-billing.outputs.tags }}
-          labels: ${{ steps.meta-billing.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
-          provenance: mode=max
-          sbom: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
       # STEP 3 — cosign keyless
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
@@ -248,10 +221,8 @@ jobs:
         env:
           DIGEST_APP: ${{ steps.push-app.outputs.digest }}
           DIGEST_UI: ${{ steps.push-ui.outputs.digest }}
-          DIGEST_BILLING: ${{ steps.push-billing.outputs.digest }}
           TAGS_APP: ${{ steps.meta-app.outputs.tags }}
           TAGS_UI: ${{ steps.meta-ui.outputs.tags }}
-          TAGS_BILLING: ${{ steps.meta-billing.outputs.tags }}
         run: |
           set -euo pipefail
           sign_tags() {
@@ -267,10 +238,8 @@ jobs:
           # metadata-action emits newline-separated tags
           mapfile -t app_tags <<< "$TAGS_APP"
           mapfile -t ui_tags <<< "$TAGS_UI"
-          mapfile -t bill_tags <<< "$TAGS_BILLING"
           sign_tags "$DIGEST_APP" "${app_tags[@]}"
           sign_tags "$DIGEST_UI" "${ui_tags[@]}"
-          sign_tags "$DIGEST_BILLING" "${bill_tags[@]}"
 
       # STEP 4 — SBOM for release assets
       - name: Install syft
@@ -348,7 +317,6 @@ jobs:
             echo '```bash'
             echo "docker pull ghcr.io/${REPO_LC}:${VERSION}"
             echo "docker pull ghcr.io/${REPO_LC}/ui:${VERSION}"
-            echo "docker pull ghcr.io/${REPO_LC}/saas-billing:${VERSION}"
             echo '```'
             echo ""
             echo "App image runs API by default (\`SERVICE=api\`). Worker:"

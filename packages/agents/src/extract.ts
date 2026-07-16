@@ -45,6 +45,10 @@ const LlmFindingSchema = z
     code_fix: z.string().optional(),
     existingCode: z.string().optional(),
     existing_code: z.string().optional(),
+    reasoning: z.string().optional(),
+    rationale: z.string().optional(),
+    analysis: z.string().optional(),
+    thought: z.string().optional(),
     ruleIds: z
       .union([z.array(z.union([z.string(), z.number()])), z.string()])
       .optional(),
@@ -88,6 +92,7 @@ function normalizeFinding(raw: unknown): {
   suggestion?: string;
   suggestedFix?: string;
   existingCode?: string;
+  reasoning?: string;
   ruleIds?: string[];
 } | null {
   // Extremely defensive: if Zod is still picky, accept plain objects with a title
@@ -123,6 +128,7 @@ function normalizeFinding(raw: unknown): {
           o.code_fix,
         ),
         existingCode: pickString(o.existingCode, o.existing_code),
+        reasoning: pickString(o.reasoning, o.rationale, o.analysis, o.thought),
         ruleIds: Array.isArray(o.ruleIds)
           ? o.ruleIds.map(String)
           : typeof o.ruleIds === "string"
@@ -168,6 +174,7 @@ function normalizeFinding(raw: unknown): {
       f.code_fix,
     ),
     existingCode: pickString(f.existingCode, f.existing_code),
+    reasoning: pickString(f.reasoning, f.rationale, f.analysis, f.thought),
     ruleIds,
   };
 }
@@ -333,6 +340,7 @@ function toCandidate(
     suggestion?: string;
     suggestedFix?: string;
     existingCode?: string;
+    reasoning?: string;
     ruleIds?: string[];
   },
   ctx: ExtractLlmOptions,
@@ -355,6 +363,22 @@ function toCandidate(
     f.suggestedFix?.trim() && confidence + 1e-9 >= min
       ? f.suggestedFix
       : undefined;
+  const reasoning = f.reasoning?.trim() || undefined;
+  // Dual form: first-class field for verifier + evidence entry for audit/SARIF/store merges
+  const evidence = reasoning
+    ? [
+        {
+          id: `reasoning-${ctx.role}-${hashShort(f.title + f.path)}`,
+          type: "reasoning" as const,
+          summary: reasoning.slice(0, 400),
+          payload: {
+            role: ctx.role,
+            text: reasoning.slice(0, 4_000),
+          },
+        },
+      ]
+    : [];
+
   return {
     title: f.title,
     body: f.body,
@@ -370,11 +394,20 @@ function toCandidate(
     suggestion: f.suggestion,
     suggestedFix,
     existingCode: f.existingCode,
+    reasoning,
+    evidence,
     ruleIds: f.ruleIds ?? [],
     agents: [ctx.role],
     sessionId: ctx.sessionId,
     repoId: ctx.repoId,
   };
+}
+
+/** Short stable-ish id fragment (no crypto dep — not security-sensitive). */
+function hashShort(s: string): string {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(16).slice(0, 8);
 }
 
 function peelJson(content: string): unknown {

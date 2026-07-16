@@ -69,6 +69,10 @@ research/source/
 # Local workspace scratch
 workspace/
 
+# Local planning / gap / TODO notes — never publish
+.todo/
+.todos/
+
 # Generated eval / smoke artifacts (optional local)
 evals/**/tmp/
 evals/**/*.local.json

@@ -8,7 +8,17 @@ import {
 
 export const EvidenceSchema = z.object({
   id: z.string(),
-  type: z.enum(["graph", "tool", "prove", "sast", "discourse", "diff", "policy"]),
+  type: z.enum([
+    "graph",
+    "tool",
+    "prove",
+    "sast",
+    "discourse",
+    "diff",
+    "policy",
+    /** Structured specialist rationale (not raw multi-turn chat). */
+    "reasoning",
+  ]),
   summary: z.string().optional(),
   payload: z.record(z.unknown()).default({}),
   artifactUri: z.string().optional(),
@@ -55,6 +65,11 @@ export const FindingSchema = z.object({
   suggestedFix: z.string().optional(),
   /** Optional excerpt of current code for grounding / line relocate. */
   existingCode: z.string().optional(),
+  /**
+   * Specialist rationale: why the issue is real, what was checked, and key caveats.
+   * Forwarded to the senior verifier (not raw multi-turn chat transcripts).
+   */
+  reasoning: z.string().optional(),
   evidence: z.array(EvidenceSchema).default([]),
   verification: z
     .object({

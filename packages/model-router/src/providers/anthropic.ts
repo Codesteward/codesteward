@@ -5,6 +5,7 @@ import type {
   ResolvedModelTarget,
   ModelRole,
 } from "../types.js";
+import { fetchWithLlmRetry } from "../llm-retry.js";
 
 /** Anthropic Messages API. */
 export function createAnthropicModel(
@@ -51,19 +52,28 @@ export function createAnthropicModel(
         }));
       }
 
-      const res = await fetch(`${target.baseUrl}/v1/messages`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": target.apiKey,
-          "anthropic-version": "2023-06-01",
+      const res = await fetchWithLlmRetry(
+        `${target.baseUrl}/v1/messages`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": target.apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify(body),
         },
-        body: JSON.stringify(body),
-      });
+        { label: `anthropic/${target.model}` },
+      );
 
       if (!res.ok) {
         const text = await res.text();
-        throw new Error(`Anthropic error ${res.status}: ${text.slice(0, 500)}`);
+        throw new Error(
+          `Anthropic error ${res.status}: ${text.slice(0, 500)}` +
+            (res.status === 429
+              ? " — rate limited after retries; reduce concurrent specialists or raise quota."
+              : ""),
+        );
       }
 
       const data = (await res.json()) as {

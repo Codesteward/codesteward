@@ -35,29 +35,51 @@ export class LocalSandbox implements Sandbox {
   async createSession(opts: CreateSessionOpts): Promise<SandboxSession> {
     const id = createId("sbx");
     const hostDir = join(tmpdir(), "codesteward-sandbox", id);
-    const repoDir = join(hostDir, "repo");
-    // Always create repoDir — spawn(cwd) throws ENOENT if cwd is missing
-    await mkdir(repoDir, { recursive: true });
-    if (opts.repoPath) {
-      try {
-        await cp(opts.repoPath, repoDir, {
-          recursive: true,
-          filter: (src) => !src.includes("node_modules") && !src.includes(".git"),
-        });
-      } catch {
-        // leave empty workdir
+    // Parallel specialists used to each recursively copy the whole tree into /tmp —
+    // that alone can stall a multi-unit review for minutes. Prefer in-place read of
+    // the review worktree unless STEW_SANDBOX_COPY=1 (or Docker isolation needs a bind).
+    const forceCopy =
+      process.env.STEW_SANDBOX_COPY === "1" ||
+      process.env.STEW_SANDBOX_COPY === "true";
+    const useInPlace =
+      Boolean(opts.repoPath) && !forceCopy && !this.useDocker;
+
+    let workdir: string;
+    let sessionHostDir = hostDir;
+    if (useInPlace && opts.repoPath) {
+      workdir = opts.repoPath;
+      sessionHostDir = opts.repoPath;
+    } else {
+      const repoDir = join(hostDir, "repo");
+      // Always create repoDir — spawn(cwd) throws ENOENT if cwd is missing
+      await mkdir(repoDir, { recursive: true });
+      if (opts.repoPath) {
+        try {
+          await cp(opts.repoPath, repoDir, {
+            recursive: true,
+            filter: (src) => !src.includes("node_modules") && !src.includes(".git"),
+          });
+        } catch {
+          // leave empty workdir
+        }
       }
+      workdir = this.useDocker ? "/workspace" : repoDir;
     }
+
     const session: SandboxSession & { hostDir: string } = {
       id,
       provider: this.useDocker ? "docker" : "local",
       repoPath: opts.repoPath,
-      workdir: this.useDocker ? "/workspace" : repoDir,
+      workdir,
       sha: opts.sha,
       status: "ready",
       createdAt: nowIso(),
-      metadata: { hostDir, image: this.image },
-      hostDir,
+      metadata: {
+        hostDir: sessionHostDir,
+        image: this.image,
+        inPlace: useInPlace,
+      },
+      hostDir: sessionHostDir,
     };
     this.sessions.set(id, session);
     return session;

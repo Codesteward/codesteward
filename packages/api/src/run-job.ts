@@ -19,6 +19,17 @@ import { globalConnectorsStore } from "./connectors-store.js";
 
 export type RunJobLog = (msg: string, ...args: unknown[]) => void;
 
+/** Human wall duration for worker logs (matches audit.timings units). */
+function formatDurationMs(ms: number | undefined | null): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "?";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  const rem = Math.round(s % 60);
+  return `${m}m${rem.toString().padStart(2, "0")}s`;
+}
+
 /**
  * Remove cloned session workspace under STEW_WORKSPACE_DIR (primary + cross-repo).
  * Skipped when STEW_WORKSPACE_KEEP=1 or when path is not under the configured root
@@ -431,6 +442,9 @@ export async function runReviewJob(
     console.warn("[run-job] prompt pack unavailable", err);
   }
 
+  /** Wall-clock for stage enter → next stage (mirrors audit.timings in logs). */
+  const stageTrack: { name: string | null; t0: number } = { name: null, t0: 0 };
+
   const orch = createOrchestrator({
     modelRouter,
     graph,
@@ -450,8 +464,20 @@ export async function runReviewJob(
     onEvent: (event) => {
       globalSessionStore.pushEvent(job.sessionId, event);
       if (event.type === "stage") {
+        // Close previous stage with wall duration so logs match metadata.timings
+        if (stageTrack.name && stageTrack.t0 > 0 && stageTrack.name !== event.stage) {
+          const ms = Math.max(0, Date.now() - stageTrack.t0);
+          log(
+            `${job.sessionId} stage=${stageTrack.name} done ${formatDurationMs(ms)} (${ms}ms)`,
+          );
+        }
+        stageTrack.name = event.stage;
+        stageTrack.t0 = Date.now();
         globalSessionStore.update(job.sessionId, { stage: event.stage });
-        log(`${job.sessionId} stage=${event.stage}`);
+        log(
+          `${job.sessionId} stage=${event.stage}` +
+            (event.message ? ` — ${event.message}` : ""),
+        );
       }
       if (event.type === "healing" || event.type === "retry" || event.type === "unit_recovered") {
         log(
@@ -463,6 +489,18 @@ export async function runReviewJob(
       if (event.type === "specialist_run" && event.status === "completed") {
         log(
           `${job.sessionId} specialist ${event.role} findings=${event.findingCount ?? 0} ${event.durationMs ?? "?"}ms`,
+        );
+      }
+      if (
+        event.type === "specialist_run" &&
+        (event.status === "failed" || event.status === "timeout")
+      ) {
+        const tag =
+          event.status === "timeout" || event.timedOut ? "TIMEOUT" : "FAILED";
+        log(
+          `${job.sessionId} specialist ${event.role} ${tag} ${event.durationMs ?? "?"}ms` +
+            (event.timeoutMs ? ` budget=${event.timeoutMs}ms` : "") +
+            (event.error ? ` — ${String(event.error).slice(0, 160)}` : ""),
         );
       }
     },
@@ -530,6 +568,43 @@ export async function runReviewJob(
       await globalQueue.complete?.(job.id);
       // Drop cloned trees for this session (primary + cross-repo under same sessionId dir)
       await cleanSessionWorkspace(job.sessionId, job.repoPath, log);
+    }
+    // Final open stage (e.g. judge → completed without another stage event)
+    if (stageTrack.name && stageTrack.t0 > 0) {
+      const ms = Math.max(0, Date.now() - stageTrack.t0);
+      log(
+        `${job.sessionId} stage=${stageTrack.name} done ${formatDurationMs(ms)} (${ms}ms)`,
+      );
+    }
+    const timings =
+      result.session.audit?.timings ??
+      (result.session.metadata?.timings as
+        | {
+            totalDurationMs?: number;
+            summary?: {
+              byStageMs?: Record<string, number>;
+              longestStage?: string;
+              longestStageMs?: number;
+              longestSpecialistRole?: string;
+              longestSpecialistMs?: number;
+            };
+          }
+        | undefined);
+    if (timings?.summary?.byStageMs) {
+      const parts = Object.entries(timings.summary.byStageMs)
+        .sort((a, b) => b[1] - a[1])
+        .map(([s, ms]) => `${s}=${formatDurationMs(ms)}`)
+        .join(" ");
+      log(
+        `${job.sessionId} timings total=${formatDurationMs(timings.totalDurationMs ?? 0)}` +
+          (timings.summary.longestStage
+            ? ` longest=${timings.summary.longestStage}/${formatDurationMs(timings.summary.longestStageMs ?? 0)}`
+            : "") +
+          (timings.summary.longestSpecialistRole
+            ? ` slowest_role=${timings.summary.longestSpecialistRole}/${formatDurationMs(timings.summary.longestSpecialistMs ?? 0)}`
+            : "") +
+          ` | ${parts}`,
+      );
     }
     log(
       `done job ${job.id} status=${result.session.status} findings=${result.findings.length} verdict=${result.session.verdict} publish=${result.publishedReviewId ?? "-"}`,

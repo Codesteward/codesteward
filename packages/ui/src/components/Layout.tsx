@@ -51,7 +51,18 @@ function buildNavGroups(opts: {
   ];
   // Hide Platform from non-operators (do not show a locked/warning entry)
   if (opts.platformOk) {
-    youItems.push({ to: "/settings/platform", label: "Platform", icon: "platform" });
+    // end: true — otherwise /settings/platform is a prefix match and stays active on /settings/platform/ops
+    youItems.push({
+      to: "/settings/platform",
+      label: "Platform",
+      icon: "platform",
+      end: true,
+    });
+    youItems.push({
+      to: "/settings/platform/ops",
+      label: "Platform ops",
+      icon: "analytics",
+    });
   }
   youItems.push({
     // end: true — otherwise /settings is a prefix match and stays active on

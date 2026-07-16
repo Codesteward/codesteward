@@ -5,6 +5,12 @@ import type { Policy } from "@codesteward/policy";
 import type { Sandbox } from "@codesteward/sandbox";
 import type { SpecialistContext } from "./specialists.js";
 import { runSpecialist } from "./specialists.js";
+import {
+  mapPool,
+  maxSpecialistsPerUnit,
+  specialistTimeoutMs,
+  withTimeout,
+} from "./concurrency.js";
 
 /**
  * Agent runner interface — DeepAgents or simple LLM loop.
@@ -29,24 +35,88 @@ export class SimpleAgentRunner implements AgentRunner {
   constructor(private readonly deps: RunnerDeps) {}
 
   async runSpecialist(role: AgentRole, ctx: SpecialistContext): Promise<FindingCandidate[]> {
-    return runSpecialist(role, {
-      ...ctx,
-      modelRouter: ctx.modelRouter ?? this.deps.modelRouter,
-      graph: ctx.graph ?? this.deps.graph,
-      policy: ctx.policy ?? this.deps.policy,
-    });
+    const timeoutMs = specialistTimeoutMs();
+    const startedAtMs = Date.now();
+    try {
+      return await withTimeout(
+        runSpecialist(role, {
+          ...ctx,
+          modelRouter: ctx.modelRouter ?? this.deps.modelRouter,
+          graph: ctx.graph ?? this.deps.graph,
+          policy: ctx.policy ?? this.deps.policy,
+        }),
+        timeoutMs,
+        `Simple specialist ${role} (${ctx.unit.label})`,
+      );
+    } catch (err) {
+      const { recordSpecialistFailure, isTimeoutError, specialistTimeoutGapFinding } =
+        await import("./specialist-timeout.js");
+      recordSpecialistFailure({
+        audit: ctx.audit,
+        onEvent: ctx.onEvent,
+        sessionId: ctx.sessionId,
+        unitId: ctx.unit.id,
+        unitLabel: ctx.unit.label,
+        role,
+        runner: "simple",
+        err,
+        startedAtMs,
+      });
+      if (isTimeoutError(err)) {
+        return [
+          specialistTimeoutGapFinding({
+            role,
+            unitLabel: ctx.unit.label,
+            unitPaths: ctx.unit.paths,
+            sessionId: ctx.sessionId,
+            repoId: ctx.repoId,
+            timeoutMs,
+            durationMs: Date.now() - startedAtMs,
+            runner: "simple",
+          }),
+        ];
+      }
+      throw err;
+    }
   }
 
   async runUnit(
     roles: AgentRole[],
     ctx: SpecialistContext,
   ): Promise<FindingCandidate[]> {
-    const all: FindingCandidate[] = [];
-    for (const role of roles) {
-      const findings = await this.runSpecialist(role, ctx);
-      all.push(...findings);
-    }
-    return all;
+    // Parallel roles within a unit; barrier until all finish (same as DeepAgents).
+    // Soft-fail per role so one timeout/error does not drop sibling findings.
+    const concurrency = maxSpecialistsPerUnit();
+    const batches = await mapPool(roles, concurrency, async (role) => {
+      try {
+        return await this.runSpecialist(role, ctx);
+      } catch (err) {
+        const {
+          isTimeoutError,
+          specialistTimeoutGapFinding,
+          timeoutMsFromError,
+        } = await import("./specialist-timeout.js");
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[agents] specialist ${role} on ${ctx.unit.label} failed (continuing unit): ${msg}`,
+        );
+        if (isTimeoutError(err)) {
+          return [
+            specialistTimeoutGapFinding({
+              role,
+              unitLabel: ctx.unit.label,
+              unitPaths: ctx.unit.paths,
+              sessionId: ctx.sessionId,
+              repoId: ctx.repoId,
+              timeoutMs: timeoutMsFromError(err) ?? specialistTimeoutMs(),
+              runner: "simple",
+            }),
+          ];
+        }
+        return [];
+      }
+    });
+    return batches.flat();
   }
 }
 
@@ -127,8 +197,7 @@ class DeepAgentRunnerProxy implements AgentRunner {
   ): Promise<FindingCandidate[]> {
     const r = await this.load();
     if (r.runUnit) return r.runUnit(roles, ctx);
-    const all: FindingCandidate[] = [];
-    for (const role of roles) all.push(...(await r.runSpecialist(role, ctx)));
-    return all;
+    const batches = await Promise.all(roles.map((role) => r.runSpecialist(role, ctx)));
+    return batches.flat();
   }
 }

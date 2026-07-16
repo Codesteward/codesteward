@@ -91,7 +91,7 @@ Jobs that blocked `v1.0.0`: **Semgrep**, **zizmor**, **Trivy** (CI + release con
 - **Always update `CHANGELOG.md` (`## [Unreleased]`) when a feature, fix, or behavior change is finished** — do not leave release notes for “later”
 - Runtime knobs: install-wide → Platform runtime (`/v1/platform/runtime-config`); org may override only `STEW_SUGGESTED_CODE_FIXES` when platform leaves it Unset
 - PR mention trigger (webhook `issue_comment`): default **`@codesteward`** via `STEW_MENTION_TOKEN` (override if needed). Example: `@codesteward review`
-- Job queue: **Postgres by default** (`DATABASE_URL`). Optional dispatch broker: `STEW_QUEUE_BROKER=nats|rabbitmq|pulsar` (+ URL) — hybrid SoT+broker for KEDA; see `deploy/compose/docker-compose.queue.yml`
+- Job queue: **Postgres only** (`DATABASE_URL` required). Optional dispatch broker: `STEW_QUEUE_BROKER=nats|rabbitmq|pulsar` (+ URL) — wake-up only, not SoT; see `deploy/compose/docker-compose.queue.yml`
 
 ## Self-host auth + connectors
 
@@ -105,5 +105,5 @@ Jobs that blocked `v1.0.0`: **Semgrep**, **zizmor**, **Trivy** (CI + release con
 
 ## Architecture
 
-See monorepo layout in root `README.md`, `docs/ENTERPRISE_GAPS.md`, and `deploy/helm/codesteward/README.md`.
-Local design notes may also live under `research/` when present (not always published).
+See monorepo layout in root `README.md` and `deploy/helm/codesteward/README.md`.
+Local planning / gap notes: **`.todo/`** (gitignored — do not commit). Research scratch may live under `research/` (also gitignored).

@@ -1,6 +1,4 @@
-import { jobId, nowIso, type ReviewJob } from "@codesteward/core";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import type { ReviewJob } from "@codesteward/core";
 import { randomBytes } from "node:crypto";
 import {
   createJobBroker,
@@ -29,81 +27,6 @@ export interface JobQueue {
   claimById?(id: string): Promise<ReviewJob | undefined>;
   /** Diagnostics */
   describe?(): string;
-}
-
-const defaultQueuePath = () =>
-  process.env.JOB_QUEUE_PATH ??
-  `${process.env.STEW_DATA_DIR ?? ".steward-data"}/jobs.json`;
-
-/** In-memory + file-backed queue for demo. */
-export class FileJobQueue implements JobQueue {
-  private jobs: ReviewJob[] = [];
-  private readonly filePath: string;
-
-  constructor(filePath?: string) {
-    this.filePath = filePath ?? defaultQueuePath();
-  }
-
-  describe() {
-    return `file:${this.filePath}`;
-  }
-
-  async load() {
-    try {
-      const raw = await readFile(this.filePath, "utf8");
-      this.jobs = JSON.parse(raw) as ReviewJob[];
-    } catch {
-      this.jobs = [];
-    }
-  }
-
-  private async save() {
-    await mkdir(dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, JSON.stringify(this.jobs, null, 2), "utf8");
-  }
-
-  async enqueue(partial: EnqueueJob): Promise<ReviewJob> {
-    await this.load();
-    const job: ReviewJob = {
-      ...partial,
-      id: partial.id ?? jobId(),
-      enqueuedAt: nowIso(),
-      attempts: 0,
-      tenantId: partial.tenantId ?? "local",
-      riskTier: partial.riskTier ?? "full",
-      depth: partial.depth ?? "normal",
-      crossRepo: partial.crossRepo ?? true,
-    };
-    this.jobs.push(job);
-    await this.save();
-    return job;
-  }
-
-  async dequeue(): Promise<ReviewJob | undefined> {
-    await this.load();
-    const job = this.jobs.shift();
-    if (job) {
-      job.attempts += 1;
-      await this.save();
-    }
-    return job;
-  }
-
-  async claimById(id: string): Promise<ReviewJob | undefined> {
-    await this.load();
-    const idx = this.jobs.findIndex((j) => j.id === id);
-    if (idx < 0) return undefined;
-    const [job] = this.jobs.splice(idx, 1);
-    if (!job) return undefined;
-    job.attempts += 1;
-    await this.save();
-    return job;
-  }
-
-  async list(): Promise<ReviewJob[]> {
-    await this.load();
-    return [...this.jobs];
-  }
 }
 
 /** Postgres jobs table with FOR UPDATE SKIP LOCKED claim. */
@@ -195,7 +118,7 @@ export class PgJobQueue implements JobQueue {
 }
 
 /**
- * Durable SoT (Postgres or file) + optional broker for dispatch / KEDA.
+ * Durable Postgres SoT + optional broker for dispatch / KEDA.
  * - enqueue: write SoT first, then publish (best-effort)
  * - dequeue: prefer broker; claim ownership in SoT; fall back to SoT claim
  * - complete/fail: SoT + broker ack
@@ -296,18 +219,27 @@ export class HybridJobQueue implements JobQueue {
   }
 }
 
-function createSoTQueue(): JobQueue {
-  if (process.env.DATABASE_URL?.trim()) {
-    return new PgJobQueue();
+/**
+ * Job source of truth is always Postgres (`DATABASE_URL`).
+ * A file-backed queue is intentionally not supported — it pins state to the
+ * process filesystem and breaks horizontal scale / restarts.
+ */
+function createSoTQueue(): PgJobQueue {
+  if (!process.env.DATABASE_URL?.trim()) {
+    throw new Error(
+      "DATABASE_URL is required for the review job queue. " +
+        "Postgres is the only supported job SoT (FOR UPDATE SKIP LOCKED). " +
+        "Optional STEW_QUEUE_BROKER=nats|rabbitmq|pulsar only wakes workers; it does not store jobs.",
+    );
   }
-  return new FileJobQueue();
+  return new PgJobQueue();
 }
 
 /**
  * Factory:
- * - Default: Postgres if DATABASE_URL else file (minimal single-backend).
- * - Optional broker: STEW_QUEUE_BROKER=nats|rabbitmq|pulsar (or infer from NATS_URL / RABBITMQ_URL / PULSAR_URL).
- *   Hybrid keeps SoT + publishes for KEDA-friendly worker wake-up.
+ * - SoT: Postgres only (`DATABASE_URL` required).
+ * - Optional broker: STEW_QUEUE_BROKER=nats|rabbitmq|pulsar (or infer from NATS_URL /
+ *   RABBITMQ_URL / PULSAR_URL). Hybrid keeps Postgres + publishes for KEDA wake-up.
  */
 export function createJobQueue(): JobQueue {
   const sot = createSoTQueue();

@@ -6,6 +6,7 @@ import type {
   ResolvedModelTarget,
   ModelRole,
 } from "../types.js";
+import { fetchWithLlmRetry } from "../llm-retry.js";
 
 /** OpenAI Chat Completions API (also xAI, LiteLLM, OpenRouter, openai-compatible). */
 export function createOpenAICompatModel(
@@ -115,22 +116,25 @@ export function createOpenAICompatModel(
         headers["X-OpenRouter-Title"] = title;
       }
 
-      let res = await fetch(url, {
+      const fetchInit = (): RequestInit => ({
         method: "POST",
         headers,
         body: JSON.stringify(body),
       });
 
-      // Some gateways reject logprobs — retry once without them.
+      // Retries 429 / 5xx / network with exponential backoff (+ Retry-After)
+      let res = await fetchWithLlmRetry(url, fetchInit(), {
+        label: `${provider}/${target.model}`,
+      });
+
+      // Some gateways reject logprobs — retry once without them (not a rate-limit path).
       if (!res.ok && wantLogprobs) {
         const errText = await res.text();
         if (/logprob/i.test(errText) || res.status === 400) {
           delete body.logprobs;
           delete body.top_logprobs;
-          res = await fetch(url, {
-            method: "POST",
-            headers,
-            body: JSON.stringify(body),
+          res = await fetchWithLlmRetry(url, fetchInit(), {
+            label: `${provider}/${target.model}:no-logprobs`,
           });
         } else {
           throw new Error(
@@ -139,7 +143,9 @@ export function createOpenAICompatModel(
                 ? provider === "openrouter"
                   ? " — check org OpenRouter API key under Models (or OPENROUTER_API_KEY)."
                   : " — check org LiteLLM/OpenAI API key under Models (not host env alone)."
-                : ""),
+                : res.status === 429
+                  ? " — rate limited after retries; reduce STEW_MAX_CONCURRENT / STEW_MAX_SPECIALISTS_PER_UNIT or raise provider quota."
+                  : ""),
           );
         }
       }
@@ -152,7 +158,9 @@ export function createOpenAICompatModel(
               ? provider === "openrouter"
                 ? " — check org OpenRouter API key under Models (or OPENROUTER_API_KEY)."
                 : " — check org LiteLLM/OpenAI API key under Models (not host env alone)."
-              : ""),
+              : res.status === 429
+                ? " — rate limited after retries; reduce STEW_MAX_CONCURRENT / STEW_MAX_SPECIALISTS_PER_UNIT or raise provider quota."
+                : ""),
         );
       }
 

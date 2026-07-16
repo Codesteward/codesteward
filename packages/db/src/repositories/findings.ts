@@ -45,6 +45,7 @@ interface FindingRow {
   suggestion: string | null;
   suggested_fix: string | null;
   existing_code: string | null;
+  reasoning: string | null;
   evidence: unknown;
   verification: unknown;
   scm_comment_id: string | null;
@@ -81,6 +82,7 @@ function mapFinding(row: FindingRow): Finding {
     suggestion: row.suggestion ?? undefined,
     suggestedFix: row.suggested_fix ?? undefined,
     existingCode: row.existing_code ?? undefined,
+    reasoning: row.reasoning ?? undefined,
     evidence: asArray(row.evidence) as Finding["evidence"],
     verification: row.verification
       ? (asRecord(row.verification) as Finding["verification"])
@@ -143,6 +145,7 @@ export class FindingsRepository {
       suggestion: candidate.suggestion,
       suggestedFix: candidate.suggestedFix,
       existingCode: candidate.existingCode,
+      reasoning: candidate.reasoning,
       evidence: candidate.evidence ?? [],
       verification: candidate.verification,
       scmCommentId: candidate.scmCommentId,
@@ -161,14 +164,14 @@ export class FindingsRepository {
         id, session_id, org_id, repo_id, tenant_id, path, start_line, end_line,
         symbol_id, title, body, category, severity, confidence, model_confidence, token_confidence,
         fingerprint, status,
-        agents, rule_ids, suggestion, suggested_fix, existing_code, evidence, verification, scm_comment_id,
+        agents, rule_ids, suggestion, suggested_fix, existing_code, reasoning, evidence, verification, scm_comment_id,
         cross_repo_origin_repo_id, tags, created_at, updated_at
       ) VALUES (
         $1,$2,$3,$4,$5,$6,$7,$8,
         $9,$10,$11,$12,$13,$14,$15,$16,
         $17,$18,
-        $19::jsonb,$20::jsonb,$21,$22,$23,$24::jsonb,$25::jsonb,$26,
-        $27,$28::jsonb,$29,$30
+        $19::jsonb,$20::jsonb,$21,$22,$23,$24,$25::jsonb,$26::jsonb,$27,
+        $28,$29::jsonb,$30,$31
       )
       ON CONFLICT (id) DO NOTHING`,
       [
@@ -195,6 +198,7 @@ export class FindingsRepository {
         finding.suggestion ?? null,
         finding.suggestedFix ?? null,
         finding.existingCode ?? null,
+        finding.reasoning ?? null,
         jsonParam(finding.evidence),
         finding.verification ? jsonParam(finding.verification) : null,
         finding.scmCommentId ?? null,
@@ -227,9 +231,9 @@ export class FindingsRepository {
         confidence = $14, model_confidence = $15, token_confidence = $16,
         fingerprint = $17, status = $18,
         agents = $19::jsonb, rule_ids = $20::jsonb, suggestion = $21,
-        suggested_fix = $22, existing_code = $23,
-        evidence = $24::jsonb, verification = $25::jsonb, scm_comment_id = $26,
-        cross_repo_origin_repo_id = $27, tags = $28::jsonb, updated_at = $29
+        suggested_fix = $22, existing_code = $23, reasoning = $24,
+        evidence = $25::jsonb, verification = $26::jsonb, scm_comment_id = $27,
+        cross_repo_origin_repo_id = $28, tags = $29::jsonb, updated_at = $30
       WHERE id = $1`,
       [
         next.id,
@@ -255,6 +259,7 @@ export class FindingsRepository {
         next.suggestion ?? null,
         next.suggestedFix ?? null,
         next.existingCode ?? null,
+        next.reasoning ?? null,
         jsonParam(next.evidence),
         next.verification ? jsonParam(next.verification) : null,
         next.scmCommentId ?? null,

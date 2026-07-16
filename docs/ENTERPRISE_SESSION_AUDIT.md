@@ -25,6 +25,7 @@ SessionAudit
   specialistRuns[]: SpecialistRun  # one per subagent step
   tools: ToolTraceSummary          # graph/sandbox calls
   judge: JudgeNoiseSummary
+  timings?: SessionTimings         # wall clocks for bottleneck analysis
   zeroFindings?: …
   heal?: …
 
@@ -37,10 +38,17 @@ SpecialistRun (per subagent step)
   avgConfidence
   responseSha256, responseExcerpt (redacted)
   stepIndex
+
+SessionTimings
+  sessionStartedAt, sessionEndedAt, totalDurationMs
+  stages[]: { stage, startedAt, endedAt, durationMs, message }
+  units[]:  { unitId, label, durationMs, roles, specialistMaxMs, status }
+  summary:  longestStage/Unit/Specialist, byStageMs, specialistRunsSumMs, toolsSumMs
 ```
 
-Stored on `review_sessions.metadata.audit` (+ live `session.audit`).
-Report: `metadata.report.markdown` includes **Subagent / specialist audit trail**.
+Stored on `review_sessions.metadata.audit` (+ live `session.audit`).  
+Also denormalized as `metadata.timings` for analytics without unpacking the full audit.  
+Report: `metadata.report.markdown` includes **Timing / bottlenecks** + **Subagent / specialist audit trail**.
 
 ## Resume / self-heal after worker crash
 

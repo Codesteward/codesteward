@@ -47,9 +47,14 @@ async function req(path, init = {}) {
 }
 
 async function startEmbeddedApi() {
+  if (!process.env.DATABASE_URL?.trim()) {
+    throw new Error(
+      "DATABASE_URL is required for embedded category acceptance (Postgres is the job queue SoT). " +
+        "Point at a local Postgres or set API_URL to a running stack (compose/category).",
+    );
+  }
   dataDir = mkdtempSync(join(tmpdir(), "stew-accept-"));
   process.env.STEW_DATA_DIR = dataDir;
-  delete process.env.DATABASE_URL; // force file store isolation for acceptance
   process.env.STEW_API_KEY = "accept-test-key";
   process.env.STEW_SECRETS_KEY =
     process.env.STEW_SECRETS_KEY ??

@@ -17,6 +17,12 @@ import type { SpecialistContext } from "./specialists.js";
 import { renderSpecialistSystem, renderSpecialistUser } from "./prompt-pack.js";
 import { createGraphTools } from "./tools/graph-tools.js";
 import { createSandboxTools } from "./tools/sandbox-tools.js";
+import {
+  mapPool,
+  maxSpecialistsPerUnit,
+  specialistTimeoutMs,
+  withTimeout,
+} from "./concurrency.js";
 
 export interface DeepAgentRunnerOptions extends RunnerDeps {
   sandbox?: Sandbox;
@@ -37,12 +43,25 @@ async function resolveDeepAgentsModel(
   try {
     const target = resolveModelForRole(role as never, router.getConfig());
     const provider = String(target.provider ?? "openai").toLowerCase();
+    // Cap LangChain internal retries — default can be high and look like a hang under 429.
+    const maxRetries = (() => {
+      const n = Number(process.env.STEW_LLM_MAX_RETRIES ?? 4);
+      return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 4;
+    })();
+    // Per-request timeout (ms) so a single tool-step LLM call cannot hang forever.
+    const requestTimeout = (() => {
+      const n = Number(process.env.STEW_LLM_REQUEST_TIMEOUT_MS ?? 120_000);
+      return Number.isFinite(n) && n > 0 ? n : 120_000;
+    })();
+
     if (provider === "anthropic") {
       const { ChatAnthropic } = await import("@langchain/anthropic");
       return new ChatAnthropic({
         model: target.model,
         anthropicApiKey: target.apiKey,
-      });
+        maxRetries,
+        timeout: requestTimeout,
+      } as ConstructorParameters<typeof ChatAnthropic>[0]);
     }
     const { ChatOpenAI } = await import("@langchain/openai");
     const baseURL = target.baseUrl
@@ -77,7 +96,10 @@ async function resolveDeepAgentsModel(
           ? { defaultHeaders }
           : undefined,
       temperature: isGpt5Family ? 1 : 0.2,
-    });
+      maxRetries,
+      // Bound each model call; overall specialist still has STEW_SPECIALIST_TIMEOUT_MS
+      timeout: requestTimeout,
+    } as ConstructorParameters<typeof ChatOpenAI>[0]);
   } catch (err) {
     console.warn("[agents] resolveDeepAgentsModel failed, using string model", err);
   }
@@ -180,6 +202,30 @@ export class DeepAgentRunner implements AgentRunner {
       model: modelLabel,
     });
 
+    const { emitSpecialistProgress, startSpecialistHeartbeat } = await import(
+      "./specialist-progress.js"
+    );
+    const startedAtMs = Date.now();
+    emitSpecialistProgress(ctx.onEvent, {
+      sessionId: ctx.sessionId,
+      unitId: unit.id,
+      unitLabel: unit.label,
+      role,
+      status: "started",
+      model: modelLabel,
+      runner: "deepagents",
+    });
+    const stopHeartbeat = startSpecialistHeartbeat({
+      onEvent: ctx.onEvent,
+      sessionId: ctx.sessionId,
+      unitId: unit.id,
+      unitLabel: unit.label,
+      role,
+      model: modelLabel,
+      runner: "deepagents",
+      startedAtMs,
+    });
+
     let sandboxSessionId: string | undefined;
     try {
       // Prefer review-bound tree (clone/mount from job), not host REPO_PATH alone
@@ -245,9 +291,17 @@ export class DeepAgentRunner implements AgentRunner {
       const agentMaybe = this.createDeepAgent(agentArgs);
       const agent = await Promise.resolve(agentMaybe);
 
-      const result = await agent.invoke({
-        messages: [{ role: "user", content: user }],
-      });
+      const timeoutMs = specialistTimeoutMs();
+      console.info(
+        `[agents] deepagent start role=${role} unit=${unit.label} timeoutMs=${timeoutMs}`,
+      );
+      const result = await withTimeout(
+        agent.invoke({
+          messages: [{ role: "user", content: user }],
+        }),
+        timeoutMs,
+        `DeepAgent specialist ${role} (${unit.label})`,
+      );
 
       // DeepAgents bypasses ModelRouter.complete — fold LangChain usage into session budget
       try {
@@ -338,16 +392,17 @@ export class DeepAgentRunner implements AgentRunner {
           findingsSummary,
         });
       }
-      void ctx.onEvent?.({
-        type: "specialist_run",
+      stopHeartbeat();
+      emitSpecialistProgress(ctx.onEvent, {
         sessionId: ctx.sessionId,
         unitId: unit.id,
+        unitLabel: unit.label,
         role,
         status: "completed",
         model: modelLabel,
-        findingCount: findings.length,
         runner: "deepagents",
-        ts: new Date().toISOString(),
+        findingCount: findings.length,
+        durationMs: Date.now() - startedAtMs,
       });
       // Mark tool-using path for evals/product metrics (K11)
       for (const f of findings) {
@@ -364,20 +419,46 @@ export class DeepAgentRunner implements AgentRunner {
       }
       return findings;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (runId && ctx.audit) {
-        ctx.audit.endRun(runId, {
-          status: "error",
-          findingCount: 0,
-          error: msg,
-        });
+      stopHeartbeat();
+      const { recordSpecialistFailure, isTimeoutError, specialistTimeoutGapFinding } =
+        await import("./specialist-timeout.js");
+      const fail = recordSpecialistFailure({
+        audit: ctx.audit,
+        onEvent: ctx.onEvent,
+        sessionId: ctx.sessionId,
+        unitId: unit.id,
+        unitLabel: unit.label,
+        role,
+        model: modelLabel,
+        runner: "deepagents",
+        err,
+        startedAtMs,
+        runId,
+      });
+      // Timeouts: do not waste another full simple run; surface coverage gap instead
+      if (isTimeoutError(err)) {
+        console.warn(
+          `[agents] DeepAgent specialist ${role} TIMED OUT after ${fail.durationMs}ms (budget ${fail.timeoutMs ?? "?"}ms) unit=${unit.label}`,
+        );
+        return [
+          specialistTimeoutGapFinding({
+            role,
+            unitLabel: unit.label,
+            unitPaths: unit.paths,
+            sessionId: ctx.sessionId,
+            repoId: ctx.repoId,
+            timeoutMs: fail.timeoutMs ?? specialistTimeoutMs(),
+            durationMs: fail.durationMs,
+            runner: "deepagents",
+          }),
+        ];
       }
       if (this.requireToolAgents() && process.env.STEW_USE_DEEPAGENTS !== "0") {
         throw new Error(
-          `DeepAgent specialist ${role} failed under tool-agent requirement (no Simple fallback): ${msg}`,
+          `DeepAgent specialist ${role} failed under tool-agent requirement (no Simple fallback): ${fail.message}`,
         );
       }
-      console.warn(`[agents] DeepAgent specialist ${role} failed, fallback:`, msg);
+      console.warn(`[agents] DeepAgent specialist ${role} failed, fallback:`, fail.message);
       return this.fallback.runSpecialist(role, {
         ...ctx,
         runnerKind: "simple",
@@ -397,11 +478,39 @@ export class DeepAgentRunner implements AgentRunner {
     roles: AgentRole[],
     ctx: SpecialistContext,
   ): Promise<FindingCandidate[]> {
-    const all: FindingCandidate[] = [];
-    // Parallel specialists within unit budget
-    const batches = await Promise.all(roles.map((role) => this.runSpecialist(role, ctx)));
-    for (const b of batches) all.push(...b);
-    return all;
+    const concurrency = maxSpecialistsPerUnit();
+    // Parallel roles with cap; each runSpecialist has its own timeout so one hang cannot block the unit forever
+    const batches = await mapPool(roles, concurrency, async (role) => {
+      try {
+        return await this.runSpecialist(role, ctx);
+      } catch (err) {
+        const {
+          isTimeoutError,
+          specialistTimeoutGapFinding,
+          timeoutMsFromError,
+        } = await import("./specialist-timeout.js");
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[agents] specialist ${role} on ${ctx.unit.label} failed (continuing unit): ${msg}`,
+        );
+        // Soft-fail: other roles' findings still count; timeouts leave a coverage-gap finding
+        if (isTimeoutError(err)) {
+          return [
+            specialistTimeoutGapFinding({
+              role,
+              unitLabel: ctx.unit.label,
+              unitPaths: ctx.unit.paths,
+              sessionId: ctx.sessionId,
+              repoId: ctx.repoId,
+              timeoutMs: timeoutMsFromError(err) ?? specialistTimeoutMs(),
+              runner: "deepagents",
+            }),
+          ];
+        }
+        return [];
+      }
+    });
+    return batches.flat();
   }
 }
 

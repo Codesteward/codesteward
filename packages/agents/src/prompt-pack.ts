@@ -68,17 +68,24 @@ export type PromptRenderVars = {
   [key: string]: string | undefined;
 };
 
+const REASONING_CONTRACT =
+  "For each finding include **reasoning** (2–6 sentences): why this is a real issue, what you checked " +
+  "(code paths, callers, guards), and any caveats. This is forwarded to a senior verifier — " +
+  "not a raw chat log, but your structured thought process. Omit only if truly nothing to justify.";
+
 const OUTPUT_FORMAT_BASE =
   'Respond ONLY with JSON: {"findings":[...],"emptyScanConfidence":0.0-1.0}. ' +
-  'Each finding: {"title","body","path","startLine","endLine","category","severity","confidence","suggestion","ruleIds","existingCode"}. ' +
+  'Each finding: {"title","body","path","startLine","endLine","category","severity","confidence","suggestion","ruleIds","existingCode","reasoning"}. ' +
   "Per-finding confidence = your self-assessed certainty 0–1 (diagnostic only; the product computes its own evidence-based score). " +
-  "When findings is empty, always set emptyScanConfidence 0–1 for how sure you are that nothing actionable was missed in the packed context.";
+  REASONING_CONTRACT +
+  " When findings is empty, always set emptyScanConfidence 0–1 for how sure you are that nothing actionable was missed in the packed context.";
 
 const OUTPUT_FORMAT_WITH_CODE_FIX =
   'Respond ONLY with JSON: {"findings":[...],"emptyScanConfidence":0.0-1.0}. ' +
-  'Each finding: {"title","body","path","startLine","endLine","category","severity","confidence","suggestion","suggestedFix","existingCode","ruleIds"}. ' +
+  'Each finding: {"title","body","path","startLine","endLine","category","severity","confidence","suggestion","suggestedFix","existingCode","ruleIds","reasoning"}. ' +
   "Per-finding confidence = your self-assessed certainty 0–1 (diagnostic only; the product computes its own evidence-based score). " +
-  "When findings is empty, always set emptyScanConfidence 0–1 for how sure you are that nothing actionable was missed. " +
+  REASONING_CONTRACT +
+  " When findings is empty, always set emptyScanConfidence 0–1 for how sure you are that nothing actionable was missed. " +
   "For each finding: suggestion = short plain-language guidance; suggestedFix = the concrete code that would fix the issue " +
   "(a drop-in replacement snippet for the cited lines, or a minimal multi-line fragment — not a full file rewrite). " +
   "existingCode = the current lines being replaced when helpful for grounding. " +
@@ -147,7 +154,9 @@ export const DEFAULT_PERSONAS: Record<string, string> = {
   judge:
     "You are the judge. Deduplicate findings, cap nits, enforce severity floor, and produce the final list.",
   verifier:
-    "You are the verifier. For each finding decide keep, drop, or downgrade with a short reason.",
+    "You are a principal SWE / senior code-review lead. Specialists already proposed findings in parallel with structured reasoning. " +
+    "Judge each claim for real-world correctness: keep high-signal issues, drop false positives and low-value nits, adjust severity when overstated. " +
+    "Use specialist reasoning + packed code context; do not invent files or APIs.",
   coordinator:
     "You coordinate specialist agents for a code review. Plan units and merge results.",
 };

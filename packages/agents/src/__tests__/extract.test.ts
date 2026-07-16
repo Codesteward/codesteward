@@ -152,6 +152,34 @@ describe("extractFindingsFromLlm", () => {
   });
 });
 
+
+  it("extracts structured reasoning and evidence.reasoning entry", () => {
+    const content = JSON.stringify({
+      findings: [
+        {
+          title: "auth bypass",
+          path: "api.ts",
+          startLine: 3,
+          body: "Missing auth middleware on admin route.",
+          confidence: 0.8,
+          reasoning:
+            "Route registered without requireAuth; graph shows handlers reachable from public router.",
+        },
+        {
+          title: "alias rationale",
+          path: "b.ts",
+          rationale: "Checked null branch; crash when user is undefined.",
+        },
+      ],
+    });
+    const out = extractFindingsFromLlm(content, { role: "security" });
+    assert.equal(out.length, 2);
+    assert.ok(out[0]!.reasoning?.includes("requireAuth"));
+    assert.equal(out[0]!.evidence?.[0]?.type, "reasoning");
+    assert.equal(out[0]!.evidence?.[0]?.payload?.role, "security");
+    assert.ok(out[1]!.reasoning?.includes("null branch"));
+  });
+
 describe("scoreProductConfidence", () => {
   it("does not treat model self-score as product score", () => {
     const highModel = scoreProductConfidence({

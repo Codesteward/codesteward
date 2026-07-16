@@ -117,18 +117,24 @@ export const ProgressEventSchema = z.discriminatedUnion("type", [
     message: z.string().optional(),
     ts: z.string(),
   }),
-  /** Specialist started or finished. */
+  /** Specialist started, heartbeat (running), finished, or failed. */
   z.object({
     type: z.literal("specialist_run"),
     sessionId: z.string(),
     unitId: z.string(),
+    unitLabel: z.string().optional(),
     role: z.string(),
-    status: z.enum(["started", "completed", "failed"]),
+    status: z.enum(["started", "running", "completed", "failed", "timeout"]),
     model: z.string().optional(),
     findingCount: z.number().optional(),
     durationMs: z.number().optional(),
     error: z.string().optional(),
     runner: z.string().optional(),
+    /** Human line for heartbeats, e.g. "still running · 6m 12s" */
+    message: z.string().optional(),
+    /** True when the specialist hit STEW_SPECIALIST_TIMEOUT_MS */
+    timedOut: z.boolean().optional(),
+    timeoutMs: z.number().optional(),
     ts: z.string(),
   }),
   /** Compact end-of-run audit summary. */
@@ -140,6 +146,9 @@ export const ProgressEventSchema = z.discriminatedUnion("type", [
     toolCalls: z.number().optional(),
     zeroFindingsReason: z.string().optional(),
     message: z.string().optional(),
+    totalDurationMs: z.number().optional(),
+    longestStage: z.string().optional(),
+    longestStageMs: z.number().optional(),
     ts: z.string(),
   }),
   /** Human-readable session report ready for UI / export. */

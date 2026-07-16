@@ -6,7 +6,7 @@ Production deployment with Neo4j/JanusGraph graph, API, UI, and **horizontally s
 
 | Requirement | How |
 |-------------|-----|
-| **DATABASE_URL** | **Required.** Set `secrets.databaseUrl` (or enable `database.enabled` for in-cluster Postgres). Without it, multi-replica API/workers corrupt file queues. |
+| **DATABASE_URL** | **Required.** Set `secrets.databaseUrl` (or enable `database.enabled` for in-cluster Postgres). Job queue SoT is Postgres only; API/worker refuse to start without it. |
 | **STEW_API_KEY** | Strongly recommended. Set `secrets.apiKey`. When unset, API is open (dev mode). |
 | **Graph backend** | `graph.backend`: `neo4j` (default) or `janusgraph`. Wire external DB or use compose profiles. |
 | **Sandbox** | Default `sandbox.provider: null`. Use `local`/`docker` for Prove; `k8s` only when workers have kubectl + RBAC. |

@@ -1041,7 +1041,72 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ values }),
     }),
+  /** Install-wide performance analytics (platform operators only). */
+  platformAnalytics: (days = 14) =>
+    req<PlatformAnalytics>(`/v1/platform/analytics?days=${days}`),
 };
+
+export interface PlatformAnalytics {
+  windowDays: number;
+  generatedAt: string;
+  sessions: {
+    total: number;
+    completed: number;
+    failed: number;
+    running: number;
+    completedWithErrors: number;
+    cancelled: number;
+    byMode: Record<string, number>;
+    byStage: Record<string, number>;
+    successRate: number | null;
+  };
+  latency: {
+    sampleSize: number;
+    p50Ms: number | null;
+    p95Ms: number | null;
+    avgMs: number | null;
+    maxMs: number | null;
+    byStageAvgMs: Record<string, number>;
+    longestStages: Array<{ stage: string; avgMs: number; samples: number }>;
+  };
+  specialists: {
+    runs: number;
+    avgMs: number | null;
+    maxMs: number | null;
+    byRole: Array<{
+      role: string;
+      runs: number;
+      avgMs: number | null;
+      maxMs: number | null;
+      errorRate: number | null;
+    }>;
+  };
+  workers: {
+    jobsPending: number;
+    jobsRunning: number;
+    jobsDead: number;
+    jobsCompletedSample: number;
+    distinctWorkers: number;
+    workerIds: string[];
+    inlineWorker: WorkerStatus & { hint?: string; mode?: string };
+  };
+  tokens: {
+    totalPrompt: number;
+    totalCompletion: number;
+    total: number;
+    estimatedCostUsd: number | null;
+    sessionsWithUsage: number;
+  };
+  recentSlow: Array<{
+    sessionId: string;
+    repoId: string;
+    mode: string;
+    totalDurationMs: number;
+    longestStage?: string;
+    status: string;
+    completedAt?: string;
+  }>;
+}
 
 export interface RuntimeConfigEntry {
   key: string;
@@ -1265,6 +1330,8 @@ export interface SpecialistRunAudit {
   avgConfidence?: number;
   usedGraph?: boolean;
   stepIndex?: number;
+  timedOut?: boolean;
+  timeoutMs?: number;
   findingsSummary?: Array<{
     title: string;
     severity?: string;
@@ -1309,10 +1376,59 @@ export interface SessionAudit {
     message: string;
     evidence?: string[];
   };
+  /** Incomplete specialist coverage (timeouts) — not a clean empty scan for those roles */
+  coverageGaps?: {
+    specialistTimeouts: number;
+    roles: string[];
+    unitLabels?: string[];
+    message: string;
+    criticalRolesAffected?: boolean;
+  };
   heal?: {
     recoveredUnits?: number;
     failedUnits?: number;
     failureCount?: number;
+  };
+  /** Stage / unit wall clocks for bottleneck analysis */
+  timings?: {
+    sessionStartedAt: string;
+    sessionEndedAt?: string;
+    totalDurationMs?: number;
+    stages?: Array<{
+      stage: string;
+      startedAt: string;
+      endedAt?: string;
+      durationMs?: number;
+      message?: string;
+    }>;
+    units?: Array<{
+      unitId: string;
+      unitLabel?: string;
+      startedAt?: string;
+      endedAt?: string;
+      durationMs?: number;
+      status?: string;
+      roles?: string[];
+      specialistMaxMs?: number;
+      specialistSumMs?: number;
+      findingCount?: number;
+    }>;
+    summary?: {
+      longestStage?: string;
+      longestStageMs?: number;
+      longestUnitId?: string;
+      longestUnitMs?: number;
+      longestSpecialistRole?: string;
+      longestSpecialistMs?: number;
+      byStageMs?: Record<string, number>;
+      specialistsMs?: number;
+      verificationMs?: number;
+      specialistRunsCount?: number;
+      specialistRunsSumMs?: number;
+      specialistRunsMaxMs?: number;
+      toolsSumMs?: number;
+      unitCount?: number;
+    };
   };
   completedAt?: string;
 }
@@ -1540,9 +1656,16 @@ export interface ProgressEvent {
   stage?: string;
   message?: string;
   unitId?: string;
+  unitLabel?: string;
   label?: string;
   status?: string;
   role?: string;
+  model?: string;
+  runner?: string;
+  durationMs?: number;
+  error?: string;
+  timedOut?: boolean;
+  timeoutMs?: number;
   finding?: Finding;
   level?: string;
   ts?: string;

@@ -9,6 +9,63 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+
+- **Specialist timeout is durable and visible** — on `STEW_SPECIALIST_TIMEOUT_MS`, audit stores
+  `status=truncated`, `timedOut`, `timeoutMs`; SSE uses `status=timeout`; a **high/medium coverage-gap
+  finding** (`steward.specialist_timeout`) is emitted (security → high). Session audit adds
+  `coverageGaps` so timeouts are never presented as clean empty scans or empty-scan confidence.
+  UI ledger shows **TIMEOUT · incomplete**; zero-findings rationale uses `specialist_timeouts`
+  when roles aborted. Worker logs `specialist X TIMEOUT … budget=…`.
+- **Session stage pipeline progress** — pipeline shows per-stage durations, live elapsed on the
+  active step, skipped optional stages (discourse/prove/publish), and a timing bar chart so
+  verification/judge are not invisible after a long specialists phase. Worker logs emit
+  `stage=X done 25.5s` plus an end-of-job timings summary.
+- **Internal gap notes out of public docs** — `docs/ENTERPRISE_GAPS.md` moved to local-only
+  **`.todo/`** (gitignored); README/docs links removed so gap registers are not part of the public tree.
+- **LLM rate-limit retries** — ModelRouter HTTP path now retries 429/5xx/network with exponential
+  backoff + `Retry-After` (`STEW_LLM_MAX_RETRIES`, default 4). DeepAgents ChatOpenAI/Anthropic set
+  explicit `maxRetries` + per-request `timeout` (`STEW_LLM_REQUEST_TIMEOUT_MS`, default 120s) so
+  parallel specialists no longer rely on silent/unbounded LangChain defaults that looked “stuck”.
+- **GitHub connector logo on light theme** — monochrome mark used white fill only; now uses
+  theme `currentColor` (`connector-icon--brand-adaptive`) so the octocat is visible on light UI.
+- **Specialist hang no longer freezes the unit** — DeepAgents/simple specialist calls are
+  bounded by `STEW_SPECIALIST_TIMEOUT_MS` (default 8m). Parallel roles soft-fail on timeout so
+  sibling findings still ship; root cause of “stuck on specialists” when one role never returned.
+  Local sandbox defaults to **in-place** repo read (`STEW_SANDBOX_COPY=1` to force full tree copy).
+
+### Added
+
+- **Live specialist heartbeats** — SSE `specialist_run` events for started / running (every
+  `STEW_SPECIALIST_HEARTBEAT_MS`, default 15s) / completed / failed. Sessions drawer shows a
+  **Live specialists** banner with per-role elapsed timers (“security on root · still running · 6m”).
+- **Platform ops analytics** — `GET /v1/platform/analytics?days=N` (platform operators only)
+  aggregates install-wide session success, p50/p95 latency, stage avgs, specialist role latency,
+  worker queue depth, and tokens. UI at **Settings → Platform ops** (`/settings/platform/ops`).
+  Distinct from tenant **Analytics** (address rate / findings).
+- **Session timing ledger for bottleneck analysis** — each review stores `session.audit.timings`
+  (and `metadata.timings`): wall clock per pipeline stage (policy→publish), per unit, plus rollups
+  (longest stage/unit/specialist, `byStageMs`, specialist run sum/max, tool time sum). Session report
+  includes a **Timing / bottlenecks** section; `audit_summary` events carry total/longest stage.
+- **Parallel specialists + structured rationale → senior verifier** — roles on a unit always run
+  concurrently (`Promise.all`) with a barrier before the next stage; each finding may carry
+  **`reasoning`** (plus `evidence.type=reasoning`) instead of raw chat history. The verifier is a
+  principal-SWE batch pass that judges keep/drop/severity using that rationale + packed context.
+  Migration `013_finding_reasoning.sql`.
+- **`docs/REVIEW_PIPELINE.md`** — end-to-end explanation of the review agent pipeline (units,
+  specialists, DeepAgents vs simple turns, discourse, judge, publish, workspace GC).
+
+### Fixed
+
+- **Job queue is Postgres-only** — removed file-backed `FileJobQueue` / `jobs.json` SoT.
+  `DATABASE_URL` is required; API/worker no longer pin review jobs to local disk (which made
+  “stateless” services stateful and unsafe under multi-replica). Optional NATS/Rabbit/Pulsar
+  remain wake-up brokers only.
+- **CI / release no longer depend on SaaS billing** — removed Hadolint on
+  `services/saas-billing/Dockerfile` and the release build/push/sign/notes for
+  `ghcr.io/.../saas-billing`. That control plane is private and not shipped in this repo;
+  CI was failing when the path was absent.
+
 ### Added
 
 - **GitHub Code Scanning SARIF upload** — on PR gate SCM publish, findings are uploaded via

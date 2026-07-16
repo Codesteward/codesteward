@@ -53,6 +53,13 @@ export function Settings() {
       body: "License, install-wide runtime (clone, DeepAgents, graph, workers), GitHub App enforce, and health.",
       audience: "Platform operator",
     });
+    cards.push({
+      to: "/settings/platform/ops",
+      kicker: "Install",
+      title: "Platform ops",
+      body: "Session latency, specialist timings, worker queue depth, and tokens across all orgs (SRE).",
+      audience: "Platform operator",
+    });
   }
 
   return (

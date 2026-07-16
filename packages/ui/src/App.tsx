@@ -22,6 +22,7 @@ import { Sessions } from "./pages/Sessions";
 import { AccountSettings } from "./pages/AccountSettings";
 import { OrgSettings } from "./pages/OrgSettings";
 import { PlatformSettings } from "./pages/PlatformSettings";
+import { PlatformAnalyticsPage } from "./pages/PlatformAnalytics";
 import { Settings } from "./pages/Settings";
 import { api, getSessionToken, resolveActiveOrg, setSessionToken } from "./lib/api";
 import { getAccessToken } from "./lib/oidc";
@@ -172,6 +173,7 @@ export function App() {
         <Route path="settings/account" element={<AccountSettings />} />
         <Route path="settings/organization" element={<OrgSettings />} />
         <Route path="settings/platform" element={<PlatformSettings />} />
+        <Route path="settings/platform/ops" element={<PlatformAnalyticsPage />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="onboarding" element={<Onboarding />} />
         <Route path="*" element={<Navigate to={APP_HOME} replace />} />

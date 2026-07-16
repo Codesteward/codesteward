@@ -1,6 +1,6 @@
 /**
  * Optional message brokers for review job dispatch (KEDA-friendly).
- * Postgres (or file) remains the durable job SoT; brokers only wake workers.
+ * Postgres remains the durable job SoT; brokers only wake workers.
  *
  * Enable with STEW_QUEUE_BROKER=nats|rabbitmq|pulsar and the matching URL env.
  * Clients are optionalDependencies / dynamic imports — missing packages log and disable.

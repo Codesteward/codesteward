@@ -33,6 +33,45 @@ test("collector records specialist runs and finalizes", () => {
   assert.ok(audit.specialistRuns[0]!.responseSha256);
 });
 
+test("collector records stage and unit timings for bottleneck analysis", async () => {
+  const c = new SessionAuditCollector("ses_timing");
+  c.beginSession();
+  c.startStage("policy", "load");
+  await new Promise((r) => setTimeout(r, 15));
+  c.startStage("specialists", "run units");
+  const t0 = nowIso();
+  const id = c.startRun({
+    unitId: "u1",
+    unitLabel: "batch-1",
+    role: "security",
+    runner: "simple",
+  });
+  await new Promise((r) => setTimeout(r, 15));
+  c.endRun(id, { status: "ok", findingCount: 2, responseContent: '{"findings":[]}' });
+  c.recordUnitTiming({
+    unitId: "u1",
+    unitLabel: "batch-1",
+    startedAt: t0,
+    endedAt: nowIso(),
+    status: "completed",
+    roles: ["security"],
+    findingCount: 2,
+  });
+  c.startStage("verification", "senior pass");
+  await new Promise((r) => setTimeout(r, 10));
+  const audit = c.finalize({ findingCount: 2 });
+  assert.ok(audit.timings);
+  assert.ok((audit.timings!.totalDurationMs ?? 0) >= 30);
+  assert.ok(audit.timings!.stages.some((s) => s.stage === "policy" && (s.durationMs ?? 0) >= 10));
+  assert.ok(audit.timings!.stages.some((s) => s.stage === "specialists"));
+  assert.ok(audit.timings!.stages.some((s) => s.stage === "verification"));
+  assert.equal(audit.timings!.units.length, 1);
+  assert.ok((audit.timings!.units[0]!.durationMs ?? 0) >= 10);
+  assert.ok(audit.timings!.summary?.byStageMs?.specialists != null);
+  assert.ok(audit.timings!.summary?.longestStage);
+  assert.equal(audit.timings!.summary?.specialistRunsCount, 1);
+});
+
 test("zero findings rationale flags unverified empty context", () => {
   const r = buildZeroFindingsRationale({
     context: {
