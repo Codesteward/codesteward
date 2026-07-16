@@ -9,8 +9,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **Docs UI guide** — `docs/UI_GUIDE.md` visual product tour; renamed `docs/screenshots/*`
+  to descriptive kebab-case names; docs index and links from README / pipeline / audit docs.
+
 ### Fixed
 
+- **Keycloak first user is platform operator** — when the install has zero local shadow
+  users, the first OIDC JIT login grants `platformAdmin` + product `admin` (same privilege
+  as local `POST /v1/auth/bootstrap`). Later sign-ins are not elevated; use
+  `STEW_PLATFORM_ADMIN_EMAILS` or DB for additional operators. Does not auto-join `local` org.
 - **Code scanning / supply chain** — harden git clone args against second-order CLI injection
   (`assertSafeGitArg`, end-of-options on `clone`); exact hostname checks for github.com (no
   substring SSRF); crypto `randomBytes` for temp passwords; Confluence CQL escape + safer HTML

@@ -239,7 +239,7 @@ services/worker          # job consumer
 actions/review-action    # GitHub Action
 deploy/compose           # demo + category + keycloak + queue
 deploy/helm/codesteward  # production chart + HPA / KEDA
-docs/                    # enterprise notes & session audit
+docs/                    # UI guide (screenshots), pipeline, session audit
 ```
 
 | Script | Purpose |
@@ -329,8 +329,10 @@ Self-hosted dual-mode review platform with product UI, Keycloak identity, orgs, 
 
 Further reading in-repo:
 
+- [`docs/UI_GUIDE.md`](docs/UI_GUIDE.md) — **product UI tour** with screenshots (Gate, sessions, findings, tenancy, platform)  
 - [`docs/REVIEW_PIPELINE.md`](docs/REVIEW_PIPELINE.md) — **how a review works** (units, specialists, turns, dataflow)  
-- [`docs/ENTERPRISE_SESSION_AUDIT.md`](docs/ENTERPRISE_SESSION_AUDIT.md) — session / audit notes  
+- [`docs/ENTERPRISE_SESSION_AUDIT.md`](docs/ENTERPRISE_SESSION_AUDIT.md) — session / audit provenance  
+- [`docs/README.md`](docs/README.md) — docs index  
 - [`deploy/helm/codesteward/README.md`](deploy/helm/codesteward/README.md) — production chart  
 
 ---

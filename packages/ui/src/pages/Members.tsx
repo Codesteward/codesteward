@@ -1,10 +1,86 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useToast } from "../components/Toast";
 import { Badge, EmptyState, KpiCard, PageHero, SkeletonLines, formatRelative } from "../components/ui";
-import { Select } from "../components/Select";
+import { Select, type SelectOption } from "../components/Select";
 import { api, getOrgId, type OrgMember } from "../lib/api";
 
-const ROLES = ["viewer", "reviewer", "admin", "owner"] as const;
+/** Org membership roles (see RBAC in packages/api middleware). */
+const ROLE_DEFS = [
+  {
+    value: "viewer",
+    label: "Viewer",
+    summary: "Read-only access",
+    description:
+      "Browse sessions, findings, and dashboards. Cannot start reviews, react, or change settings.",
+  },
+  {
+    value: "reviewer",
+    label: "Reviewer",
+    summary: "Run reviews (default)",
+    description:
+      "Start gate/stewardship reviews, react 👍/👎, export findings. Cannot manage members, connectors, models, or policy.",
+  },
+  {
+    value: "admin",
+    label: "Admin",
+    summary: "Org operations",
+    description:
+      "Everything a reviewer can do, plus members, connectors, model profiles, policy, SCIM, and org settings.",
+  },
+  {
+    value: "owner",
+    label: "Owner",
+    summary: "Full org control",
+    description:
+      "Same powers as admin, plus ownership of the organization (prefer a single owner).",
+  },
+] as const;
+
+type AssignableRole = (typeof ROLE_DEFS)[number]["value"];
+
+function roleOption(value: AssignableRole, opts?: { dense?: boolean }): SelectOption {
+  const def = ROLE_DEFS.find((r) => r.value === value)!;
+  if (opts?.dense) {
+    return { value: def.value, label: def.label, text: def.label };
+  }
+  const label: ReactNode = (
+    <span style={{ display: "flex", flexDirection: "column", gap: 2, textAlign: "left" }}>
+      <span style={{ fontWeight: 600 }}>
+        {def.label}{" "}
+        <span className="muted" style={{ fontWeight: 500, fontSize: "0.78em" }}>
+          · {def.summary}
+        </span>
+      </span>
+      <span className="muted" style={{ fontSize: "0.72rem", lineHeight: 1.35, maxWidth: 280 }}>
+        {def.description}
+      </span>
+    </span>
+  );
+  return { value: def.value, label, text: `${def.label} — ${def.summary}` };
+}
+
+function RoleHelp({ roles }: { roles: readonly AssignableRole[] }) {
+  return (
+    <ul
+      className="muted"
+      style={{
+        margin: "0.25rem 0 0",
+        paddingLeft: "1.1rem",
+        fontSize: "0.78rem",
+        lineHeight: 1.45,
+      }}
+    >
+      {roles.map((v) => {
+        const d = ROLE_DEFS.find((r) => r.value === v)!;
+        return (
+          <li key={v}>
+            <strong style={{ color: "var(--text)" }}>{d.label}</strong> — {d.description}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 interface PendingInvitation {
   id: string;
@@ -29,7 +105,7 @@ export function Members() {
   const [role, setRole] = useState<string>("reviewer");
   const [lastInviteToken, setLastInviteToken] = useState<string | null>(null);
 
-  // Create user shortcut
+  // Create user shortcut (local password store; dual-writes to Keycloak when identity mode is KC)
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -219,9 +295,9 @@ export function Members() {
                             onChange={(v) => void changeRole(m.userId, v)}
                             size="sm"
                             fullWidth={false}
-                            style={{ minWidth: 110 }}
+                            style={{ minWidth: 140 }}
                             aria-label={`Role for ${label}`}
-                            options={ROLES.map((r) => ({ value: r, label: r }))}
+                            options={ROLE_DEFS.map((r) => roleOption(r.value))}
                           />
                         </td>
                         <td className="muted">{formatRelative(m.createdAt)}</td>
@@ -272,8 +348,9 @@ export function Members() {
                   value={role}
                   onChange={setRole}
                   aria-label="Invitation role"
-                  options={ROLES.filter((r) => r !== "owner").map((r) => ({ value: r, label: r }))}
+                  options={(["viewer", "reviewer", "admin"] as const).map((r) => roleOption(r))}
                 />
+                <RoleHelp roles={["viewer", "reviewer", "admin"]} />
               </div>
               <button type="submit" className="primary" disabled={busy || !email.trim()}>
                 {busy
@@ -327,7 +404,9 @@ export function Members() {
 
           <div className="card stack">
             <div className="row" style={{ justifyContent: "space-between" }}>
-              <h3 style={{ margin: 0 }}>Create user</h3>
+              <h3 style={{ margin: 0 }}>
+                {keycloakIdentity ? "Create user with password" : "Create local user"}
+              </h3>
               <button
                 type="button"
                 className="ghost sm"
@@ -336,8 +415,23 @@ export function Members() {
                 {showCreateUser ? "Hide" : "Show"}
               </button>
             </div>
-            <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
-              Local account shortcut — adds the user and org membership in one step.
+            <p className="muted" style={{ margin: 0, fontSize: "0.85rem", lineHeight: 1.5 }}>
+              {keycloakIdentity ? (
+                <>
+                  Still uses the <strong>platform identity directory (Keycloak)</strong> when
+                  provisioning is available — not a separate retired login stack. Creates the
+                  directory account with the password you set, a local shadow record, and org
+                  membership in one step. Prefer the form above if you only need an invite /
+                  temporary password.
+                </>
+              ) : (
+                <>
+                  <strong>Self-hosted local accounts</strong> (email + password stored by
+                  Codesteward — scrypt). Used when Keycloak/OIDC is not the identity mode. Adds
+                  the user and org membership together. For SSO-backed deploys this card is
+                  secondary to IdP provisioning.
+                </>
+              )}
             </p>
             {showCreateUser && (
               <form className="stack" onSubmit={(e) => void createUser(e)}>
@@ -372,15 +466,12 @@ export function Members() {
                     value={newRole}
                     onChange={(v) => setNewRole(v as "admin" | "reviewer" | "viewer")}
                     aria-label="New user role"
-                    options={[
-                      { value: "viewer", label: "viewer" },
-                      { value: "reviewer", label: "reviewer" },
-                      { value: "admin", label: "admin" },
-                    ]}
+                    options={(["viewer", "reviewer", "admin"] as const).map((r) => roleOption(r))}
                   />
+                  <RoleHelp roles={["viewer", "reviewer", "admin"]} />
                 </div>
                 <button type="submit" className="primary" disabled={busy}>
-                  Create user
+                  {keycloakIdentity ? "Create directory user" : "Create local user"}
                 </button>
               </form>
             )}

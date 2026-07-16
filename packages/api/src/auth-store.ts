@@ -458,7 +458,11 @@ export class AuthStore {
   }
 
   /**
-   * JIT provision from OIDC claims. Password is random unusable hash.
+   * JIT provision from OIDC claims (Keycloak / generic OIDC). Password is a random unusable hash.
+   *
+   * First user on an empty install matches local bootstrap: product `admin` + `platformAdmin`.
+   * Later JIT users are not platform operators (use STEW_PLATFORM_ADMIN_EMAILS or DB flag).
+   * Does not force a `local` org membership — org claims / onboarding still apply.
    */
   async findOrCreateFromOidc(input: {
     email: string;
@@ -474,6 +478,9 @@ export class AuthStore {
     let user = await this.getBackend().getByEmail(email);
     let created = false;
     if (!user) {
+      const existingCount = await this.getBackend().count();
+      // Same privilege as POST /v1/auth/bootstrap when the install has no users yet
+      const firstInstallUser = existingCount === 0;
       const passwordHash = await hashPassword(
         `oidc:${input.subject}:${randomBytes(16).toString("hex")}`,
       );
@@ -481,11 +488,17 @@ export class AuthStore {
         email,
         passwordHash,
         displayName: input.displayName,
-        role: (input.roleHint ?? "reviewer") as DbRole,
+        role: (firstInstallUser ? "admin" : (input.roleHint ?? "reviewer")) as DbRole,
         // Empty home org until onboarding / invite (SaaS multi-tenant)
         orgId: input.orgId?.trim() || "",
+        platformAdmin: firstInstallUser,
       });
       created = true;
+      if (firstInstallUser) {
+        console.info(
+          `[auth] first OIDC user ${email} granted platformAdmin (empty install — same as local bootstrap)`,
+        );
+      }
     }
     const session = await this.issueSession(user as StewardUser);
     return { ...session, created };

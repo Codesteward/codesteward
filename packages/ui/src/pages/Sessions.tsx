@@ -1925,13 +1925,6 @@ function SessionReportPanel({
           <button type="button" className="sm ghost" onClick={download}>
             Download .md
           </button>
-          <button
-            type="button"
-            className="sm ghost"
-            onClick={() => void downloadSessionAudit(session)}
-          >
-            Download audit JSON
-          </button>
         </div>
       </div>
       {headline && (

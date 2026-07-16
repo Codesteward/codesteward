@@ -7,6 +7,20 @@ and how findings flow to the UI, PR, and (optionally) GitHub Code Scanning.
 It matches the implementation in `packages/agents` (orchestrator, planner, runners,
 discourse, judge, self-heal) and the worker entrypoint in `packages/api/src/run-job.ts`.
 
+For a **visual product tour** (Dashboard, Gate form, session blade, Findings, Platform),
+see [UI_GUIDE.md](./UI_GUIDE.md).
+
+How operators experience the same pipeline in the UI:
+
+| Pipeline stage | UI surface |
+|----------------|------------|
+| Enqueue / claim | Gate or Steward **Start** → session row `queued` → `running` |
+| Policy → graph → plan → specialists → … | Session blade **Stage pipeline** with per-stage ms |
+| Findings + report | Blade **Evidence**, **Review report**, **Reports** page |
+| Provenance | Blade **Review audit** + Download audit JSON |
+
+![Stage pipeline and narrative report in the session blade](./screenshots/session-blade-stage-pipeline.png)
+
 ---
 
 ## 1. Big picture

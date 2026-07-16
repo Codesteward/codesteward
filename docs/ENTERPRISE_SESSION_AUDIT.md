@@ -1,5 +1,10 @@
 # Enterprise session audit & subagent ledger
 
+Product UI: open a completed session → **Review audit** panel (clone/mount receipt,
+specialist ledger, **Download audit JSON**). See [UI guide — session blade](./UI_GUIDE.md#4-running-reviews-gate--steward).
+
+![Review audit panel with specialist ledger](./screenshots/session-blade-review-audit.png)
+
 ## Problem
 
 Regulated customers need more than a findings list: **proof of what was reviewed**,

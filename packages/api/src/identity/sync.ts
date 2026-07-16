@@ -108,11 +108,15 @@ export async function syncOidcLogin(claims: OidcClaims): Promise<SyncLoginResult
     }
   }
 
+  // Platform operators keep product admin (matches local bootstrap); claims still drive org roles.
+  const effectiveProductRole =
+    user.platformAdmin === true && productRole !== "admin" ? "admin" : productRole;
+
   // Update local role/home org if existing user
   if (!created) {
     try {
       await globalAuthStore.updateUser(user.id, {
-        role: productRole,
+        role: effectiveProductRole,
         ...(primaryOrgId ? { orgId: primaryOrgId } : {}),
         displayName: displayName ?? undefined,
       });
@@ -123,7 +127,12 @@ export async function syncOidcLogin(claims: OidcClaims): Promise<SyncLoginResult
 
   const orgs = resolved.map((r) => ({ ...r.org, role: r.role }));
   return {
-    user: { ...user, role: productRole, orgId: primaryOrgId ?? user.orgId },
+    user: {
+      ...user,
+      role: effectiveProductRole,
+      orgId: primaryOrgId ?? user.orgId,
+      platformAdmin: user.platformAdmin,
+    },
     token,
     created,
     orgs,
