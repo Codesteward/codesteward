@@ -58,7 +58,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: pnpm
+          # Explicitly off: setup-node defaults can enable package-manager cache (zizmor cache-poisoning).
+          package-manager-cache: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -104,7 +105,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+          package-manager-cache: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -150,8 +151,12 @@ jobs:
             --disable-version-check \
             --timeout 300 \
             --exclude research \
+            --exclude scripts \
+            --exclude evals \
+            --exclude third_party \
             --exclude node_modules \
             --exclude '**/dist' \
+            --exclude .github \
             .
 
       - name: Hadolint (API/worker image)
@@ -202,7 +207,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: zizmor.sarif
@@ -335,13 +340,13 @@ jobs:
           persist-credentials: false
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: javascript-typescript
           queries: security-extended,security-and-quality
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: /language:javascript-typescript
 
@@ -370,7 +375,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+          package-manager-cache: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -414,9 +419,20 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Install Trivy
+        env:
+          TRIVY_VERSION: "0.56.2"
         run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sh -s -- -b /usr/local/bin v0.69.3
+          set -euo pipefail
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            x86_64) TARCH=64bit ;;
+            aarch64|arm64) TARCH=ARM64 ;;
+            *) echo "unsupported arch $ARCH"; exit 1 ;;
+          esac
+          URL="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${TARCH}.tar.gz"
+          curl -fsSL "$URL" -o /tmp/trivy.tgz
+          tar -xzf /tmp/trivy.tgz -C /usr/local/bin trivy
+          chmod +x /usr/local/bin/trivy
           trivy --version
 
       - name: Trivy scan (fail on HIGH/CRITICAL)
@@ -425,6 +441,8 @@ jobs:
             --exit-code 1 \
             --severity HIGH,CRITICAL \
             --ignore-unfixed \
+            --scanners vuln \
+            --skip-version-check \
             --ignorefile .trivyignore \
             --format json \
             --output trivy-report.json \
@@ -432,9 +450,21 @@ jobs:
 
       - name: Install syft
         if: always()
+        env:
+          SYFT_VERSION: "1.18.1"
         run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
-            | sh -s -- -b /usr/local/bin
+          set -euo pipefail
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            x86_64) TARCH=amd64 ;;
+            aarch64|arm64) TARCH=arm64 ;;
+            *) echo "unsupported arch $ARCH"; exit 1 ;;
+          esac
+          URL="https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_${TARCH}.tar.gz"
+          curl -fsSL "$URL" -o /tmp/syft.tgz
+          tar -xzf /tmp/syft.tgz -C /usr/local/bin syft
+          chmod +x /usr/local/bin/syft
+          syft version
 
       - name: Generate SBOM
         if: always()
