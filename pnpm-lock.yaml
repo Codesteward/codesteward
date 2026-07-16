@@ -55,6 +55,46 @@ importers:
         specifier: ^5.8.2
         version: 5.9.3
 
+  docs:
+    dependencies:
+      '@docusaurus/core':
+        specifier: 3.10.2
+        version: 3.10.2(@mdx-js/react@3.1.1(@types/react@19.2.17)(react@19.2.7))(postcss@8.5.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(typescript@5.6.3)
+      '@docusaurus/preset-classic':
+        specifier: 3.10.2
+        version: 3.10.2(@algolia/client-search@5.56.0)(@mdx-js/react@3.1.1(@types/react@19.2.17)(react@19.2.7))(@types/react@19.2.17)(postcss@8.5.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(search-insights@2.17.3)(typescript@5.6.3)
+      '@mdx-js/react':
+        specifier: ^3.1.1
+        version: 3.1.1(@types/react@19.2.17)(react@19.2.7)
+      clsx:
+        specifier: ^2.0.0
+        version: 2.1.1
+      prism-react-renderer:
+        specifier: ^2.3.0
+        version: 2.4.1(react@19.2.7)
+      react:
+        specifier: ^19.0.0
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.7(react@19.2.7)
+    devDependencies:
+      '@docusaurus/module-type-aliases':
+        specifier: 3.10.2
+        version: 3.10.2(postcss@8.5.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@docusaurus/tsconfig':
+        specifier: 3.10.2
+        version: 3.10.2
+      '@docusaurus/types':
+        specifier: 3.10.2
+        version: 3.10.2(clean-css@5.3.3)(cssnano@6.1.2(postcss@8.5.17))(html-minifier-terser@7.2.0)(postcss@8.5.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      typescript:
+        specifier: ~5.6.2
+        version: 5.6.3
+      wrangler:
+        specifier: ^4.14.0
+        version: 4.111.0
+
   packages/agents:
     dependencies:
       '@codesteward/core':
@@ -544,46 +584,6 @@ importers:
       typescript:
         specifier: ^5.8.2
         version: 5.9.3
-
-  website:
-    dependencies:
-      '@docusaurus/core':
-        specifier: 3.10.2
-        version: 3.10.2(@mdx-js/react@3.1.1(@types/react@19.2.17)(react@19.2.7))(postcss@8.5.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(typescript@5.6.3)
-      '@docusaurus/preset-classic':
-        specifier: 3.10.2
-        version: 3.10.2(@algolia/client-search@5.56.0)(@mdx-js/react@3.1.1(@types/react@19.2.17)(react@19.2.7))(@types/react@19.2.17)(postcss@8.5.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(search-insights@2.17.3)(typescript@5.6.3)
-      '@mdx-js/react':
-        specifier: ^3.1.1
-        version: 3.1.1(@types/react@19.2.17)(react@19.2.7)
-      clsx:
-        specifier: ^2.0.0
-        version: 2.1.1
-      prism-react-renderer:
-        specifier: ^2.3.0
-        version: 2.4.1(react@19.2.7)
-      react:
-        specifier: ^19.0.0
-        version: 19.2.7
-      react-dom:
-        specifier: ^19.0.0
-        version: 19.2.7(react@19.2.7)
-    devDependencies:
-      '@docusaurus/module-type-aliases':
-        specifier: 3.10.2
-        version: 3.10.2(postcss@8.5.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@docusaurus/tsconfig':
-        specifier: 3.10.2
-        version: 3.10.2
-      '@docusaurus/types':
-        specifier: 3.10.2
-        version: 3.10.2(clean-css@5.3.3)(cssnano@6.1.2(postcss@8.5.17))(html-minifier-terser@7.2.0)(postcss@8.5.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      typescript:
-        specifier: ~5.6.2
-        version: 5.6.3
-      wrangler:
-        specifier: ^4.14.0
-        version: 4.111.0
 
 packages:
 
