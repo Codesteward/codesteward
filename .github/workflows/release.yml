@@ -156,7 +156,7 @@ jobs:
 
       - name: Install Trivy
         env:
-          TRIVY_VERSION: "0.56.2"
+          TRIVY_VERSION: "0.72.0"
         run: |
           set -euo pipefail
           ARCH=$(uname -m)
@@ -166,6 +166,7 @@ jobs:
             *) echo "unsupported arch $ARCH"; exit 1 ;;
           esac
           URL="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${TARCH}.tar.gz"
+          echo "Downloading Trivy from $URL"
           curl -fsSL "$URL" -o /tmp/trivy.tgz
           tar -xzf /tmp/trivy.tgz -C /usr/local/bin trivy
           chmod +x /usr/local/bin/trivy
