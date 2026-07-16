@@ -11,156 +11,98 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
-- **Docs UI guide** — `docs/UI_GUIDE.md` visual product tour; renamed `docs/screenshots/*`
-  to descriptive kebab-case names; docs index and links from README / pipeline / audit docs.
+### Changed
 
 ### Fixed
 
-- **Keycloak first user is platform operator** — when the install has zero local shadow
-  users, the first OIDC JIT login grants `platformAdmin` + product `admin` (same privilege
-  as local `POST /v1/auth/bootstrap`). Later sign-ins are not elevated; use
-  `STEW_PLATFORM_ADMIN_EMAILS` or DB for additional operators. Does not auto-join `local` org.
-- **Code scanning / supply chain** — harden git clone args against second-order CLI injection
-  (`assertSafeGitArg`, end-of-options on `clone`); exact hostname checks for github.com (no
-  substring SSRF); crypto `randomBytes` for temp passwords; Confluence CQL escape + safer HTML
-  strip; remove unused vulnerable `diff` dep (GHSA-73rr-hh4g-fpgx); root `SECURITY.md`.
-  CodeQL quality cleanup (unused locals / useless assigns / mock trivial conditionals).
-- **Specialist timeout is durable and visible** — on `STEW_SPECIALIST_TIMEOUT_MS`, audit stores
-  `status=truncated`, `timedOut`, `timeoutMs`; SSE uses `status=timeout`; a **high/medium coverage-gap
-  finding** (`steward.specialist_timeout`) is emitted (security → high). Session audit adds
-  `coverageGaps` so timeouts are never presented as clean empty scans or empty-scan confidence.
-  UI ledger shows **TIMEOUT · incomplete**; zero-findings rationale uses `specialist_timeouts`
-  when roles aborted. Worker logs `specialist X TIMEOUT … budget=…`.
-- **Session stage pipeline progress** — pipeline shows per-stage durations, live elapsed on the
-  active step, skipped optional stages (discourse/prove/publish), and a timing bar chart so
-  verification/judge are not invisible after a long specialists phase. Worker logs emit
-  `stage=X done 25.5s` plus an end-of-job timings summary.
-- **Internal gap notes out of public docs** — `docs/ENTERPRISE_GAPS.md` moved to local-only
-  **`.todo/`** (gitignored); README/docs links removed so gap registers are not part of the public tree.
-- **LLM rate-limit retries** — ModelRouter HTTP path now retries 429/5xx/network with exponential
-  backoff + `Retry-After` (`STEW_LLM_MAX_RETRIES`, default 4). DeepAgents ChatOpenAI/Anthropic set
-  explicit `maxRetries` + per-request `timeout` (`STEW_LLM_REQUEST_TIMEOUT_MS`, default 120s) so
-  parallel specialists no longer rely on silent/unbounded LangChain defaults that looked “stuck”.
-- **GitHub connector logo on light theme** — monochrome mark used white fill only; now uses
-  theme `currentColor` (`connector-icon--brand-adaptive`) so the octocat is visible on light UI.
-- **Specialist hang no longer freezes the unit** — DeepAgents/simple specialist calls are
-  bounded by `STEW_SPECIALIST_TIMEOUT_MS` (default 8m). Parallel roles soft-fail on timeout so
-  sibling findings still ship; root cause of “stuck on specialists” when one role never returned.
-  Local sandbox defaults to **in-place** repo read (`STEW_SANDBOX_COPY=1` to force full tree copy).
+---
+
+## [1.1.0] — 2026-07-16
+
+Post–**1.0.0** release: parallel review pipeline hardening, install-wide ops visibility, findings quality, security triage, and product docs with UI screenshots.
 
 ### Added
 
-- **Live specialist heartbeats** — SSE `specialist_run` events for started / running (every
-  `STEW_SPECIALIST_HEARTBEAT_MS`, default 15s) / completed / failed. Sessions drawer shows a
-  **Live specialists** banner with per-role elapsed timers (“security on root · still running · 6m”).
-- **Platform ops analytics** — `GET /v1/platform/analytics?days=N` (platform operators only)
-  aggregates install-wide session success, p50/p95 latency, stage avgs, specialist role latency,
-  worker queue depth, and tokens. UI at **Settings → Platform ops** (`/settings/platform/ops`).
-  Distinct from tenant **Analytics** (address rate / findings).
-- **Session timing ledger for bottleneck analysis** — each review stores `session.audit.timings`
-  (and `metadata.timings`): wall clock per pipeline stage (policy→publish), per unit, plus rollups
-  (longest stage/unit/specialist, `byStageMs`, specialist run sum/max, tool time sum). Session report
-  includes a **Timing / bottlenecks** section; `audit_summary` events carry total/longest stage.
 - **Parallel specialists + structured rationale → senior verifier** — roles on a unit always run
-  concurrently (`Promise.all`) with a barrier before the next stage; each finding may carry
-  **`reasoning`** (plus `evidence.type=reasoning`) instead of raw chat history. The verifier is a
-  principal-SWE batch pass that judges keep/drop/severity using that rationale + packed context.
-  Migration `013_finding_reasoning.sql`.
-- **`docs/REVIEW_PIPELINE.md`** — end-to-end explanation of the review agent pipeline (units,
-  specialists, DeepAgents vs simple turns, discourse, judge, publish, workspace GC).
-
-### Fixed
-
-- **Job queue is Postgres-only** — removed file-backed `FileJobQueue` / `jobs.json` SoT.
-  `DATABASE_URL` is required; API/worker no longer pin review jobs to local disk (which made
-  “stateless” services stateful and unsafe under multi-replica). Optional NATS/Rabbit/Pulsar
-  remain wake-up brokers only.
-- **CI / release no longer depend on SaaS billing** — removed Hadolint on
-  `services/saas-billing/Dockerfile` and the release build/push/sign/notes for
-  `ghcr.io/.../saas-billing`. That control plane is private and not shipped in this repo;
-  CI was failing when the path was absent.
-
-### Added
-
-- **GitHub Code Scanning SARIF upload** — on PR gate SCM publish, findings are uploaded via
-  `POST /repos/{owner}/{repo}/code-scanning/sarifs` (gzip+base64) so alerts appear under
-  **Security → Code scanning**. Controlled by `STEW_PUBLISH_SARIF` with the same resolution as
-  Suggested code fixes: process env → Platform runtime → org preference → product default
-  (**On**). Platform UI + Organization settings cards; requires code scanning enabled and
-  `security_events: write` on the GitHub App/token.
-- **Three-level finding confidence** — primary **`confidence`** is product/evidence-derived
-  (path, line, body, graph/SAST/discourse/verify signals); **`modelConfidence`** stores the
-  specialist’s JSON self-report (diagnostic only); **`tokenConfidence`** is mean completion-token
-  probability from provider logprobs when available (OpenAI-compatible; Anthropic omitted).
-  Suggested-fix gate, audit summaries, SARIF, and Findings UI use product confidence; model/token
-  layers are retained for transparency. Migration `012_finding_confidence_layers.sql`.
-- **Suggested code fixes on findings** — specialists may emit a concrete `suggestedFix` snippet
-  (plus plain-text `suggestion` / optional `existingCode`). Surfaced in Findings UI, session
-  reports, SARIF properties, and PR inline comments as **Proposed fix**. Persisted in file store
-  and Postgres (`suggested_fix`, `existing_code`; migration `011_finding_suggested_fix.sql`).
-- **Min confidence for code fixes (platform)** — `STEW_SUGGESTED_FIX_MIN_CONFIDENCE` (default
-  **0.75**, range 0–1). Concrete `suggestedFix` is dropped when finding confidence is below this
-  threshold; plain-text `suggestion` is always kept. Configurable under Platform runtime.
-- **Install-wide platform runtime store** — `GET/PUT /v1/platform/runtime-config` +
-  `.steward-data/platform-runtime.json`. Clone, DeepAgents, graph, worker, SAST, and related knobs
-  are **platform-only** (Platform settings → Platform runtime). Process env still wins when set.
-- **Org override for code fixes only** — `STEW_SUGGESTED_CODE_FIXES` may be set per org under
-  Organization → **Suggested code fixes** when Platform leaves the policy **Unset**. Resolution:
-  `env` → platform policy → org preference → product default (off). Platform Off/On forces all
-  orgs; org UI locks and explains the effective source.
+  concurrently (`Promise.all`) with a barrier before the next stage; findings may carry
+  **`reasoning`** (plus `evidence.type=reasoning`). Verifier is a principal-SWE batch pass
+  (keep/drop/severity) using rationale + packed context. Migration `013_finding_reasoning.sql`.
+- **Session timing ledger** — `session.audit.timings` / `metadata.timings`: wall clock per pipeline
+  stage, per unit, rollups (longest stage/unit/specialist, `byStageMs`, tool time). Session report
+  **Timing / bottlenecks** section; worker logs `stage=X done …` + end-of-job summary.
+- **Live specialist heartbeats** — SSE `specialist_run` started / running (interval
+  `STEW_SPECIALIST_HEARTBEAT_MS`, default 15s) / completed / failed. Session blade **Live specialists**
+  banner with per-role elapsed timers.
+- **Platform ops analytics** — `GET /v1/platform/analytics?days=N` (platform operators) for
+  install-wide success rate, p50/p95 latency, stage averages, specialist role stats, worker queue,
+  tokens. UI: **Settings → Platform ops** (`/settings/platform/ops`). Distinct from tenant Analytics.
+- **GitHub Code Scanning SARIF upload** — PR gate publishes via `code-scanning/sarifs` (gzip+base64).
+  `STEW_PUBLISH_SARIF` (env → platform runtime → org → default **On**). Requires code scanning enabled
+  and `security_events: write`.
+- **Three-level finding confidence** — product **`confidence`**, specialist **`modelConfidence`**,
+  optional **`tokenConfidence`** (logprobs). UI/SARIF/suggested-fix gate use product confidence.
+  Migration `012_finding_confidence_layers.sql`.
+- **Suggested code fixes** — `suggestedFix` / `suggestion` / `existingCode` on findings; Findings UI,
+  reports, SARIF, PR comments. Min confidence gate `STEW_SUGGESTED_FIX_MIN_CONFIDENCE` (default 0.75).
+  Migrations `011_finding_suggested_fix.sql`.
+- **Install-wide platform runtime store** — `GET/PUT /v1/platform/runtime-config`; org may only
+  override suggested code fixes when platform policy is Unset.
+- **Product docs** — `docs/UI_GUIDE.md` (screenshot tour), `docs/README.md`,
+  `docs/REVIEW_PIPELINE.md`, session audit notes; screenshots under `docs/screenshots/` (kebab-case).
 
 ### Changed
 
-- **Codesteward Graph image** — compose/Helm default pull
-  `ghcr.io/codesteward/codesteward-graph` (package moved from bitkaio org image name).
-- **README** — public docs describe self-host only; SaaS/billing release notes and commercial
-  roadmap language removed from the top-level README.
-- **Empty-scan confidence** — specialist steps with zero findings still record product
-  `avgConfidence` (paths/files/graph + optional model `emptyScanConfidence`) so audit/UI show
-  how sure the step is that nothing was missed.
-- **Runtime config scope** — install knobs are no longer treated as per-org. Organization settings
-  expose only tenant preferences (suggested code fixes card); full runtime editor lives on Platform.
-- **Runtime UI controls** — Unset / Off / On (custom `Select`) for booleans; clear effective/source
-  lines so operators are not misled by a bare checkbox.
+- **Job queue is Postgres-only** — removed file-backed `FileJobQueue` / `jobs.json`.
+  `DATABASE_URL` required for multi-replica safety; NATS/Rabbit/Pulsar remain optional wake-up brokers.
+- **Specialist timeouts** — `STEW_SPECIALIST_TIMEOUT_MS` (default 8m); truncated runs emit coverage-gap
+  findings (`steward.specialist_timeout`), audit `coverageGaps`, UI TIMEOUT ledger — never a silent
+  clean empty scan. LLM retries: `STEW_LLM_MAX_RETRIES` + `STEW_LLM_REQUEST_TIMEOUT_MS`.
+- **Session stage pipeline UI** — per-stage durations, live active step, skipped optional stages,
+  timing bars; audit JSON download only under **Review audit** (not duplicated on Review report).
+- **Members UI** — role capability help; Keycloak vs local create-user copy clarified.
+- **Runtime UI** — Unset / Off / On for booleans; platform vs org scope clearly labeled.
+- **Codesteward Graph image** — default `ghcr.io/codesteward/codesteward-graph`.
+- **README** — self-host focused; docs links to UI guide + pipeline.
+- Local sandbox defaults to **in-place** repo read (`STEW_SANDBOX_COPY=1` for full tree copy).
 
 ### Fixed
 
-- **Login no longer falls back to local password form under Keycloak** — when identity is Keycloak
-  (or SPA OIDC is configured), `/login` always stays on the IdP path. API/DB outages show an error
-  + retry, not the local form. Break-glass local login is only `/login?local=1`.
-- **Workspace GC after session finish** — delete `{STEW_WORKSPACE_DIR}/{sessionId}` (primary +
-  cross-repo clones) when a job ends in completed / completed_with_errors / failed. Previously
-  only paths containing the substring `workspaces` were removed, so category stacks using
-  `/workspace/ses_…` never cleaned up. Set `STEW_WORKSPACE_KEEP=1` to retain clones for debug.
-- **Container `/data` + `/workspace` permissions** — non-root `steward` entrypoint chowns
-  `STEW_DATA_DIR` / `STEW_WORKSPACE_DIR` (compose named volumes) before dropping privileges,
-  fixing `EACCES` on `/data/checkpoints/*.json` and clone workspaces.
-- **Worker crash on sandbox spawn** — LocalSandbox handles spawn `error` (ENOENT), always creates
-  sandbox cwd, prefers `/bin/bash` or `/bin/sh`; missing binary no longer kills the worker process.
-- **Resume UI** — failure banner only when status is terminal (`failed` / `completed_with_errors`);
-  resume clears session `error` / failure summary so a re-run is not branded with the previous error.
-- **CI Trivy install** — pin Trivy **0.72.0** (0.56.2 release assets 404’d); log download URL on install.
-- **CI Semgrep GCM** — `createCipheriv` / `createDecipheriv` AES-GCM pass `{ authTagLength: 16 }`.
-- **CI / release security gates (v1.0.0 tag blockers)** — Semgrep, zizmor, and Trivy now pass on the
-  hardened pipelines so push + version tags can complete release again:
-  - **zizmor** `cache-poisoning`: set `package-manager-cache: false` on every `actions/setup-node`
-    (removing `cache: pnpm` alone is not enough — setup-node defaults still flag).
-  - **Semgrep**: AES-GCM `authTagLength: 16` on encrypt/decrypt; exclude local `scripts/` / `evals/`
-    HTTP smoke noise; drop `curl | sh` installs for Trivy/Syft in favor of pinned release tarballs.
-  - **Trivy container gate**: multi-stage `Dockerfile.node` (no pnpm CLI / no global npm tree at
-    runtime, `pnpm prune --prod`, strip esbuild/pulsar), `--scanners vuln --ignore-unfixed`, and
-    `pnpm.overrides` for vulnerable `undici` / `picomatch` ranges.
-  - CodeQL action pins moved to **v4**; SaaS billing image runs as non-root `steward`.
-- Friendly plan-gate UI for org audit log and SCIM when plan does not include the feature
-  (no raw `402` JSON dump).
-- SCIM token mint and SCIM protocol path enforce **org** Enterprise entitlement
-  (`requireOrgEntitled` / `isOrgEntitled`), not process open-mode license alone.
-- Platform GitHub App enforce: Connectors hides Create Manifest / PEM paste and shows install-only UX.
-- Billing portal stuck on “Checking sign-in…” (broken JS string escaping in seat summary HTML).
-- Billing portal user-facing copy no longer says “Keycloak”.
-- Pro plan list price set to **$25 / seat / mo** (was $49).
-- Initial release packaging: `CHANGELOG`, GitHub Actions (CI / release / scheduled / scorecard),
-  version **1.0.0**.
+- **GitHub clone host** — map `api.github.com` / `GITHUB_API_URL` to git host `https://github.com`
+  (`resolveGithubGitHost`); exact hostnames only (no substring SSRF). Hardened clone args
+  (`assertSafeGitArg`, `--` on clone).
+- **Keycloak first install user** — first OIDC JIT user on empty store gets `platformAdmin` + product
+  `admin` (parity with local bootstrap).
+- **Code scanning triage** — crypto temp passwords; Confluence CQL/HTML strip; remove unused
+  vulnerable `diff` package (GHSA-73rr-hh4g-fpgx); root `SECURITY.md`; CodeQL quality cleanups.
+- **Keycloak login path** — no fallback to local password form when IdP is configured (break-glass
+  only `/login?local=1`).
+- **Workspace GC** — delete `{STEW_WORKSPACE_DIR}/{sessionId}` clones after terminal status
+  (`STEW_WORKSPACE_KEEP=1` to retain).
+- **Container permissions** — entrypoint chowns data/workspace volumes for non-root `steward`.
+- **LocalSandbox spawn** — handle ENOENT; prefer `/bin/bash` or `/bin/sh`; no worker process crash.
+- **Resume UI** — failure branding only on terminal status; resume clears prior error.
+- **CI / release** — Trivy 0.72.0; Semgrep GCM `authTagLength`; zizmor cache-poisoning fixes;
+  multi-stage Docker; drop SaaS-billing image from public CI/release; CodeQL action v4.
+- GitHub connector icon visible on light theme (`currentColor`).
+- Plan-gate UI for audit log / SCIM; SCIM org entitlement; platform GitHub App enforce UX.
+
+### Migrations
+
+Operators with Postgres should run migrations through **011–013** (suggested fix, confidence layers,
+finding reasoning) if upgrading from **1.0.0**:
+
+```bash
+pnpm migrate
+# or: pnpm --filter @codesteward/db run migrate
+```
+
+### Upgrade notes
+
+1. Ensure **`DATABASE_URL`** is set (file job queue removed).
+2. Run DB migrations **011–013**.
+3. Rebuild/redeploy API, worker, and UI images (or `pnpm -r run build`).
+4. Optional: set `STEW_PLATFORM_ADMIN_EMAILS` for additional platform operators under Keycloak.
+5. Helm: set image tag **`1.1.0`** (chart `appVersion` updated).
 
 ---
 

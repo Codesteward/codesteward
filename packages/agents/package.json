@@ -1,7 +1,7 @@
 {
   "name": "@codesteward/agents",
-  "version": "1.0.0",
-  "description": "Review orchestrator, specialists, judge, verifier \u2014 DeepAgents-pluggable",
+  "version": "1.1.0",
+  "description": "Review orchestrator, specialists, judge, verifier — DeepAgents-pluggable",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -294,14 +294,14 @@ See [`.env.example`](.env.example) for the full template.
 
 ## Changelog & release
 
-- **[CHANGELOG.md](./CHANGELOG.md)** — Keep a Changelog (current: **1.0.0**)
+- **[CHANGELOG.md](./CHANGELOG.md)** — Keep a Changelog (current: **1.1.0**)
 - **CI** — `.github/workflows/ci.yml` (build, typecheck, unit tests, Semgrep, zizmor, dependency-review)
 - **Release** — tag `vX.Y.Z` → `.github/workflows/release.yml` publishes GHCR images + GitHub Release notes from the matching changelog section:
 
 ```bash
-# First production release
-git tag v1.0.0
-git push origin v1.0.0
+# After CHANGELOG has ## [1.1.0] and versions are bumped
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 Images (lowercased repo path on GHCR):
