@@ -11,6 +11,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- **Code scanning / supply chain** — harden git clone args against second-order CLI injection
+  (`assertSafeGitArg`, end-of-options on `clone`); exact hostname checks for github.com (no
+  substring SSRF); crypto `randomBytes` for temp passwords; Confluence CQL escape + safer HTML
+  strip; remove unused vulnerable `diff` dep (GHSA-73rr-hh4g-fpgx); root `SECURITY.md`.
+  CodeQL quality cleanup (unused locals / useless assigns / mock trivial conditionals).
 - **Specialist timeout is durable and visible** — on `STEW_SPECIALIST_TIMEOUT_MS`, audit stores
   `status=truncated`, `timedOut`, `timeoutMs`; SSE uses `status=timeout`; a **high/medium coverage-gap
   finding** (`steward.specialist_timeout`) is emitted (security → high). Session audit adds

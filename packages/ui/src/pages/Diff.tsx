@@ -4,7 +4,6 @@ import { Diff, Hunk, parseDiff } from "react-diff-view";
 import "react-diff-view/style/index.css";
 import { useToast } from "../components/Toast";
 import { Badge, EmptyState, PageHero } from "../components/ui";
-import { Select } from "../components/Select";
 import { RepoPicker } from "../components/RepoPicker";
 import { api, type Finding, type ScmPr, type Session } from "../lib/api";
 

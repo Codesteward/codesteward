@@ -35,22 +35,24 @@ export function mockQuery(
   query: string,
   _scope: RepoScope,
 ): GraphQueryResult {
+  const q = typeof query === "string" ? query.trim() : "";
+  if (!q) {
+    return { query_type: queryType, total: 0, results: [], stub: true };
+  }
   return {
     query_type: queryType,
-    total: query ? 1 : 0,
-    results: query
-      ? [
-          {
-            node_id: `function:local:demo:src/example.ts:${query || "example"}`,
-            type: "function",
-            name: query || "example",
-            file: "src/example.ts",
-            line_start: 1,
-            line_end: 20,
-            language: "typescript",
-          },
-        ]
-      : [],
+    total: 1,
+    results: [
+      {
+        node_id: `function:local:demo:src/example.ts:${q}`,
+        type: "function",
+        name: q,
+        file: "src/example.ts",
+        line_start: 1,
+        line_end: 20,
+        language: "typescript",
+      },
+    ],
     stub: true,
   };
 }

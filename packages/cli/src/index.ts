@@ -434,25 +434,6 @@ program
   });
 
 
-async function pathsFromGitRange(repoPath: string, from?: string, to?: string): Promise<string[] | undefined> {
-  if (!from) return undefined;
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  const execFileAsync = promisify(execFile);
-  const head = to ?? "HEAD";
-  try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["-C", repoPath, "diff", "--name-only", `${from}...${head}`],
-      { maxBuffer: 20 * 1024 * 1024 },
-    );
-    const files = stdout.split("\n").map((s) => s.trim()).filter(Boolean);
-    return files.length ? files : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 async function runLocal(
   mode: "gate" | "stewardship",
   opts: {

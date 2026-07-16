@@ -5,7 +5,7 @@
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { decryptSecret, encryptSecret, isEncryptedSecret } from "./secrets.js";
+import { decryptSecret, isEncryptedSecret } from "./secrets.js";
 import {
   mergeLangfuseSecrets,
   maskLangfuse,

@@ -67,6 +67,7 @@ export function Select({
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
 
   const selected = options.find((o) => o.value === value);
+  const selectedText = selected ? optionText(selected) : placeholder;
   const enabled = options.map((o, i) => ({ o, i })).filter(({ o }) => !o.disabled);
 
   const placeMenu = useCallback(() => {
@@ -243,7 +244,7 @@ export function Select({
         onKeyDown={onKeyDown}
       >
         <span className={`cs-select-value${selected ? "" : " placeholder"}`}>
-          {selected ? selected.label : placeholder}
+          {selected ? selected.label ?? selectedText : placeholder}
         </span>
         <span className="cs-select-chevron" aria-hidden>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useToast } from "../components/Toast";
 import { Badge, EmptyState, PageHero } from "../components/ui";
-import { Select } from "../components/Select";
 import { api, type RepoLink, type ScmRepo } from "../lib/api";
 
 function TopologyGraph({ links }: { links: RepoLink[] }) {

@@ -150,9 +150,7 @@ export class AuthStore {
     }
 
     // Real OIDC status via discovery + JWKS (not a stub)
-    let oidc: { status: string; issuer?: string; error?: string } = {
-      status: "optional_not_configured",
-    };
+    let oidc: { status: string; issuer?: string; error?: string };
     try {
       const { getOidcStatus } = await import("./auth/oidc.js");
       oidc = await getOidcStatus();

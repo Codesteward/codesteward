@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useToast } from "../components/Toast";
 import { Badge, EmptyState, PageHero, SkeletonLines, formatRelative } from "../components/ui";
-import { Select } from "../components/Select";
 import { api, type ScmPr, type ScmRepo } from "../lib/api";
 
 export function PullRequests() {

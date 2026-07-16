@@ -368,7 +368,7 @@ function OrgRuntimeBooleanPanel(props: {
     Boolean(entry?.orgEditable ?? entry?.editable) && !lockedByEnv && !lockedByPlatform;
   const effectiveOn = entry?.value === "1" || entry?.value === "true";
 
-  let statusLabel = effectiveOn ? "on" : "off";
+  let statusLabel: string;
   if (lockedByEnv) statusLabel = effectiveOn ? "on · env" : "off · env";
   else if (lockedByPlatform) statusLabel = effectiveOn ? "on · platform" : "off · platform";
   else if (choice === "1") statusLabel = "on · this org";

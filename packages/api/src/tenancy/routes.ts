@@ -1,6 +1,6 @@
 import type { Hono } from "hono";
 import { getTenancyStore, type OrgRole } from "./orgs.js";
-import { isGitHubAppConfigured, createScmProvider } from "@codesteward/scm";
+import { isGitHubAppConfigured } from "@codesteward/scm";
 import { globalAuthStore } from "../auth-store.js";
 import { orgErrorResponse } from "../org-context.js";
 
@@ -459,7 +459,7 @@ export function registerTenancyRoutes(app: Hono) {
         const slug = org?.slug || orgId;
         const tempPassword =
           body.password ??
-          `ChangeMe-${Math.random().toString(36).slice(2, 10)}!`;
+          `ChangeMe-${(await import("node:crypto")).randomBytes(9).toString("base64url")}!`;
         const prov = await provisionMember({
           email: body.email,
           password: tempPassword,
@@ -728,10 +728,25 @@ export function registerTenancyRoutes(app: Hono) {
           appId: creds.appId,
           privateKeyPem: creds.privateKey,
         });
-        const apiRoot =
-          !creds.baseUrl || creds.baseUrl.includes("github.com")
-            ? "https://api.github.com"
-            : `${creds.baseUrl.replace(/\/$/, "")}/api/v3`;
+        let isGhDotCom = false;
+        try {
+          if (creds.baseUrl) {
+            const u = new URL(
+              creds.baseUrl.includes("://")
+                ? creds.baseUrl
+                : `https://${creds.baseUrl}`,
+            );
+            isGhDotCom =
+              u.hostname === "github.com" || u.hostname === "api.github.com";
+          } else {
+            isGhDotCom = true;
+          }
+        } catch {
+          isGhDotCom = false;
+        }
+        const apiRoot = isGhDotCom
+          ? "https://api.github.com"
+          : `${creds.baseUrl!.replace(/\/$/, "")}/api/v3`;
         const instRes = await fetch(`${apiRoot}/app/installations/${installationId}`, {
           headers: {
             Authorization: `Bearer ${jwt}`,

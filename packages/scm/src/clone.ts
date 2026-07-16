@@ -26,13 +26,88 @@ export interface MaterializeGitResult {
 }
 
 /**
+ * Reject values that could be interpreted as git options (e.g. --upload-pack=…).
+ * CodeQL: js/second-order-command-line-injection.
+ */
+function assertSafeGitArg(label: string, value: string): string {
+  const v = value.trim();
+  if (!v) throw new Error(`invalid ${label}: empty`);
+  if (v.startsWith("-")) throw new Error(`invalid ${label}: must not start with -`);
+  if (v.includes("\0") || /[\r\n\t]/.test(v)) {
+    throw new Error(`invalid ${label}: control characters`);
+  }
+  // owner / repo / dir segments: no path traversal or shell metacharacters
+  if (label === "owner" || label === "repo" || label === "dir") {
+    if (!/^[A-Za-z0-9._-]+$/.test(v) || v === "." || v === "..") {
+      throw new Error(`invalid ${label}: ${v.slice(0, 40)}`);
+    }
+  }
+  // ref: branch or sha — allow / for namespaced branches
+  if (label === "ref") {
+    if (!/^[A-Za-z0-9._/+=@-]+$/.test(v) || v.includes("..")) {
+      throw new Error(`invalid ref: ${v.slice(0, 40)}`);
+    }
+  }
+  return v;
+}
+
+/** True when host is exactly github.com (not evil-github.com or github.com.evil). */
+export function isExactGithubDotComHost(hostOrUrl: string): boolean {
+  try {
+    const raw = hostOrUrl.trim();
+    const u = raw.includes("://") ? new URL(raw) : new URL(`https://${raw}`);
+    return u.hostname === "github.com";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the git clone base URL for GitHub.
+ * API roots (https://api.github.com) and web roots (https://github.com) both map to
+ * https://github.com. GHE keeps the enterprise host after stripping /api/v3.
+ * Uses exact hostname checks (not substring) so evil-github.com is not treated as GH.com.
+ */
+export function resolveGithubGitHost(hostOrUrl?: string): string {
+  const raw = (hostOrUrl ?? "https://github.com")
+    .trim()
+    .replace(/\/api\/v3\/?$/i, "")
+    .replace(/\/$/, "");
+  try {
+    const u = raw.includes("://") ? new URL(raw) : new URL(`https://${raw}`);
+    if (u.hostname === "github.com" || u.hostname === "api.github.com") {
+      return "https://github.com";
+    }
+    // Enterprise / custom: protocol + host only (drop any leftover path)
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return "https://github.com";
+  }
+}
+
+/**
  * Shallow clone (or fetch into existing dir) of owner/repo at optional SHA/branch.
  * Never logs the token.
  */
 export async function materializeGitWorkspace(
   opts: MaterializeGitOpts,
 ): Promise<MaterializeGitResult> {
-  const cloneUrl = buildAuthenticatedCloneUrl(opts);
+  let safeOwner: string;
+  let safeRepo: string;
+  try {
+    safeOwner = assertSafeGitArg("owner", opts.owner);
+    safeRepo = assertSafeGitArg("repo", opts.repo);
+  } catch (err) {
+    return {
+      ok: false,
+      workdir: opts.workdir,
+      verified: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+  const safeOpts = { ...opts, owner: safeOwner, repo: safeRepo };
+
+  const cloneUrl = buildAuthenticatedCloneUrl(safeOpts);
   if (!cloneUrl) {
     return {
       ok: false,
@@ -55,17 +130,22 @@ export async function materializeGitWorkspace(
       await rm(opts.workdir, { recursive: true, force: true });
       await mkdir(join(opts.workdir, ".."), { recursive: true });
       const parent = join(opts.workdir, "..");
-      const name = opts.workdir.split(/[/\\]/).pop()!;
+      const name = assertSafeGitArg(
+        "dir",
+        opts.workdir.split(/[/\\]/).pop() || "repo",
+      );
+      // -- end-of-options so URL/path cannot be parsed as git switches
       const clone = await runGit(parent, [
         "clone",
         "--depth",
         "50",
         "--no-single-branch",
+        "--",
         cloneUrl.url,
         name,
       ]);
       if (!clone.ok) {
-        await scrubRemote(opts.workdir, opts);
+        await scrubRemote(opts.workdir, safeOpts);
         return {
           ok: false,
           workdir: opts.workdir,
@@ -76,19 +156,26 @@ export async function materializeGitWorkspace(
       }
     } else {
       // fetch updates
+      // URL is always built by us as https://… — never a bare flag
+      if (!/^https:\/\//i.test(cloneUrl.url)) {
+        throw new Error("refusing non-https clone URL");
+      }
       await runGit(opts.workdir, ["remote", "set-url", "origin", cloneUrl.url]);
       await runGit(opts.workdir, ["fetch", "--depth", "50", "origin"]);
     }
 
-    const ref = opts.headSha || opts.headBranch;
-    if (ref) {
+    const rawRef = opts.headSha || opts.headBranch;
+    if (rawRef) {
+      // ref validated not to start with "-" so cannot be parsed as a git option
+      const ref = assertSafeGitArg("ref", rawRef);
       const co = await runGit(opts.workdir, ["checkout", "--force", ref]);
       if (!co.ok && opts.headSha) {
+        const sha = assertSafeGitArg("ref", opts.headSha);
         // try fetch that sha
-        await runGit(opts.workdir, ["fetch", "--depth", "1", "origin", opts.headSha]);
-        const co2 = await runGit(opts.workdir, ["checkout", "--force", opts.headSha]);
+        await runGit(opts.workdir, ["fetch", "--depth", "1", "origin", sha]);
+        const co2 = await runGit(opts.workdir, ["checkout", "--force", sha]);
         if (!co2.ok) {
-          await scrubRemote(opts.workdir, opts);
+          await scrubRemote(opts.workdir, safeOpts);
           return {
             ok: false,
             workdir: opts.workdir,
@@ -111,7 +198,7 @@ export async function materializeGitWorkspace(
           opts.headSha.startsWith(verifiedSha)),
     );
 
-    await scrubRemote(opts.workdir, opts);
+    await scrubRemote(opts.workdir, safeOpts);
 
     return {
       ok: true,
@@ -121,7 +208,7 @@ export async function materializeGitWorkspace(
       cloneUrlHost: cloneUrl.host,
     };
   } catch (err) {
-    await scrubRemote(opts.workdir, opts).catch(() => undefined);
+    await scrubRemote(opts.workdir, safeOpts).catch(() => undefined);
     return {
       ok: false,
       workdir: opts.workdir,
@@ -160,12 +247,8 @@ export function buildAuthenticatedCloneUrl(opts: {
   const p = opts.provider.toLowerCase();
   const token = opts.token;
   if (p === "github" || p === "github_enterprise") {
-    const host = (opts.host ?? "https://github.com")
-      .replace(/\/api\/v3\/?$/, "")
-      .replace(/\/$/, "");
-    const ghHost = host.includes("github.com")
-      ? "https://github.com"
-      : host;
+    // host is often GITHUB_API_URL (api.github.com) — map to git host github.com
+    const ghHost = resolveGithubGitHost(opts.host);
     if (!token) {
       return { url: `${ghHost}/${opts.owner}/${opts.repo}.git`, host: ghHost };
     }

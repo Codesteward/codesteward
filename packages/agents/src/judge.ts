@@ -1,5 +1,4 @@
 import {
-  SEVERITY_RANK,
   type FindingCandidate,
   type Severity,
 } from "@codesteward/core";

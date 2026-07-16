@@ -1,4 +1,4 @@
-import { nowIso, type AgentRole, type FindingCandidate, type ReviewUnit } from "@codesteward/core";
+import { type AgentRole, type FindingCandidate, type ReviewUnit } from "@codesteward/core";
 import type { GraphClient } from "@codesteward/graph-client";
 import { resolveModelForRole, type ModelRouter } from "@codesteward/model-router";
 import type { Policy } from "@codesteward/policy";

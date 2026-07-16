@@ -5,7 +5,7 @@
  * 2) Runtime: API bootstrap, start stewardship, wait completion (inline worker)
  * Exit 0 only if static rate >= 0.98 AND runtime smoke passes.
  */
-import { readFileSync, existsSync, readdirSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";

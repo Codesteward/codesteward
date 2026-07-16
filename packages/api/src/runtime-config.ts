@@ -454,7 +454,7 @@ function entryFromMeta(
   const scope = meta.scope === "org" || ORG_OVERRIDABLE_RUNTIME_KEYS.has(meta.key) ? "org" : "platform";
   const orgKey = ORG_OVERRIDABLE_RUNTIME_KEYS.has(meta.key);
 
-  let editable = !meta.envOnly && !r.envSet;
+  let editable: boolean;
   let orgEditable = false;
 
   if (layer === "platform") {

@@ -97,8 +97,8 @@ async function scimAuth(c: Context, pathOrgKey?: string): Promise<AuthOk | AuthF
   }
 
   // Resolve path org (canonical multi-tenant)
-  let orgId = resolved.orgId;
-  let orgKey = resolved.orgId;
+  let orgId: string;
+  let orgKey: string;
 
   if (pathOrgKey) {
     const org = await resolveOrgKey(pathOrgKey);

@@ -10,7 +10,7 @@ import { globalQueue } from "./queue.js";
 import { globalSessionStore } from "./store.js";
 import { findingsToSarif } from "@codesteward/findings";
 import { createGraphClient } from "@codesteward/graph-client";
-import { createModelRouter, loadEnvModelConfig } from "@codesteward/model-router";
+import { loadEnvModelConfig } from "@codesteward/model-router";
 import { apiAuthMiddleware, resolveCorsOrigin } from "./middleware/auth.js";
 import { registerExtraRoutes } from "./extra-routes.js";
 import { registerTenancyRoutes } from "./tenancy/routes.js";
@@ -1711,7 +1711,6 @@ export function createApp() {
 
   app.get("/v1/org/license", async (c) => {
     const {
-      resolveLicenseAsync,
       resolveOrgLicense,
       featureMatrix,
       FEATURE_CATALOG,

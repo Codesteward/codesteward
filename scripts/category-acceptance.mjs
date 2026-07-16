@@ -9,8 +9,7 @@
  *   STEW_API_KEY=...
  *   STEW_DATA_DIR=.steward-data-accept (isolated)
  */
-import { createServer } from "node:http";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -153,18 +152,14 @@ async function main() {
     );
     const orgIdB = orgB.body?.org?.id;
 
-    // Isolation: spoof org without membership
+    // Isolation: spoof org without membership (user is owner of orgB after create)
     const spoof = await req("/v1/sessions", {
-      headers: { ...authH, "X-Org-Id": orgIdB ?? "nope" },
-    });
-    // After create, user is owner of orgB — should work. Spoof unknown org:
-    const spoof2 = await req("/v1/sessions", {
       headers: { ...authH, "X-Org-Id": "org_not_a_member_zzzz" },
     });
     check(
       "org_isolation_spoof_403",
-      spoof2.status === 403,
-      `status=${spoof2.status}`,
+      spoof.status === 403,
+      `status=${spoof.status}`,
     );
 
     // Session in local

@@ -146,7 +146,7 @@ export async function prepareCrossRepoReview(
     }
   }
 
-  let edgeSeed = { written: 0, skipped: 0, errors: [] as string[] };
+  let edgeSeed: { written: number; skipped: number; errors: string[] };
   try {
     edgeSeed = await seedCrossRepoGraphEdges({
       graph: input.graph,

@@ -16,8 +16,17 @@ export interface GitHubAppInstallationSummary {
   suspended: boolean;
 }
 
+function isGithubDotComApiHost(baseUrl: string): boolean {
+  try {
+    const u = baseUrl.includes("://") ? new URL(baseUrl) : new URL(`https://${baseUrl}`);
+    return u.hostname === "github.com" || u.hostname === "api.github.com";
+  } catch {
+    return false;
+  }
+}
+
 function apiRoot(baseUrl?: string): string {
-  if (!baseUrl || baseUrl.includes("github.com")) return "https://api.github.com";
+  if (!baseUrl || isGithubDotComApiHost(baseUrl)) return "https://api.github.com";
   return baseUrl.replace(/\/$/, "").endsWith("/api/v3")
     ? baseUrl.replace(/\/$/, "")
     : `${baseUrl.replace(/\/$/, "")}/api/v3`;

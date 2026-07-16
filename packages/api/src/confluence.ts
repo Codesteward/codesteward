@@ -78,7 +78,12 @@ export async function searchConfluencePages(
     };
   }
   const limit = opts.limit ?? 5;
-  const cqlParts = [`type=page`, `text ~ "${query.replace(/"/g, '\\"').slice(0, 120)}"`];
+  // Escape backslash first, then double-quotes for CQL string literals
+  const safeQuery = query
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .slice(0, 120);
+  const cqlParts = [`type=page`, `text ~ "${safeQuery}"`];
   if (cfg.spaceKey) cqlParts.unshift(`space="${cfg.spaceKey}"`);
   const cql = cqlParts.join(" AND ");
   const url = `${cfg.baseUrl}/wiki/rest/api/content/search?cql=${encodeURIComponent(cql)}&limit=${limit}&expand=space,body.view`;
@@ -149,9 +154,10 @@ export async function getConfluencePage(
 }
 
 function stripHtml(html: string): string {
+  // Allow optional whitespace before the closing `>` so tags like </script > are stripped
   return html
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();

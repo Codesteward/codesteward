@@ -16,8 +16,17 @@ export interface GitHubAppCredentials {
 
 const memoryCache = new Map<string, InstallationToken>();
 
+function isGithubDotComApiHost(baseUrl: string): boolean {
+  try {
+    const u = baseUrl.includes("://") ? new URL(baseUrl) : new URL(`https://${baseUrl}`);
+    return u.hostname === "github.com" || u.hostname === "api.github.com";
+  } catch {
+    return false;
+  }
+}
+
 function apiRoot(baseUrl?: string): string {
-  if (!baseUrl || baseUrl.includes("github.com")) return "https://api.github.com";
+  if (!baseUrl || isGithubDotComApiHost(baseUrl)) return "https://api.github.com";
   // GHE: https://ghe.example.com/api/v3
   return baseUrl.replace(/\/$/, "").endsWith("/api/v3")
     ? baseUrl.replace(/\/$/, "")

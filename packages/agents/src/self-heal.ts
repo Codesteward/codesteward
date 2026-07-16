@@ -495,10 +495,9 @@ export async function runUnitWithHeal(
   };
   let useSimpleRunner = false;
   let freshContext = false;
-  let lastError = "unknown";
+  let lastError = "";
   let recovered = false;
   let lastStrategy: HealStrategy | undefined;
-  let splitChildren: ReviewUnit[] | undefined;
 
   const emit = async (event: ProgressEvent) => {
     await input.onEvent?.(event);
@@ -546,7 +545,6 @@ export async function runUnitWithHeal(
         failureLog,
         recovered: Boolean(unit.healed),
         strategyUsed: lastStrategy,
-        splitChildren,
       };
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
@@ -622,7 +620,6 @@ export async function runUnitWithHeal(
       if (strategy === "split_unit") {
         const children = splitReviewUnit(unit);
         if (children.length > 1) {
-          splitChildren = children;
           unit = {
             ...unit,
             status: "skipped",
