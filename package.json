@@ -42,7 +42,8 @@
   "pnpm": {
     "overrides": {
       "undici": ">=6.24.0",
-      "picomatch@>=4 <4.0.4": "4.0.4"
+      "picomatch@>=4 <4.0.4": "4.0.4",
+      "serialize-javascript": ">=7.0.3"
     }
   }
 }

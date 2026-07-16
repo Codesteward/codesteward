@@ -1,6 +1,6 @@
 # Rebuild Codesteward Keycloak when upstream Keycloak ships a new release.
 #
-# Tags always match upstream (26.7.0), not product semver (1.1.0), so operators can
+# Tags always match upstream (26.7.0), not product semver (1.2.0), so operators can
 # compare ghcr.io/.../keycloak:X.Y.Z with quay.io/keycloak/keycloak:X.Y.Z.
 #
 # Also runs on product release (release.yml) so theme/realm changes ship with the pin.
@@ -45,20 +45,22 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Resolve versions
         id: ver
         env:
           GH_TOKEN: ${{ github.token }}
+          # Pass workflow inputs via env (not inline ${{ }} in shell) — zizmor template-injection
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_FORCE: ${{ github.event.inputs.force }}
         run: |
           set -euo pipefail
           PIN=$(tr -d '[:space:]' < deploy/compose/keycloak/KEYCLOAK_VERSION)
           echo "pinned=$PIN" >> "$GITHUB_OUTPUT"
 
-          INPUT_VERSION='${{ github.event.inputs.version }}'
-          INPUT_FORCE='${{ github.event.inputs.force }}'
-
-          if [[ -n "${INPUT_VERSION}" ]]; then
+          if [[ -n "${INPUT_VERSION:-}" ]]; then
             LATEST="${INPUT_VERSION#v}"
           else
             LATEST=$(gh api "repos/keycloak/keycloak/releases?per_page=20" \
@@ -81,7 +83,7 @@ jobs:
           if [[ "$LATEST" != "$PIN" ]]; then
             NEED=true
           fi
-          if [[ "$INPUT_FORCE" == "true" ]]; then
+          if [[ "${INPUT_FORCE:-}" == "true" ]]; then
             NEED=true
           fi
 
@@ -96,8 +98,10 @@ jobs:
 
       - name: Already current
         if: steps.ver.outputs.need_rebuild != 'true'
+        env:
+          PINNED: ${{ steps.ver.outputs.pinned }}
         run: |
-          echo "OK — pin and image target are Keycloak ${{ steps.ver.outputs.pinned }}."
+          echo "OK — pin and image target are Keycloak ${PINNED}."
           echo "workflow_dispatch force=true rebuilds the same base (theme refresh)."
 
       - name: Image name
@@ -203,9 +207,11 @@ jobs:
                   deploy/compose/keycloak/Dockerfile \
                   deploy/helm/codesteward/values.yaml
           git commit -m "chore(keycloak): bump base to ${LATEST}"
+          # checkout used persist-credentials: false — auth via token for push
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push -u origin "$BRANCH" --force
 
-          REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          REPO_LC=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
           gh pr create \
             --title "chore(keycloak): bump base to ${LATEST}" \
             --base main \

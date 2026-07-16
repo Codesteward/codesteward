@@ -57,7 +57,9 @@ Self-host hardening, operator docs site, multi-tenant workers, and release packa
 
 ### Fixed
 
-- (See 1.1.0 for prior release fixes.)
+- **CI** — `require-tools` test imports `after` from `node:test`; zizmor template-injection in
+  Keycloak base-update workflow (inputs via env); `serialize-javascript` override for docs/Docusaurus
+  HIGH advisory.
 
 ### Upgrade notes
 
