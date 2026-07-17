@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Codesteward Review cloud trial — single EC2 VM with Docker Compose, Traefik,
+  Codesteward Review cloud trial — single EC2 VM with Docker Compose, nginx edge,
   Keycloak (OIDC), API, worker, UI, Postgres. LLM keys configured in the product UI.
   Optional Domain enables Let's Encrypt HTTPS.
 

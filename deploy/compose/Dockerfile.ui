@@ -5,11 +5,13 @@ COPY package.json pnpm-workspace.yaml tsconfig.base.json pnpm-lock.yaml ./
 COPY packages/ui ./packages/ui
 WORKDIR /app/packages/ui
 
-# Browser-visible OIDC (Keycloak) — baked into Vite build
-ARG VITE_OIDC_ISSUER=http://localhost:8083/realms/codesteward
+# Browser OIDC — leave issuer/redirect empty by default so the SPA loads
+# /v1/auth/oidc/status at runtime (works on cloud public IPs). Local category
+# compose can still pass build-args for a fully offline bake.
+ARG VITE_OIDC_ISSUER=
 ARG VITE_OIDC_CLIENT_ID=codesteward-ui
-ARG VITE_OIDC_REDIRECT_URI=http://localhost:8080/auth/callback
-ARG VITE_OIDC_POST_LOGOUT_REDIRECT_URI=http://localhost:8080/
+ARG VITE_OIDC_REDIRECT_URI=
+ARG VITE_OIDC_POST_LOGOUT_REDIRECT_URI=
 ARG VITE_OIDC_SCOPES="openid profile email"
 ARG VITE_API_URL=
 ENV VITE_OIDC_ISSUER=$VITE_OIDC_ISSUER \

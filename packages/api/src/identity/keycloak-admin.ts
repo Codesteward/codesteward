@@ -41,8 +41,11 @@ export interface KcConfig {
 function cfg(env: NodeJS.ProcessEnv = process.env): KcConfig | null {
   const issuer = (env.OIDC_ISSUER ?? env.KEYCLOAK_ISSUER ?? "").replace(/\/$/, "");
   if (!issuer) return null;
-  // http://keycloak:8083/realms/codesteward → base + realm
-  const m = issuer.match(/^(https?:\/\/[^/]+)\/realms\/([^/]+)/i);
+  // Supports plain and path-based Keycloak (http-relative-path=/auth):
+  //   http://keycloak:8083/realms/codesteward
+  //   http://keycloak:8083/auth/realms/codesteward
+  // baseUrl is everything before "/realms/{realm}" (includes /auth when present).
+  const m = issuer.match(/^(https?:\/\/.+?)\/realms\/([^/]+)/i);
   if (!m) return null;
   const clientId = env.KEYCLOAK_ADMIN_CLIENT_ID ?? env.OIDC_ADMIN_CLIENT_ID ?? "codesteward-api";
   const clientSecret =

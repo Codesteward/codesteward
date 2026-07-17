@@ -1,5 +1,4 @@
 // Codesteward Review cloud trial — single Linux VM + Docker Compose stack.
-// LLM keys configured in product UI. Optional domain enables Traefik TLS.
 
 @description('Base name for resources')
 param namePrefix string = 'codesteward'
@@ -34,6 +33,49 @@ var nicName = '${namePrefix}-nic'
 var pipName = '${namePrefix}-pip'
 var nsgName = '${namePrefix}-nsg'
 var vnetName = '${namePrefix}-vnet'
+
+// format() so domain/imageTag/etc. are real Bicep interpolations (''' multi-line can leave ${} literal)
+var cloudInit = format('''#cloud-config
+package_update: true
+packages:
+  - git
+  - curl
+  - ca-certificates
+  - openssl
+  - python3
+  - jq
+  - gnupg
+write_files:
+  - path: /etc/codesteward/boot.env
+    permissions: '0600'
+    content: |
+      DOMAIN={0}
+      ACME_EMAIL={1}
+      IMAGE_TAG={2}
+      GIT_REF={3}
+runcmd:
+  - |
+    set -euo pipefail
+    exec >>/var/log/codesteward-user-data.log 2>&1
+    echo "codesteward cloud-init start"
+    set -a
+    . /etc/codesteward/boot.env
+    set +a
+    export DOMAIN ACME_EMAIL IMAGE_TAG
+    export PUBLIC_IP="$(curl -fsS --max-time 3 -H Metadata:true --noproxy '*' \
+      'http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-12-13&format=text' || true)"
+    REF="${{GIT_REF:-main}}"
+    INSTALL_DIR=/opt/codesteward
+    if [[ ! -d "$INSTALL_DIR/.git" ]]; then
+      git clone --depth 1 --branch "$REF" https://github.com/Codesteward/codesteward.git "$INSTALL_DIR" \
+        || git clone --depth 1 https://github.com/Codesteward/codesteward.git "$INSTALL_DIR"
+    fi
+    cd "$INSTALL_DIR"
+    git fetch --depth 1 origin "$REF" || true
+    git checkout "$REF" 2>/dev/null || true
+    bash "$INSTALL_DIR/deploy/cloud/first-boot.sh"
+    echo "codesteward cloud-init done"
+''', domain, acmeEmail, imageTag, gitRef)
 
 resource nsg 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
   name: nsgName
@@ -123,6 +165,7 @@ resource nic 'Microsoft.Network/networkInterfaces@2023-09-01' = {
         }
       }
     ]
+    networkSecurityGroup: { id: nsg.id }
   }
 }
 
@@ -145,7 +188,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
           ]
         }
       }
-      customData: base64(customData)
+      customData: base64(cloudInit)
     }
     storageProfile: {
       imageReference: {
@@ -166,23 +209,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
   }
 }
 
-var customData = '''#!/bin/bash
-set -euo pipefail
-exec > >(tee /var/log/codesteward-user-data.log) 2>&1
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y git curl ca-certificates openssl python3 jq
-export DOMAIN='${domain}'
-export ACME_EMAIL='${acmeEmail}'
-export IMAGE_TAG='${imageTag}'
-REF='${gitRef}'
-INSTALL_DIR=/opt/codesteward
-git clone --depth 1 --branch "$REF" https://github.com/Codesteward/codesteward.git "$INSTALL_DIR" \
-  || git clone --depth 1 https://github.com/Codesteward/codesteward.git "$INSTALL_DIR"
-cd "$INSTALL_DIR" && git checkout "$REF" 2>/dev/null || true
-bash "$INSTALL_DIR/deploy/cloud/first-boot.sh"
-'''
-
 output publicIp string = pip.properties.ipAddress
 output uiUrl string = 'http://${pip.properties.ipAddress}/'
 output credentialsPath string = '/var/lib/codesteward/credentials.txt'
+output sshHint string = 'ssh ${adminUsername}@${pip.properties.ipAddress}'

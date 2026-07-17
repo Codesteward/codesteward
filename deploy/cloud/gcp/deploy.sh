@@ -45,7 +45,7 @@ gcloud compute firewall-rules describe codesteward-http --project "$PROJECT_ID" 
     --project "$PROJECT_ID" \
     --allow=tcp:80,tcp:443 \
     --target-tags=codesteward-cloud \
-    --description="Codesteward UI/Traefik"
+    --description="Codesteward UI/HTTPS"
 
 gcloud compute instances describe "$INSTANCE_NAME" --zone "$ZONE" --project "$PROJECT_ID" >/dev/null 2>&1 && {
   echo "Instance already exists: $INSTANCE_NAME"

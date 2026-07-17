@@ -1,7 +1,7 @@
 # Deploy Codesteward to Google Cloud
 
 This Cloud Shell tutorial creates a single GCE VM running the Codesteward
-**cloud Compose stack** (Traefik, Keycloak, API, worker, UI, Postgres).
+**cloud Compose stack** (nginx edge, Keycloak, API, worker, UI, Postgres).
 
 **Requirements:** a GCP project with billing, ~8 GB RAM VM quota.
 

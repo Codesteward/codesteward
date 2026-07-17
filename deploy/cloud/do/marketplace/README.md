@@ -2,7 +2,7 @@
 
 This directory describes how to publish **Codesteward** as a Droplet 1-Click App.
 End users create a Droplet from Marketplace; first boot runs the shared cloud stack
-(Keycloak + Traefik + Compose). **No LLM key at install.**
+(Keycloak + nginx edge + Compose). **No LLM key at install.**
 
 ## Architecture
 

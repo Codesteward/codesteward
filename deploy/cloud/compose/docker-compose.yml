@@ -1,9 +1,8 @@
 # Codesteward cloud trial stack (VM / Marketplace / Launch Stack)
-# Public entry via Traefik :80 (and :443 when TLS override is enabled).
+# Public entry via nginx edge on :80/:443 (self-signed TLS by default for OIDC PKCE).
 # Keycloak OIDC required. LLM keys are configured in the product UI after login.
 #
 #   docker compose --env-file .env -f docker-compose.yml up -d
-#   docker compose --env-file .env -f docker-compose.yml -f docker-compose.tls.yml up -d
 name: codesteward-cloud
 
 x-stew-env: &stew-env
@@ -52,19 +51,19 @@ x-stew-env: &stew-env
   STEW_SCIM_ORG_ID: ${STEW_SCIM_ORG_ID:-local}
 
 services:
-  traefik:
-    image: traefik:v3.3
+  # Edge proxy (nginx) — avoids Traefik+Docker API mismatch on Docker Engine 29+
+  edge:
+    image: nginx:1.27-alpine
     restart: unless-stopped
-    command:
-      - --providers.docker=true
-      - --providers.docker.exposedbydefault=false
-      - --entrypoints.web.address=:80
-      - --api.dashboard=false
-      - --log.level=INFO
     ports:
       - "80:80"
+      - "443:443"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./nginx-edge.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - ui
+      - keycloak
     networks:
       - default
 
@@ -111,13 +110,8 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
     volumes:
       - ./realm-import:/opt/keycloak/data/import:ro
-    labels:
-      - traefik.enable=true
-      - traefik.http.services.keycloak.loadbalancer.server.port=8083
-      - traefik.http.routers.keycloak.rule=Host(`${TRAEFIK_HOST}`) && PathPrefix(`/auth`)
-      - traefik.http.routers.keycloak.entrypoints=web
-      - traefik.http.routers.keycloak.service=keycloak
-      - traefik.http.routers.keycloak.priority=100
+    expose:
+      - "8083"
     networks:
       - default
 
@@ -160,13 +154,6 @@ services:
     restart: unless-stopped
     depends_on:
       - api
-    labels:
-      - traefik.enable=true
-      - traefik.http.services.ui.loadbalancer.server.port=80
-      - traefik.http.routers.ui.rule=Host(`${TRAEFIK_HOST}`)
-      - traefik.http.routers.ui.entrypoints=web
-      - traefik.http.routers.ui.service=ui
-      - traefik.http.routers.ui.priority=1
     networks:
       - default
 

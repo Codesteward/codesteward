@@ -37,3 +37,31 @@ Badge (once `azuredeploy.json` is on `main`):
 1. Optional: point Domain at the public IP output.
 2. Wait for first-boot; then `ssh` and `sudo cat /var/lib/codesteward/credentials.txt`.
 3. Open UI → Keycloak login → **Settings → Models**.
+
+## VM created but nothing on :80
+
+Probe from your laptop: `nc -vz <publicIp> 80` — if closed, the stack never started (first-boot still running or failed).
+
+SSH in (use the key you set at deploy):
+
+```bash
+ssh azureuser@<publicIp>
+
+# 1) Did cloud-init / first-boot run?
+sudo tail -200 /var/log/codesteward-user-data.log
+sudo tail -100 /var/log/cloud-init-output.log
+
+# 2) Repo present?
+ls -la /opt/codesteward/deploy/cloud
+
+# 3) Re-run bootstrap (safe; regenerates secrets if incomplete)
+sudo FORCE_BOOT=1 PUBLIC_IP=<publicIp> bash /opt/codesteward/deploy/cloud/first-boot.sh
+
+# 4) Health
+sudo docker compose -f /opt/codesteward/deploy/cloud/compose/docker-compose.yml --env-file /opt/codesteward/deploy/cloud/compose/.env ps
+sudo cat /var/lib/codesteward/credentials.txt
+```
+
+Then open `http://<publicIp>/` (not HTTPS unless you set a domain).
+
+Typical wait after create: **5–15 minutes** (Docker install + GHCR image pulls).

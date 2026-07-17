@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "14968803252668265403"
+      "templateHash": "12002922595688248362"
     }
   },
   "parameters": {
@@ -78,7 +78,7 @@
     "pipName": "[format('{0}-pip', parameters('namePrefix'))]",
     "nsgName": "[format('{0}-nsg', parameters('namePrefix'))]",
     "vnetName": "[format('{0}-vnet', parameters('namePrefix'))]",
-    "customData": "#!/bin/bash\nset -euo pipefail\nexec > >(tee /var/log/codesteward-user-data.log) 2>&1\nexport DEBIAN_FRONTEND=noninteractive\napt-get update -y\napt-get install -y git curl ca-certificates openssl python3 jq\nexport DOMAIN='${domain}'\nexport ACME_EMAIL='${acmeEmail}'\nexport IMAGE_TAG='${imageTag}'\nREF='${gitRef}'\nINSTALL_DIR=/opt/codesteward\ngit clone --depth 1 --branch \"$REF\" https://github.com/Codesteward/codesteward.git \"$INSTALL_DIR\" \\\n  || git clone --depth 1 https://github.com/Codesteward/codesteward.git \"$INSTALL_DIR\"\ncd \"$INSTALL_DIR\" && git checkout \"$REF\" 2>/dev/null || true\nbash \"$INSTALL_DIR/deploy/cloud/first-boot.sh\"\n"
+    "cloudInit": "[format('#cloud-config\npackage_update: true\npackages:\n  - git\n  - curl\n  - ca-certificates\n  - openssl\n  - python3\n  - jq\n  - gnupg\nwrite_files:\n  - path: /etc/codesteward/boot.env\n    permissions: ''0600''\n    content: |\n      DOMAIN={0}\n      ACME_EMAIL={1}\n      IMAGE_TAG={2}\n      GIT_REF={3}\nruncmd:\n  - |\n    set -euo pipefail\n    exec >>/var/log/codesteward-user-data.log 2>&1\n    echo \"codesteward cloud-init start\"\n    set -a\n    . /etc/codesteward/boot.env\n    set +a\n    export DOMAIN ACME_EMAIL IMAGE_TAG\n    export PUBLIC_IP=\"$(curl -fsS --max-time 3 -H Metadata:true --noproxy ''*'' \\\n      ''http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-12-13&format=text'' || true)\"\n    REF=\"${{GIT_REF:-main}}\"\n    INSTALL_DIR=/opt/codesteward\n    if [[ ! -d \"$INSTALL_DIR/.git\" ]]; then\n      git clone --depth 1 --branch \"$REF\" https://github.com/Codesteward/codesteward.git \"$INSTALL_DIR\" \\\n        || git clone --depth 1 https://github.com/Codesteward/codesteward.git \"$INSTALL_DIR\"\n    fi\n    cd \"$INSTALL_DIR\"\n    git fetch --depth 1 origin \"$REF\" || true\n    git checkout \"$REF\" 2>/dev/null || true\n    bash \"$INSTALL_DIR/deploy/cloud/first-boot.sh\"\n    echo \"codesteward cloud-init done\"\n', parameters('domain'), parameters('acmeEmail'), parameters('imageTag'), parameters('gitRef'))]"
   },
   "resources": [
     {
@@ -188,9 +188,13 @@
               }
             }
           }
-        ]
+        ],
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgName'))]"
+        }
       },
       "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgName'))]",
         "[resourceId('Microsoft.Network/publicIPAddresses', variables('pipName'))]",
         "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
       ]
@@ -218,7 +222,7 @@
               ]
             }
           },
-          "customData": "[base64(variables('customData'))]"
+          "customData": "[base64(variables('cloudInit'))]"
         },
         "storageProfile": {
           "imageReference": {
@@ -260,6 +264,10 @@
     "credentialsPath": {
       "type": "string",
       "value": "/var/lib/codesteward/credentials.txt"
+    },
+    "sshHint": {
+      "type": "string",
+      "value": "[format('ssh {0}@{1}', parameters('adminUsername'), reference(resourceId('Microsoft.Network/publicIPAddresses', variables('pipName')), '2023-09-01').ipAddress)]"
     }
   }
 }

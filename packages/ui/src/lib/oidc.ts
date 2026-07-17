@@ -13,15 +13,33 @@ export type SpaOidcConfig = {
 let manager: UserManager | null = null;
 let initPromise: Promise<UserManager | null> | null = null;
 
+function isLoopbackUrl(url: string): boolean {
+  return /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:|\/|$)/i.test(url);
+}
+
+function pageIsLoopback(): boolean {
+  if (typeof window === "undefined") return true;
+  return /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname);
+}
+
+/**
+ * Prefer runtime page origin for cloud / non-local deploys.
+ * Build-time Vite defaults often bake localhost (Docker UI image) — never use those
+ * when the SPA is served from a public host.
+ */
 function redirectUri(): string {
   const env = import.meta.env.VITE_OIDC_REDIRECT_URI as string | undefined;
-  if (env?.trim()) return env.replace(/\/$/, "");
+  if (env?.trim() && !(isLoopbackUrl(env) && !pageIsLoopback())) {
+    return env.replace(/\/$/, "");
+  }
   return `${window.location.origin}/auth/callback`;
 }
 
 function postLogoutRedirectUri(): string {
   const env = import.meta.env.VITE_OIDC_POST_LOGOUT_REDIRECT_URI as string | undefined;
-  if (env?.trim()) return env;
+  if (env?.trim() && !(isLoopbackUrl(env) && !pageIsLoopback())) {
+    return env;
+  }
   return `${window.location.origin}/`;
 }
 
@@ -29,6 +47,10 @@ function fromEnv(): SpaOidcConfig | null {
   const issuer = (import.meta.env.VITE_OIDC_ISSUER as string | undefined)?.replace(/\/$/, "");
   const clientId = import.meta.env.VITE_OIDC_CLIENT_ID as string | undefined;
   if (issuer && clientId) {
+    // Ignore bake-time localhost issuer when the page is not on localhost (cloud VM, etc.)
+    if (isLoopbackUrl(issuer) && !pageIsLoopback()) {
+      return null;
+    }
     return {
       issuer,
       clientId,

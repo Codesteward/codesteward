@@ -12,8 +12,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ### Added
 
 - **Cloud one-click trial deploys** — shared single-VM stack under `deploy/cloud/`
-  (Traefik + Keycloak OIDC + API/worker/UI + Postgres). No LLM key at install (Models UI).
-  Optional domain enables Let's Encrypt; otherwise HTTP on public IP.
+  (nginx edge HTTPS + Keycloak OIDC + API/worker/UI + Postgres). No LLM key at install (Models UI).
+  Self-signed TLS by default (PKCE / `crypto.subtle`); optional `DOMAIN` for cert CN.
   - AWS CloudFormation Launch Stack (`deploy/cloud/aws/`)
   - Azure Bicep/ARM Deploy (`deploy/cloud/azure/`)
   - GCP Cloud Shell + `gcloud` (`deploy/cloud/gcp/`)
@@ -22,6 +22,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ### Changed
 
 ### Fixed
+
+- **Cloud trial deploys** (`deploy/cloud/`): production-shaped single-VM path hardened after Azure pilot:
+  - nginx edge (HTTPS self-signed) instead of Traefik (Docker Engine 29 API incompatibility)
+  - SPA OIDC: ignore bake-time localhost issuer off-loopback; empty UI Dockerfile OIDC defaults
+  - nginx routes `/auth/callback` to UI (Keycloak is under `/auth/*`)
+  - Keycloak Admin issuer parse supports path-based `/auth/realms/...` (org create)
+  - first-boot: quoted `.env`, IaC placeholder sanitization, Azure IMDS, always-HTTPS for PKCE
+  - Azure cloud-init via Bicep `format()` + NSG on NIC
 
 - **CI** — OpenSSF Scorecard retries once on failure (mitigates GitHub API 503 “repo unreachable”).
 - **Code scanning** — pin Docker base images and Keycloak workflow actions by digest/SHA;
