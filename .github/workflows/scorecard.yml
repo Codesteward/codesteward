@@ -36,14 +36,40 @@ jobs:
         with:
           persist-credentials: false
 
+      # Scorecard calls api.github.com; GitHub 5xx/outages show up as
+      # "repo unreachable: GET … 503". Retry once after a short backoff.
       - name: Run Scorecard
+        id: scorecard
+        continue-on-error: true
         uses: ossf/scorecard-action@v2.4.0
         with:
           results_file: results.sarif
           results_format: sarif
           publish_results: true
 
+      - name: Wait before Scorecard retry
+        if: steps.scorecard.outcome == 'failure'
+        run: sleep 45
+
+      - name: Retry Scorecard
+        id: scorecard_retry
+        if: steps.scorecard.outcome == 'failure'
+        uses: ossf/scorecard-action@v2.4.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Fail if Scorecard still failing
+        if: |
+          steps.scorecard.outcome == 'failure' &&
+          (steps.scorecard_retry.outcome == 'failure' || steps.scorecard_retry.outcome == 'skipped')
+        run: |
+          echo "::error::OpenSSF Scorecard failed (often transient GitHub API 503). Re-run the workflow or check https://www.githubstatus.com/"
+          exit 1
+
       - name: Upload SARIF
+        if: steps.scorecard.outcome == 'success' || steps.scorecard_retry.outcome == 'success'
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: results.sarif

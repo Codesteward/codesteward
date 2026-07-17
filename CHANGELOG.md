@@ -15,6 +15,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- **CI** — OpenSSF Scorecard retries once on failure (mitigates GitHub API 503 “repo unreachable”).
+- **Code scanning** — pin Docker base images and Keycloak workflow actions by digest/SHA;
+  Confluence HTML strip handles `</script…>` end tags; git clone SHA fetch restricted to object ids +
+  `checkout --`; remove empty Keycloak password field from Helm values; drop unused locals flagged by CodeQL.
+
 ---
 
 ## [1.2.0] — 2026-07-17

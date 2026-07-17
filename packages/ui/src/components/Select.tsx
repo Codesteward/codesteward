@@ -68,12 +68,7 @@ export function Select({
 
   const selected = options.find((o) => o.value === value);
   /** Closed trigger prefers plain `text` so rich option labels (multi-line) stay menu-only */
-  const selectedText = selected
-    ? selected.text ??
-      (typeof selected.label === "string" || typeof selected.label === "number"
-        ? String(selected.label)
-        : selected.value)
-    : placeholder;
+  const selectedText = selected ? optionText(selected) : placeholder;
   const enabled = options.map((o, i) => ({ o, i })).filter(({ o }) => !o.disabled);
 
   const placeMenu = useCallback(() => {

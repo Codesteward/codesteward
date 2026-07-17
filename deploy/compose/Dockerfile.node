@@ -1,6 +1,6 @@
 # Multi-stage app image (API + worker monorepo).
 # Build: compile server packages only. Runtime: production node_modules (no pnpm CLI, no UI).
-FROM node:22-bookworm-slim AS build
+FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS build
 # Debian slim packages are rolling; pin is impractical for git/ca-certificates build deps.
 # hadolint ignore=DL3008
 RUN apt-get update \
@@ -30,9 +30,9 @@ RUN pnpm install --frozen-lockfile=false \
   && find . -name '*.map' -delete 2>/dev/null || true \
   && rm -rf /root/.local/share/pnpm /root/.cache /tmp/*
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS runtime
 # uv installs a private Python 3.12 + codesteward-mcp for embedded Graph (stdio in workers).
-COPY --from=ghcr.io/astral-sh/uv:0.6.14 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.6.14@sha256:3362a526af7eca2fcd8604e6a07e873fb6e4286d8837cb753503558ce1213664 /uv /usr/local/bin/uv
 COPY deploy/compose/requirements-graph.txt /tmp/requirements-graph.txt
 # hadolint ignore=DL3008
 RUN apt-get update \

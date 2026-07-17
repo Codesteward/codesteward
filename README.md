@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="packages/ui/public/brand/codesteward-wordmark.png" alt="Codesteward" height="56" />
+  <img src="docs/static/img/readme/logo-chip.png" alt="Codesteward — Govern · Verify · Evolve" width="300" />
 </p>
 
 <h1 align="center">Codesteward Review</h1>
@@ -10,14 +10,29 @@
 </p>
 
 <p align="center">
-  <a href="https://codesteward.ai">codesteward.ai</a> ·
-  <a href="deploy/compose/docker-compose.category.yml">Category stack</a> ·
-  <a href="deploy/helm/codesteward">Helm</a>
+  <a href="https://github.com/Codesteward/codesteward/releases"><img src="https://img.shields.io/github/v/release/Codesteward/codesteward?include_prereleases&sort=semver&label=release" alt="Release" /></a>
+  <a href="https://github.com/Codesteward/codesteward/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Codesteward/codesteward/ci.yml?branch=main&label=ci" alt="CI" /></a>
+  <a href="https://github.com/Codesteward/codesteward/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Codesteward/codesteward" alt="License" /></a>
+  <img src="https://img.shields.io/badge/node-%E2%89%A5%2022-339933?logo=nodedotjs&logoColor=white" alt="Node ≥ 22" />
+  <img src="https://img.shields.io/badge/pnpm-9-f69220?logo=pnpm&logoColor=white" alt="pnpm 9" />
+  <img src="https://img.shields.io/badge/TypeScript-ESM-3178c6?logo=typescript&logoColor=white" alt="TypeScript ESM" />
+  <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="Apache-2.0" /></a>
 </p>
 
 <p align="center">
-  <code>Node ≥ 22</code> · <code>pnpm 9</code> · <code>TypeScript ESM</code> ·
-  <a href="LICENSE"><code>Apache-2.0</code></a>
+  <a href="https://codesteward.ai">Website</a> ·
+  <a href="https://docs.codesteward.ai">Docs</a> ·
+  <a href="deploy/compose/docker-compose.category.yml">Category stack</a> ·
+  <a href="deploy/helm/codesteward">Helm</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
+
+<p align="center">
+  <img src="docs/static/img/readme/dashboard-home.png" alt="Codesteward dashboard — sessions, findings, live activity" width="900" />
+</p>
+
+<p align="center">
+  <em>Product UI: dual-mode control plane — gate merges, steward long-lived branches, track findings and live agent activity.</em>
 </p>
 
 ---
@@ -35,45 +50,66 @@ Most AI review tools skim a diff and guess. **Codesteward** runs multi-agent rev
 
 One finding schema. One policy model. Multi-provider LLMs. Product UI, CLI, GitHub Action, and workers you can scale.
 
+<p align="center">
+  <img src="docs/static/img/readme/session-blade.png" alt="Session stage pipeline and review report" width="900" />
+</p>
+
+<p align="center">
+  <em>Session detail: stage pipeline, specialist timing, narrative report, and resume controls.</em>
+</p>
+
 ---
 
 ## Highlights
 
-- **Graph-aware agents** — specialists use Codesteward Graph (MCP) for structure, not only the patch  
-- **Dual mode** — PR gate + continuous branch stewardship on one platform  
-- **Identity** — Keycloak OIDC (SPA PKCE); API validates JWTs (no sticky sessions)  
-- **Orgs & policy** — members, connectors, STEWARD.md / path rules, learning, optional SCIM  
-- **Learning loop** — 👍/👎, dismissals, org memories → quieter next reviews  
-- **Multi-SCM** — GitHub App/webhooks, GitLab, Bitbucket, Azure DevOps, Gitea  
-- **Horizontal scale** — API/UI stateless; workers × concurrent specialists; optional queue broker + KEDA  
+- **Graph-aware agents** — specialists use Codesteward Graph (MCP) for structure, not only the patch
+- **Dual mode** — PR gate + continuous branch stewardship on one platform
+- **Identity** — Keycloak OIDC (SPA PKCE); API validates JWTs (no sticky sessions)
+- **Orgs & policy** — members, connectors, STEWARD.md / path rules, learning, optional SCIM
+- **Learning loop** — 👍/👎, dismissals, org memories → quieter next reviews
+- **Multi-SCM** — GitHub App/webhooks, GitLab, Bitbucket, Azure DevOps, Gitea
+- **Horizontal scale** — API/UI stateless; workers × concurrent specialists; optional queue broker + KEDA
 - **Self-hosted** — your cloud, your models, your keys
 
 ---
 
 ## Architecture
 
-```text
-┌──────────────┐  SPA OIDC (PKCE)  ┌─────────────────┐
-│  UI :8080    │ ───────────────►  │  Keycloak IdP   │
-│  React       │ ◄── access_token ─│  MFA / federated│
-└──────┬───────┘                   └─────────────────┘
-       │ Bearer JWT
-       ▼
-┌──────────────┐   enqueue    ┌──────────────────────────────┐
-│  API :8081   │ ───────────► │  Postgres jobs (default SoT) │
-│  Hono        │              │  + optional NATS/Rabbit/Pulsar│
-└──────┬───────┘              └──────────────┬───────────────┘
-       │ sessions / findings                 │ claim
-       ▼                                     ▼
-┌──────────────┐                    ┌─────────────────┐
-│  Postgres    │                    │  Workers (HPA / │
-│  product SoT │                    │  KEDA optional) │
-└──────────────┘                    └────────┬────────┘
-                                             │
-              ┌──────────────────────────────┼────────────────────────┐
-              ▼                              ▼                        ▼
-     Codesteward Graph MCP           Model router              Sandbox / Prove
-     GraphQLite · Neo4j · Janus      OpenAI · Anthropic · SpaceXAI   local · docker · k8s
+```mermaid
+flowchart TB
+  subgraph Client
+    UI["UI :8080<br/>React SPA"]
+  end
+
+  subgraph Identity
+    KC["Keycloak IdP<br/>OIDC · MFA · federated"]
+  end
+
+  subgraph ControlPlane
+    API["API :8081<br/>Hono"]
+    PG[("Postgres<br/>sessions · findings · jobs SoT")]
+  end
+
+  subgraph Compute
+    W["Workers<br/>HPA / KEDA optional"]
+    Q["Job queue<br/>Postgres default<br/>+ NATS / Rabbit / Pulsar"]
+  end
+
+  subgraph Intelligence
+    G["Codesteward Graph MCP<br/>GraphQLite · Neo4j · Janus"]
+    M["Model router<br/>OpenAI · Anthropic · SpaceXAI · …"]
+    S["Sandbox / Prove<br/>local · docker · k8s"]
+  end
+
+  UI -->|"SPA OIDC PKCE"| KC
+  UI -->|"Bearer JWT"| API
+  API --> PG
+  API -->|"enqueue"| Q
+  Q -->|"claim"| W
+  W --> PG
+  W --> G
+  W --> M
+  W --> S
 ```
 
 | Layer | Role |

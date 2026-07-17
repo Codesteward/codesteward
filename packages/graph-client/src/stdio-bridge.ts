@@ -5,7 +5,6 @@
  * Used so workers embed Graph MCP without a sidecar container or shared clone PVC.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createInterface } from "node:readline";
 
 type Pending = {
   resolve: (v: unknown) => void;

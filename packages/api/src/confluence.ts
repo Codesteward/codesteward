@@ -154,10 +154,11 @@ export async function getConfluencePage(
 }
 
 function stripHtml(html: string): string {
-  // Allow optional whitespace before the closing `>` so tags like </script > are stripped
+  // CodeQL js/bad-tag-filter: end tags may include attrs/whitespace before `>`
+  // e.g. </script\t\n bar> — match with \b[^>]*> not only \s*>
   return html
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ")
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\b[^>]*>/gi, " ")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();

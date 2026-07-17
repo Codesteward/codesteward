@@ -51,6 +51,15 @@ function assertSafeGitArg(label: string, value: string): string {
   return v;
 }
 
+/** Full/abbrev object id only — never a git option or refspec with colons. */
+function assertGitObjectId(label: string, value: string): string {
+  const v = assertSafeGitArg(label, value);
+  if (!/^[0-9a-f]{7,64}$/i.test(v)) {
+    throw new Error(`invalid ${label}: expected git object id (hex)`);
+  }
+  return v;
+}
+
 /** True when host is exactly github.com (not evil-github.com or github.com.evil). */
 export function isExactGithubDotComHost(hostOrUrl: string): boolean {
   try {
@@ -168,12 +177,13 @@ export async function materializeGitWorkspace(
     if (rawRef) {
       // ref validated not to start with "-" so cannot be parsed as a git option
       const ref = assertSafeGitArg("ref", rawRef);
-      const co = await runGit(opts.workdir, ["checkout", "--force", ref]);
+      // "--" ends option parsing (blocks --upload-pack style injection via ref)
+      const co = await runGit(opts.workdir, ["checkout", "--force", "--", ref]);
       if (!co.ok && opts.headSha) {
-        const sha = assertSafeGitArg("ref", opts.headSha);
-        // try fetch that sha
+        // Fetch by object id only (hex) — never a free-form refspec
+        const sha = assertGitObjectId("headSha", opts.headSha);
         await runGit(opts.workdir, ["fetch", "--depth", "1", "origin", sha]);
-        const co2 = await runGit(opts.workdir, ["checkout", "--force", sha]);
+        const co2 = await runGit(opts.workdir, ["checkout", "--force", "--", sha]);
         if (!co2.ok) {
           await scrubRemote(opts.workdir, safeOpts);
           return {

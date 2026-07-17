@@ -57,10 +57,6 @@ spec:
             - name: KC_HOSTNAME_URL
               value: {{ printf "https://%s" .Values.keycloak.hostname | quote }}
             {{- end }}
-          # Fallback when secret key missing (dev only)
-          {{- if .Values.keycloak.admin.password }}
-          # Note: also set secrets.keycloakAdminPassword in production
-          {{- end }}
           resources:
             {{- toYaml .Values.keycloak.resources | nindent 12 }}
           readinessProbe:

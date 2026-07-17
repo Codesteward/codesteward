@@ -1657,7 +1657,6 @@ export class ReviewOrchestrator {
     const { relocateLine } = await import("./line-relocate.js");
     const fileCache = new Map<string, string>();
     const { readFile } = await import("node:fs/promises");
-    const { join } = await import("node:path");
     const repoRoot = job.repoPath ?? process.cwd();
     const { resolveInsideRoot } = await import("./path-jail.js");
     const inline = [];

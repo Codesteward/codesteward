@@ -150,8 +150,6 @@ async function main() {
       orgB.status === 201 || orgB.status === 200,
       `status=${orgB.status} id=${orgB.body?.org?.id}`,
     );
-    const orgIdB = orgB.body?.org?.id;
-
     // Isolation: spoof org without membership (user is owner of orgB after create)
     const spoof = await req("/v1/sessions", {
       headers: { ...authH, "X-Org-Id": "org_not_a_member_zzzz" },

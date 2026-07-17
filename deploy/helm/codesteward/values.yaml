@@ -175,8 +175,7 @@ keycloak:
   hostname: ""
   admin:
     user: admin
-    # Prefer secrets.keycloakAdminPassword; fallback for dev only
-    password: ""
+    # Password only via secrets.keycloakAdminPassword (never commit a value here)
   resources:
     requests:
       cpu: 100m
