@@ -11,10 +11,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+### Changed
+
+### Fixed
+
+---
+
+## [1.3.0] — 2026-07-18
+
+Cloud one-click trial deploys, first-review product tour, and Scorecard publish fix.
+
+### Added
+
 - **First-review product tour** — guided spotlight walkthrough (driver.js) after first login:
-  Models → Connectors → Gate → Findings. Completion/skip stored in `users.preferences`
-  (`productTour.firstReviewStatus`); replay from **Account → Product tour**.
-  Migration `014_user_preferences.sql`; `PATCH /v1/auth/me/preferences`.
+  Models → Connectors → Gate → Findings. Completion/skip dual-written to `users.preferences`
+  (`productTour.firstReviewStatus`) and browser localStorage (hard-refresh safe); replay from
+  **Account → Replay product tour**. Closing mid-tour (X) toasts how to restart.
+  Migration `014_user_preferences.sql`; `PATCH /v1/auth/me/preferences` (all signed-in roles).
+  Popover follows light/dark theme tokens.
 - **Cloud one-click trial deploys** — shared single-VM stack under `deploy/cloud/`
   (nginx edge HTTPS + Keycloak OIDC + API/worker/UI + Postgres). No LLM key at install (Models UI).
   Self-signed TLS by default (PKCE / `crypto.subtle`); optional `DOMAIN` for cert CN.
@@ -22,8 +36,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   - Azure Bicep/ARM Deploy (`deploy/cloud/azure/`)
   - GCP Cloud Shell + `gcloud` (`deploy/cloud/gcp/`)
   - DigitalOcean Marketplace 1-Click vendor assets (`deploy/cloud/do/`)
-
-### Changed
 
 ### Fixed
 
@@ -34,8 +46,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   - Keycloak Admin issuer parse supports path-based `/auth/realms/...` (org create)
   - first-boot: quoted `.env`, IaC placeholder sanitization, Azure IMDS, always-HTTPS for PKCE
   - Azure cloud-init via Bicep `format()` + NSG on NIC
-
-- **CI** — OpenSSF Scorecard retries once on failure (mitigates GitHub API 503 “repo unreachable”).
+- **Product tour UX** — sidebar nav scroll for Models/Connectors; step counter no longer resets on
+  SPA navigation; “Configure a provider” targets provider API keys (not the stage matrix);
+  dark-mode button hover contrast on popover controls.
+- **CI** — OpenSSF Scorecard job uses only `uses:` steps when `publish_results: true` (OpenSSF
+  workflow verification; shell retry steps caused 400 “scorecard job must only have steps with uses”).
 - **Code scanning** — pin Docker base images and Keycloak workflow actions by digest/SHA;
   Confluence HTML strip handles `</script…>` end tags; git clone SHA fetch restricted to object ids +
   `checkout --`; remove empty Keycloak password field from Helm values; drop unused locals flagged by CodeQL.

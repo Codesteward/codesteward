@@ -35,7 +35,7 @@ Charts and images are published to **GitHub Container Registry** under the offic
 ## 1. Namespace + secrets
 
 ```bash
-export VERSION=1.2.0   # product version (no leading v)
+export VERSION=1.3.0   # product version (no leading v)
 export CHART=oci://ghcr.io/codesteward/codesteward/charts/codesteward
 export NS=codesteward
 

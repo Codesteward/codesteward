@@ -4,7 +4,7 @@ Identity for Codesteward Review: **OIDC login**, realm clients, Admin API for Me
 
 ## Versioning = upstream Keycloak
 
-Our image is **not** tagged with the product release (`1.2.0`). Tags match
+Our image is **not** tagged with the product release (`1.3.0`). Tags match
 [`quay.io/keycloak/keycloak`](https://quay.io/repository/keycloak/keycloak):
 
 | Tag | Meaning |

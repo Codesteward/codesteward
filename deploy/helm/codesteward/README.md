@@ -8,7 +8,7 @@ Official repo: [Codesteward/codesteward](https://github.com/Codesteward/codestew
 Each product release (`vX.Y.Z`) packages this chart and pushes it to GHCR:
 
 ```bash
-VERSION=1.2.0
+VERSION=1.3.0
 
 helm install codesteward oci://ghcr.io/codesteward/codesteward/charts/codesteward \
   --version "$VERSION" \

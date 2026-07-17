@@ -27,7 +27,7 @@ For a guided first install on a cluster, see **[Kubernetes quick start](../getti
 ## Install from GHCR (recommended)
 
 ```bash
-export VERSION=1.2.0
+export VERSION=1.3.0
 export CHART=oci://ghcr.io/codesteward/codesteward/charts/codesteward
 
 # Only if the package is private:
@@ -46,7 +46,7 @@ helm upgrade --install codesteward "$CHART" \
   # + secrets / graph URI via --set or -f values-prod.yaml
 ```
 
-Chart version and `appVersion` track the product tag (`v1.2.0` → `1.2.0`). Container images for that release use the same semver tags (except Keycloak, which uses **upstream Keycloak** versions).
+Chart version and `appVersion` track the product tag (`v1.3.0` → `1.3.0`). Container images for that release use the same semver tags (except Keycloak, which uses **upstream Keycloak** versions).
 
 ## Install from git checkout
 
@@ -56,7 +56,7 @@ cd codesteward
 
 helm upgrade --install codesteward ./deploy/helm/codesteward \
   --namespace codesteward --create-namespace \
-  --set image.tag=1.2.0
+  --set image.tag=1.3.0
 ```
 
 ## Requirements

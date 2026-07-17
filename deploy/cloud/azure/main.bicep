@@ -23,7 +23,7 @@ param domain string = ''
 param acmeEmail string = ''
 
 @description('Container image tag')
-param imageTag string = '1.2.0'
+param imageTag string = '1.3.0'
 
 @description('Git ref to clone')
 param gitRef string = 'main'

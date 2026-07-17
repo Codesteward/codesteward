@@ -9,7 +9,7 @@ INSTANCE_NAME="${INSTANCE_NAME:-codesteward-cloud}"
 MACHINE_TYPE="${MACHINE_TYPE:-e2-standard-2}"
 DOMAIN="${DOMAIN:-}"
 ACME_EMAIL="${ACME_EMAIL:-}"
-IMAGE_TAG="${IMAGE_TAG:-1.2.0}"
+IMAGE_TAG="${IMAGE_TAG:-1.3.0}"
 GIT_REF="${GIT_REF:-main}"
 
 [[ -n "$PROJECT_ID" ]] || { echo "Set PROJECT_ID or gcloud config set project"; exit 1; }

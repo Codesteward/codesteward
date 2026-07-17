@@ -7,7 +7,7 @@
     "adminUsername": { "value": "azureuser" },
     "domain": { "value": "" },
     "acmeEmail": { "value": "" },
-    "imageTag": { "value": "1.2.0" },
+    "imageTag": { "value": "1.3.0" },
     "gitRef": { "value": "main" }
   }
 }

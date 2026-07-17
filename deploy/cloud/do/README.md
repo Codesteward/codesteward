@@ -15,7 +15,7 @@ Codesteward is designed as a **native Marketplace Droplet 1-Click App**. Until t
 2. SSH in as root, then:
 
 ```bash
-export IMAGE_TAG=1.2.0
+export IMAGE_TAG=1.3.0
 # optional TLS: export DOMAIN=steward.example.com ACME_EMAIL=you@example.com
 git clone --depth 1 https://github.com/Codesteward/codesteward.git /opt/codesteward
 bash /opt/codesteward/deploy/cloud/first-boot.sh
