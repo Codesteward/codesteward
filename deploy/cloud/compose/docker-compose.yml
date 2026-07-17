@@ -1,0 +1,176 @@
+# Codesteward cloud trial stack (VM / Marketplace / Launch Stack)
+# Public entry via Traefik :80 (and :443 when TLS override is enabled).
+# Keycloak OIDC required. LLM keys are configured in the product UI after login.
+#
+#   docker compose --env-file .env -f docker-compose.yml up -d
+#   docker compose --env-file .env -f docker-compose.yml -f docker-compose.tls.yml up -d
+name: codesteward-cloud
+
+x-stew-env: &stew-env
+  PORT: "8081"
+  GRAPH_MOCK: "0"
+  GRAPH_MCP_MODE: stdio
+  GRAPH_MCP_COMMAND: codesteward-mcp
+  GRAPH_BACKEND: ${GRAPH_BACKEND:-graphqlite}
+  GRAPHQLITE_PATH: /data/graph.db
+  STEW_DEBUG_LLM: ${STEW_DEBUG_LLM:-0}
+  STEW_CODE_TOKEN_BUDGET: ${STEW_CODE_TOKEN_BUDGET:-14000}
+  MODEL_PROVIDER: ${MODEL_PROVIDER:-openai-compatible}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+  MODEL_NAME: ${MODEL_NAME:-gpt-4.1-mini}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  XAI_API_KEY: ${XAI_API_KEY:-}
+  SPACEXAI_API_KEY: ${SPACEXAI_API_KEY:-}
+  STEW_DATA_DIR: /data
+  STEW_WORKSPACE_DIR: /workspace
+  DATABASE_URL: postgres://${POSTGRES_USER:-steward}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-codesteward}
+  REPO_PATH: /repos/project
+  STEW_WORKSPACE_CLONE: ${STEW_WORKSPACE_CLONE:-1}
+  STEW_INLINE_WORKER: "0"
+  STEW_USE_DEEPAGENTS: "1"
+  STEW_REQUIRE_TOOL_AGENTS: "1"
+  STEW_AUTH_STRICT: "1"
+  STEW_SECRETS_KEY: ${STEW_SECRETS_KEY}
+  STEW_API_KEY: ${STEW_API_KEY}
+  STEW_PUBLIC_URL: ${STEW_PUBLIC_URL}
+  STEW_API_PUBLIC_URL: ${STEW_API_PUBLIC_URL}
+  STEW_WEBHOOK_PUBLIC_URL: ${STEW_WEBHOOK_PUBLIC_URL:-}
+  GITHUB_APP_NAME: ${GITHUB_APP_NAME:-Codesteward}
+  OIDC_ISSUER: http://keycloak:8083/auth/realms/codesteward
+  OIDC_PUBLIC_ISSUER: ${OIDC_PUBLIC_ISSUER}
+  OIDC_CLIENT_ID: codesteward-ui
+  OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI}
+  STEW_IDENTITY_MODE: keycloak
+  KEYCLOAK_ADMIN_CLIENT_ID: codesteward-api
+  KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET}
+  OIDC_SCOPES: ${OIDC_SCOPES:-openid profile email}
+  GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+  STEW_MENTION_TOKEN: ${STEW_MENTION_TOKEN:-@codesteward}
+  STEW_SANDBOX_PROVIDER: ${STEW_SANDBOX_PROVIDER:-local}
+  STEW_REQUIRE_PG_TENANCY: "1"
+  STEW_SCIM_ORG_ID: ${STEW_SCIM_ORG_ID:-local}
+
+services:
+  traefik:
+    image: traefik:v3.3
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --api.dashboard=false
+      - --log.level=INFO
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - default
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-steward}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-codesteward}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - default
+
+  keycloak:
+    image: ${KEYCLOAK_IMAGE:-ghcr.io/codesteward/codesteward/keycloak:26.7.0}
+    restart: unless-stopped
+    command:
+      [
+        "start-dev",
+        "--import-realm",
+        "--http-port=8083",
+        "--http-relative-path=/auth",
+        "--hostname-strict=false",
+        "--proxy-headers=xforwarded",
+      ]
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_HTTP_PORT: 8083
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_HOSTNAME_STRICT: "false"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HOSTNAME_URL: ${KC_HOSTNAME_URL}
+      KC_HOSTNAME_ADMIN_URL: ${KC_HOSTNAME_ADMIN_URL}
+      # Dev-friendly until production certs; required when not using optimized build
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+    volumes:
+      - ./realm-import:/opt/keycloak/data/import:ro
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.keycloak.loadbalancer.server.port=8083
+      - traefik.http.routers.keycloak.rule=Host(`${TRAEFIK_HOST}`) && PathPrefix(`/auth`)
+      - traefik.http.routers.keycloak.entrypoints=web
+      - traefik.http.routers.keycloak.service=keycloak
+      - traefik.http.routers.keycloak.priority=100
+    networks:
+      - default
+
+  api:
+    image: ${APP_IMAGE:-ghcr.io/codesteward/codesteward:1.2.0}
+    restart: unless-stopped
+    environment:
+      <<: *stew-env
+      SERVICE: api
+    volumes:
+      - stew-data:/data
+      - stew-workspaces:/workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    networks:
+      - default
+
+  worker:
+    image: ${APP_IMAGE:-ghcr.io/codesteward/codesteward:1.2.0}
+    restart: unless-stopped
+    environment:
+      <<: *stew-env
+      SERVICE: worker
+    volumes:
+      - stew-data:/data
+      - stew-workspaces:/workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - default
+
+  ui:
+    image: ${UI_IMAGE:-ghcr.io/codesteward/codesteward/ui:1.2.0}
+    restart: unless-stopped
+    depends_on:
+      - api
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.ui.loadbalancer.server.port=80
+      - traefik.http.routers.ui.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.ui.entrypoints=web
+      - traefik.http.routers.ui.service=ui
+      - traefik.http.routers.ui.priority=1
+    networks:
+      - default
+
+volumes:
+  pg-data:
+  stew-data:
+  stew-workspaces:

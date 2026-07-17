@@ -11,6 +11,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Cloud one-click trial deploys** — shared single-VM stack under `deploy/cloud/`
+  (Traefik + Keycloak OIDC + API/worker/UI + Postgres). No LLM key at install (Models UI).
+  Optional domain enables Let's Encrypt; otherwise HTTP on public IP.
+  - AWS CloudFormation Launch Stack (`deploy/cloud/aws/`)
+  - Azure Bicep/ARM Deploy (`deploy/cloud/azure/`)
+  - GCP Cloud Shell + `gcloud` (`deploy/cloud/gcp/`)
+  - DigitalOcean Marketplace 1-Click vendor assets (`deploy/cloud/do/`)
+
 ### Changed
 
 ### Fixed

@@ -1,0 +1,49 @@
+# Optional TLS overlay — enable when DOMAIN + ACME_EMAIL are set.
+#   docker compose --env-file .env -f docker-compose.yml -f docker-compose.tls.yml up -d
+services:
+  traefik:
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --api.dashboard=false
+      - --log.level=INFO
+      - --certificatesresolvers.le.acme.httpchallenge=true
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - le-data:/letsencrypt
+
+  keycloak:
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.keycloak.loadbalancer.server.port=8083
+      - traefik.http.routers.keycloak.rule=Host(`${TRAEFIK_HOST}`) && PathPrefix(`/auth`)
+      - traefik.http.routers.keycloak.entrypoints=websecure
+      - traefik.http.routers.keycloak.tls=true
+      - traefik.http.routers.keycloak.tls.certresolver=le
+      - traefik.http.routers.keycloak.service=keycloak
+      - traefik.http.routers.keycloak.priority=100
+      # Keep HTTP for ACME challenge path only handled by traefik; auth goes HTTPS
+
+  ui:
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.ui.loadbalancer.server.port=80
+      - traefik.http.routers.ui.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.ui.entrypoints=websecure
+      - traefik.http.routers.ui.tls=true
+      - traefik.http.routers.ui.tls.certresolver=le
+      - traefik.http.routers.ui.service=ui
+      - traefik.http.routers.ui.priority=1
+
+volumes:
+  le-data:

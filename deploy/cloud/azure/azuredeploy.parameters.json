@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "namePrefix": { "value": "codesteward" },
+    "vmSize": { "value": "Standard_D2s_v5" },
+    "adminUsername": { "value": "azureuser" },
+    "domain": { "value": "" },
+    "acmeEmail": { "value": "" },
+    "imageTag": { "value": "1.2.0" },
+    "gitRef": { "value": "main" }
+  }
+}

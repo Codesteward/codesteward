@@ -24,6 +24,7 @@
   <a href="https://docs.codesteward.ai">Docs</a> ·
   <a href="deploy/compose/docker-compose.category.yml">Category stack</a> ·
   <a href="deploy/helm/codesteward">Helm</a> ·
+  <a href="deploy/cloud">Cloud one-click</a> ·
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
@@ -119,6 +120,38 @@ flowchart TB
 | **Worker** | Orchestrator, specialists, judge, SCM publish |
 | **Graph** | Structural intelligence via MCP |
 | **Queue** | Postgres by default; optional broker for KEDA depth scaling |
+
+---
+
+
+## Deploy to your cloud
+
+<p align="center">
+  <strong>Try Codesteward in your own account in one click.</strong><br />
+  Single VM · Traefik · <strong>Keycloak</strong> · API · worker · UI · Postgres<br />
+  <em>No LLM key at install — add providers in Settings → Models after login.</em>
+</p>
+
+<br />
+
+<p align="center">
+  <a href="https://console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?templateURL=https://raw.githubusercontent.com/Codesteward/codesteward/main/deploy/cloud/aws/cloudformation.yaml&stackName=codesteward">
+    <img src="docs/static/img/readme/deploy/aws.png" alt="Launch on AWS" width="200" height="35" />
+  </a>
+  &nbsp;&nbsp;
+  <a href="https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FCodesteward%2Fcodesteward%2Fmain%2Fdeploy%2Fcloud%2Fazure%2Fazuredeploy.json">
+    <img src="docs/static/img/readme/deploy/azure.png" alt="Deploy to Azure" width="200" height="35" />
+  </a>
+</p>
+<p align="center">
+  <a href="https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/Codesteward/codesteward&cloudshell_git_branch=main&cloudshell_working_dir=deploy/cloud/gcp&cloudshell_tutorial=tutorial.md">
+    <img src="docs/static/img/readme/deploy/gcp.png" alt="Open in Google Cloud Shell" width="200" height="35" />
+  </a>
+  &nbsp;&nbsp;
+  <a href="https://marketplace.digitalocean.com/apps/docker">
+    <img src="docs/static/img/readme/deploy/digitalocean.png" alt="1-Click on DigitalOcean" width="200" height="35" />
+  </a>
+</p>
 
 ---
 

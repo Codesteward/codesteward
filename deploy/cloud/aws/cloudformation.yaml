@@ -1,0 +1,150 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Codesteward Review cloud trial — single EC2 VM with Docker Compose, Traefik,
+  Keycloak (OIDC), API, worker, UI, Postgres. LLM keys configured in the product UI.
+  Optional Domain enables Let's Encrypt HTTPS.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Instance }
+        Parameters: [InstanceType, KeyName, AllowedCIDR]
+      - Label: Codesteward
+        Parameters: [Domain, AcmeEmail, ImageTag, GitRef]
+    ParameterLabels:
+      InstanceType: { default: EC2 instance type }
+      KeyName: { default: SSH key pair (optional) }
+      AllowedCIDR: { default: Inbound CIDR for HTTP/HTTPS/SSH }
+      Domain: { default: Public DNS name (optional, enables TLS) }
+      AcmeEmail: { default: Let's Encrypt email }
+      ImageTag: { default: Container image tag }
+      GitRef: { default: Git branch or tag to clone }
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t3.large
+    AllowedValues: [t3.medium, t3.large, t3.xlarge, m5.large, m5.xlarge]
+    Description: 4 vCPU / 8 GB recommended for Keycloak + workers
+  KeyName:
+    Type: String
+    Default: ""
+    Description: Leave empty to disable SSH key (SSM still works if IAM allows)
+  AllowedCIDR:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: Restrict to your IP in production trials
+  Domain:
+    Type: String
+    Default: ""
+    Description: e.g. steward.example.com — A/AAAA must point at this instance
+  AcmeEmail:
+    Type: String
+    Default: ""
+    Description: Required when Domain is set
+  ImageTag:
+    Type: String
+    Default: "1.2.0"
+  GitRef:
+    Type: String
+    Default: main
+
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref KeyName, ""]]
+
+Resources:
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Codesteward cloud trial (HTTP/HTTPS/SSH)
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref AllowedCIDR
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref AllowedCIDR
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedCIDR
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: "{{resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id}}"
+      IamInstanceProfile: !Ref InstanceProfile
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
+      SecurityGroupIds: [!Ref SecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 40
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: codesteward-cloud
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          exec > >(tee /var/log/codesteward-user-data.log) 2>&1
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -y
+          apt-get install -y git curl ca-certificates openssl python3 jq
+          export DOMAIN="${Domain}"
+          export ACME_EMAIL="${AcmeEmail}"
+          export IMAGE_TAG="${ImageTag}"
+          REF="${GitRef}"
+          INSTALL_DIR=/opt/codesteward
+          git clone --depth 1 --branch "$REF" https://github.com/Codesteward/codesteward.git "$INSTALL_DIR" \
+            || git clone --depth 1 https://github.com/Codesteward/codesteward.git "$INSTALL_DIR"
+          cd "$INSTALL_DIR" && git checkout "$REF" 2>/dev/null || true
+          bash "$INSTALL_DIR/deploy/cloud/first-boot.sh"
+
+  EIPAssoc:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref Instance
+      EIP: !Ref ElasticIP
+
+Outputs:
+  PublicIP:
+    Description: Instance public IP
+    Value: !Ref ElasticIP
+  UIURL:
+    Description: Codesteward UI (HTTP until Domain + DNS + TLS ready)
+    Value: !Sub
+      - "http://${IP}/"
+      - { IP: !Ref ElasticIP }
+  CredentialsPath:
+    Description: On-instance credentials file
+    Value: /var/lib/codesteward/credentials.txt
+  SSHHint:
+    Description: Fetch credentials via SSM Session Manager or SSH
+    Value: !Sub "aws ssm start-session --target ${Instance}  # then: sudo cat /var/lib/codesteward/credentials.txt"

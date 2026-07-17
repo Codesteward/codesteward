@@ -1,0 +1,155 @@
+{
+  "realm": "codesteward",
+  "enabled": true,
+  "displayName": "Codesteward",
+  "displayNameHtml": "<strong>Codesteward</strong>",
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "rememberMe": true,
+  "sslRequired": "external",
+  "loginTheme": "codesteward",
+  "accountTheme": "keycloak.v2",
+  "emailTheme": "keycloak",
+  "internationalizationEnabled": false,
+  "roles": {
+    "realm": [
+      { "name": "steward-admin", "description": "Codesteward org admin" },
+      { "name": "steward-reviewer", "description": "Codesteward reviewer" },
+      { "name": "steward-viewer", "description": "Codesteward viewer" }
+    ]
+  },
+  "groups": [
+    {
+      "name": "orgs",
+      "path": "/orgs",
+      "subGroups": [
+        {
+          "name": "local",
+          "path": "/orgs/local",
+          "attributes": {
+            "displayName": ["Local"],
+            "codesteward_org": ["local"]
+          }
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "codesteward-ui",
+      "name": "Codesteward UI",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": true,
+      "redirectUris": [
+        "http://localhost:8080/*",
+        "http://localhost:8080/auth/callback",
+        "http://127.0.0.1:8080/*",
+        "http://127.0.0.1:8080/auth/callback",
+        "http://localhost:8081/*",
+        "http://127.0.0.1:8081/*"
+      ],
+      "webOrigins": ["http://localhost:8080", "http://127.0.0.1:8080", "http://localhost:8081", "+"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8080/*##http://127.0.0.1:8080/*##+"
+      },
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true,
+      "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"],
+      "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "user.attribute": "foo",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "codesteward-api",
+      "name": "Codesteward API (Admin service account)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "steward-api-dev-secret-change-me",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true
+    }
+  ],
+  "users": [
+    {
+      "username": "admin@codesteward.local",
+      "email": "admin@codesteward.local",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Steward",
+      "lastName": "Admin",
+      "credentials": [
+        { "type": "password", "value": "admin-change-me", "temporary": false }
+      ],
+      "realmRoles": ["steward-admin"],
+      "groups": ["/orgs/local"]
+    },
+    {
+      "username": "admin@demo.com",
+      "email": "admin@demo.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "Admin",
+      "credentials": [
+        { "type": "password", "value": "DemoAdmin.123", "temporary": false }
+      ],
+      "realmRoles": ["steward-admin"],
+      "groups": ["/orgs/local"]
+    },
+    {
+      "username": "service-account-codesteward-api",
+      "enabled": true,
+      "serviceAccountClientId": "codesteward-api",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users",
+          "query-users",
+          "manage-clients",
+          "view-clients",
+          "query-groups",
+          "manage-realm",
+          "view-realm",
+          "query-realms"
+        ]
+      }
+    }
+  ]
+}

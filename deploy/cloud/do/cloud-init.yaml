@@ -1,0 +1,32 @@
+#cloud-config
+# Used by DO Marketplace droplet image / custom image first boot.
+# Marketplace fabricator should bake /opt/codesteward from the release tarball
+# so clone is optional; this cloud-init still works from stock Ubuntu + script.
+package_update: true
+packages:
+  - curl
+  - ca-certificates
+  - gnupg
+  - git
+  - openssl
+  - python3
+  - jq
+
+runcmd:
+  - |
+    set -euo pipefail
+    # DO user-data can set domain via droplet metadata tags later; env file optional
+    if [[ -f /etc/codesteward/boot.env ]]; then
+      set -a
+      # shellcheck disable=SC1091
+      . /etc/codesteward/boot.env
+      set +a
+    fi
+    INSTALL_DIR=/opt/codesteward
+    if [[ ! -d "$INSTALL_DIR/deploy/cloud" ]]; then
+      git clone --depth 1 --branch "${GIT_REF:-main}" https://github.com/Codesteward/codesteward.git "$INSTALL_DIR"
+    fi
+    export DOMAIN="${DOMAIN:-}"
+    export ACME_EMAIL="${ACME_EMAIL:-}"
+    export IMAGE_TAG="${IMAGE_TAG:-1.2.0}"
+    bash "$INSTALL_DIR/deploy/cloud/first-boot.sh"
