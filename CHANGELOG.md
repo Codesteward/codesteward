@@ -11,6 +11,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **First-review product tour** — guided spotlight walkthrough (driver.js) after first login:
+  Models → Connectors → Gate → Findings. Completion/skip stored in `users.preferences`
+  (`productTour.firstReviewStatus`); replay from **Account → Product tour**.
+  Migration `014_user_preferences.sql`; `PATCH /v1/auth/me/preferences`.
 - **Cloud one-click trial deploys** — shared single-VM stack under `deploy/cloud/`
   (nginx edge HTTPS + Keycloak OIDC + API/worker/UI + Postgres). No LLM key at install (Models UI).
   Self-signed TLS by default (PKCE / `crypto.subtle`); optional `DOMAIN` for cert CN.

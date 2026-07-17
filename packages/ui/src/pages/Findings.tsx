@@ -95,7 +95,7 @@ export function Findings() {
   }
 
   return (
-    <div>
+    <div data-tour="page-findings">
       <PageHero
         kicker="Issues"
         title="Findings"

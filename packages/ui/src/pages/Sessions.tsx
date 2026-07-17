@@ -883,7 +883,7 @@ export function Sessions() {
   );
 
   return (
-    <div>
+    <div data-tour="page-sessions">
       <PageHero
         kicker="Live process"
         title="Sessions"

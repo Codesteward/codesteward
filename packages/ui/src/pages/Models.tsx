@@ -208,7 +208,7 @@ export function Models() {
   }
 
   return (
-    <div>
+    <div data-tour="page-models">
       <PageHero
         kicker="Org · multi-tenant"
         title="Models"
@@ -226,7 +226,8 @@ export function Models() {
         </div>
       )}
 
-      <div className="card stack" style={{ marginBottom: "1rem" }}>
+      {/* Tour targets this card (provider keys), not the whole page / stage matrix */}
+      <div className="card stack" style={{ marginBottom: "1rem" }} data-tour="models-providers">
         <div className="card-header">
           <h3>Provider API keys (this org)</h3>
           <span className="muted" style={{ fontSize: "0.8rem" }}>

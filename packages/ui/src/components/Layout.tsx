@@ -17,6 +17,7 @@ import {
   subscribeTheme,
   type ThemePreference,
 } from "../lib/theme";
+import { FirstReviewTour } from "./FirstReviewTour";
 import { Logo } from "./Logo";
 import { NavIcon } from "./NavIcons";
 import { useToast } from "./Toast";
@@ -172,6 +173,19 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
                   to={item.to}
                   end={item.end}
                   onClick={onNavigate}
+                  data-tour={
+                    item.mode === "gate"
+                      ? "nav-gate"
+                      : item.icon === "models"
+                        ? "nav-models"
+                        : item.icon === "connectors"
+                          ? "nav-connectors"
+                          : item.icon === "findings"
+                            ? "nav-findings"
+                            : item.icon === "dashboard"
+                              ? "nav-dashboard"
+                              : undefined
+                  }
                   className={({ isActive }) => {
                     if (item.mode) {
                       const pathOk = location.pathname === "/sessions";
@@ -499,13 +513,21 @@ function Brand({ compact }: { compact?: boolean }) {
 
 export function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  /** Increment to force-replay the first-review product tour (Account settings). */
+  const [tourForceToken, setTourForceToken] = useState(0);
+
+  useEffect(() => {
+    const onReplay = () => setTourForceToken((n) => n + 1);
+    window.addEventListener("cs:replay-product-tour", onReplay);
+    return () => window.removeEventListener("cs:replay-product-tour", onReplay);
+  }, []);
 
   return (
     <div className="shell">
       <aside className="sidebar">
         <Brand />
         <OrgSwitcher />
-        <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+        <div data-tour="nav-scroll" style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
           <NavItems />
         </div>
         <div className="sidebar-footer">
@@ -550,6 +572,7 @@ export function Layout() {
           <Outlet />
         </div>
       </div>
+      <FirstReviewTour forceToken={tourForceToken} />
     </div>
   );
 }

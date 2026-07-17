@@ -412,7 +412,7 @@ export function Connectors() {
   const meta = editing ? META[editing] : null;
 
   return (
-    <div>
+    <div data-tour="page-connectors">
       <PageHero
         kicker="Integrations"
         title="Connectors"

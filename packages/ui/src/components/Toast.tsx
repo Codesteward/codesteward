@@ -37,7 +37,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (message: string, kind: ToastKind = "info") => {
       const id = ++seq;
       setItems((prev) => [...prev.slice(-4), { id, message, kind }]);
-      window.setTimeout(() => dismiss(id), 3800);
+      // Longer dwell for multi-sentence guidance (e.g. tour dismiss hint)
+      const ms = message.length > 72 ? 7200 : 3800;
+      window.setTimeout(() => dismiss(id), ms);
     },
     [dismiss],
   );

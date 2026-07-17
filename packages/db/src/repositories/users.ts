@@ -14,6 +14,7 @@ interface UserRow {
   active?: boolean | null;
   external_id?: string | null;
   scim_meta?: unknown;
+  preferences?: unknown;
   created_at: Date | string;
   updated_at?: Date | string | null;
 }
@@ -41,6 +42,10 @@ function mapUser(row: UserRow): StewardUser {
       row.scim_meta && typeof row.scim_meta === "object"
         ? (row.scim_meta as Record<string, unknown>)
         : undefined,
+    preferences:
+      row.preferences && typeof row.preferences === "object"
+        ? (row.preferences as Record<string, unknown>)
+        : {},
     createdAt: toIso(row.created_at),
     updatedAt: row.updated_at ? toIso(row.updated_at) : undefined,
   };
@@ -114,6 +119,7 @@ export class UsersRepository {
       active?: boolean;
       externalId?: string | null;
       scimMeta?: Record<string, unknown> | null;
+      preferences?: Record<string, unknown> | null;
     },
   ): Promise<StewardUser | undefined> {
     const cur = await this.getById(id);
@@ -145,11 +151,18 @@ export class UsersRepository {
           : patch.scimMeta === null
             ? undefined
             : patch.scimMeta,
+      preferences:
+        patch.preferences === undefined
+          ? cur.preferences
+          : patch.preferences === null
+            ? {}
+            : patch.preferences,
       updatedAt: nowIso(),
     };
     await this.db.query(
       `UPDATE users SET email = $2, display_name = $3, role = $4, org_id = $5, password_hash = $6,
-         platform_admin = $7, active = $8, external_id = $9, scim_meta = $10::jsonb
+         platform_admin = $7, active = $8, external_id = $9, scim_meta = $10::jsonb,
+         preferences = $11::jsonb, updated_at = now()
        WHERE id = $1`,
       [
         next.id,
@@ -162,6 +175,7 @@ export class UsersRepository {
         next.active !== false,
         next.externalId ?? null,
         JSON.stringify(next.scimMeta ?? {}),
+        JSON.stringify(next.preferences ?? {}),
       ],
     );
     return next;
@@ -190,12 +204,13 @@ export class UsersRepository {
       active: input.active !== false,
       externalId: input.externalId,
       scimMeta: input.scimMeta,
+      preferences: {},
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
     await this.db.query(
-      `INSERT INTO users (id, email, password_hash, display_name, role, org_id, platform_admin, active, external_id, scim_meta, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)`,
+      `INSERT INTO users (id, email, password_hash, display_name, role, org_id, platform_admin, active, external_id, scim_meta, preferences, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,'{}'::jsonb,$11)`,
       [
         user.id,
         user.email,

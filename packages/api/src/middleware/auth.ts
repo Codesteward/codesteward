@@ -305,6 +305,7 @@ async function enforceRbac(
     path === "/v1/auth/logout" ||
     path === "/v1/auth/me" ||
     path === "/v1/auth/me/password" ||
+    path === "/v1/auth/me/preferences" ||
     path.startsWith("/v1/auth/oidc/") ||
     path === "/v1/auth/status" ||
     path === "/v1/auth/login" ||
@@ -314,6 +315,10 @@ async function enforceRbac(
   }
 
   if (!isReadMethod(method)) {
+    // Self-service UX prefs (tour, tips) — allowed for every signed-in role including viewer
+    if (path === "/v1/auth/me/preferences") {
+      return next();
+    }
     if (role === "viewer") {
       return c.json(
         { error: "forbidden", message: "viewer role is read-only" },

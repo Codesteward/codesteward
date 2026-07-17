@@ -49,6 +49,8 @@ export interface StewardUser {
   active?: boolean;
   externalId?: string;
   scimMeta?: Record<string, unknown>;
+  /** Client UX prefs (product tour, dismissed tips, …). */
+  preferences?: Record<string, unknown>;
   createdAt: string;
   updatedAt?: string;
 }
@@ -128,6 +130,7 @@ export function publicUser(user: StewardUser): {
   role: UserRole;
   orgId: string;
   platformAdmin?: boolean;
+  preferences?: Record<string, unknown>;
   createdAt: string;
 } {
   return {
@@ -137,6 +140,7 @@ export function publicUser(user: StewardUser): {
     role: user.role,
     orgId: user.orgId,
     platformAdmin: Boolean(user.platformAdmin),
+    preferences: user.preferences && typeof user.preferences === "object" ? user.preferences : {},
     createdAt: user.createdAt,
   };
 }
@@ -354,6 +358,7 @@ export class FileAuthStore {
       active?: boolean;
       externalId?: string | null;
       scimMeta?: Record<string, unknown> | null;
+      preferences?: Record<string, unknown> | null;
     },
   ): Promise<StewardUser | undefined> {
     await this.load();
@@ -391,6 +396,12 @@ export class FileAuthStore {
     }
     if (patch.scimMeta !== undefined) {
       u.scimMeta = patch.scimMeta === null ? undefined : patch.scimMeta;
+    }
+    if (patch.preferences !== undefined) {
+      u.preferences =
+        patch.preferences === null
+          ? {}
+          : { ...(u.preferences ?? {}), ...patch.preferences };
     }
     u.updatedAt = nowIso();
     await this.save();

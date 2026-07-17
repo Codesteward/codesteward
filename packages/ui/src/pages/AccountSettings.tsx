@@ -105,6 +105,27 @@ export function AccountSettings() {
         }
       />
 
+      <div className="card stack" style={{ marginBottom: "1rem" }}>
+        <h3>Product tour</h3>
+        <p className="muted" style={{ fontSize: "0.85rem", margin: 0, lineHeight: 1.5 }}>
+          Walk through Models → Connectors → Gate → Findings for your first review. Progress is saved
+          on your user account (complete or skip) so it does not auto-start again.
+        </p>
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="primary sm"
+            disabled={!user || user.id === "api_key" || user.id === "dev"}
+            onClick={() => {
+              window.dispatchEvent(new Event("cs:replay-product-tour"));
+              toast.info("Starting product tour…");
+            }}
+          >
+            Replay product tour
+          </button>
+        </div>
+      </div>
+
       <div className="grid cols-2">
         <div className="card stack">
           <h3>Profile</h3>

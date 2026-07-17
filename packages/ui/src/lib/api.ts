@@ -267,6 +267,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  /** Merge shallow UX preferences (product tour completion, etc.). */
+  updatePreferences: (preferences: Record<string, unknown>) =>
+    req<{ ok: boolean; preferences: Record<string, unknown> }>("/v1/auth/me/preferences", {
+      method: "PATCH",
+      body: JSON.stringify({ preferences }),
+    }),
   updateOrg: (orgId: string, body: { name?: string; slug?: string }) =>
     req<{ org: OrgSummary }>(`/v1/orgs/${encodeURIComponent(orgId)}`, {
       method: "PATCH",
@@ -1198,6 +1204,8 @@ export interface AuthUser {
   orgId?: string;
   /** Install-wide operator (license / runtime). Not the same as tenant org admin. */
   platformAdmin?: boolean;
+  /** Client UX preferences (product tour, tips, …). */
+  preferences?: Record<string, unknown>;
 }
 
 /** Whether the current auth session may open Platform settings (install-wide). */

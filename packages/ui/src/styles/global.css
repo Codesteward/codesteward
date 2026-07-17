@@ -3543,3 +3543,88 @@ button.mustache-chip:disabled {
   cursor: not-allowed;
   pointer-events: none;
 }
+
+/* ── Product tour (driver.js) — follows app light/dark tokens ───────── */
+.cs-driver-popover.driver-popover {
+  max-width: 360px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background-color: var(--bg-elevated) !important;
+  color: var(--text) !important;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  font-family: inherit;
+}
+.cs-driver-popover .driver-popover-title {
+  font-size: 1.05rem;
+  font-weight: 650;
+  color: var(--text);
+}
+.cs-driver-popover .driver-popover-description {
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.cs-driver-popover .driver-popover-progress-text {
+  color: var(--text-faint);
+}
+/* Arrow matches themed popover surface */
+.cs-driver-popover .driver-popover-arrow {
+  border-color: var(--bg-elevated);
+}
+.cs-driver-popover .driver-popover-arrow-side-left {
+  border-left-color: var(--bg-elevated);
+}
+.cs-driver-popover .driver-popover-arrow-side-right {
+  border-right-color: var(--bg-elevated);
+}
+.cs-driver-popover .driver-popover-arrow-side-top {
+  border-top-color: var(--bg-elevated);
+}
+.cs-driver-popover .driver-popover-arrow-side-bottom {
+  border-bottom-color: var(--bg-elevated);
+}
+
+/* Footer buttons — override driver.js light-only hover (#2d2d2d / #f7f7f7) */
+.cs-driver-popover .driver-popover-footer-btn {
+  border-radius: 8px;
+  text-shadow: none !important;
+  font-weight: 500;
+  padding: 0.35rem 0.7rem;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.cs-driver-popover .driver-popover-next-btn,
+.cs-driver-popover .driver-popover-done-btn {
+  background: var(--accent) !important;
+  color: #fff !important;
+  border: 1px solid transparent !important;
+}
+.cs-driver-popover .driver-popover-next-btn:hover,
+.cs-driver-popover .driver-popover-next-btn:focus,
+.cs-driver-popover .driver-popover-done-btn:hover,
+.cs-driver-popover .driver-popover-done-btn:focus {
+  background: var(--accent-strong) !important;
+  color: #fff !important;
+}
+.cs-driver-popover .driver-popover-prev-btn {
+  background: var(--bg-hover) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+}
+.cs-driver-popover .driver-popover-prev-btn:hover,
+.cs-driver-popover .driver-popover-prev-btn:focus {
+  background: var(--bg-panel) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+.cs-driver-popover .driver-popover-close-btn {
+  color: var(--text-muted) !important;
+  border-radius: 8px;
+  text-shadow: none !important;
+}
+.cs-driver-popover .driver-popover-close-btn:hover,
+.cs-driver-popover .driver-popover-close-btn:focus {
+  color: var(--text) !important;
+}

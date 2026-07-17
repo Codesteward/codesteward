@@ -175,6 +175,51 @@ export function createApp() {
     }
   });
 
+  /**
+   * Self-service UX preferences (product tour completion, dismissed tips, …).
+   * Merged shallowly into users.preferences JSON.
+   */
+  app.patch("/v1/auth/me/preferences", async (c) => {
+    const user = c.get("user") as { id?: string } | undefined;
+    if (!user?.id || user.id === "api_key" || user.id === "dev") {
+      return c.json(
+        { error: "session required", message: "Sign in with a user account to save preferences." },
+        401,
+      );
+    }
+    const body = (await c.req.json()) as { preferences?: Record<string, unknown> };
+    if (!body.preferences || typeof body.preferences !== "object" || Array.isArray(body.preferences)) {
+      return c.json({ error: "preferences object required" }, 400);
+    }
+    // Guard size / prototype pollution
+    const raw = body.preferences;
+    if (Object.keys(raw).length > 40) {
+      return c.json({ error: "too many preference keys" }, 400);
+    }
+    const safe: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (k.startsWith("__") || k === "constructor" || k === "prototype") continue;
+      if (typeof k !== "string" || k.length > 64) continue;
+      if (
+        v === null ||
+        typeof v === "string" ||
+        typeof v === "number" ||
+        typeof v === "boolean" ||
+        (typeof v === "object" && !Array.isArray(v))
+      ) {
+        safe[k] = v;
+      }
+    }
+    try {
+      const updated = await globalAuthStore.updateUser(user.id, { preferences: safe });
+      if (!updated) return c.json({ error: "user not found" }, 404);
+      return c.json({ ok: true, preferences: updated.preferences ?? {} });
+    } catch (err) {
+      const e = err as Error & { status?: number };
+      return c.json({ error: e.message }, (e.status ?? 400) as 400);
+    }
+  });
+
   /** Self-service: update display name and/or email for the signed-in user. */
   app.patch("/v1/auth/me", async (c) => {
     const user = c.get("user") as { id?: string; email?: string } | undefined;
@@ -325,10 +370,17 @@ export function createApp() {
 
   app.get("/v1/auth/me", async (c) => {
     const user = c.get("user") as
-      | { id?: string; orgId?: string; email?: string; role?: string }
+      | {
+          id?: string;
+          orgId?: string;
+          email?: string;
+          role?: string;
+          preferences?: Record<string, unknown>;
+        }
       | undefined;
     if (user) {
       let orgs: Array<{ id: string; name: string; slug?: string; role?: string }> = [];
+      let preferences: Record<string, unknown> = user.preferences ?? {};
       try {
         if (user.id && user.id !== "api_key") {
           const { getTenancyStore } = await import("./tenancy/orgs.js");
@@ -339,6 +391,15 @@ export function createApp() {
             slug: o.slug,
             role: o.role,
           }));
+          // Preferences live on the durable user row (file or Postgres)
+          try {
+            const full = await globalAuthStore.getUserById(user.id);
+            if (full?.preferences && typeof full.preferences === "object") {
+              preferences = full.preferences;
+            }
+          } catch {
+            /* keep empty */
+          }
         }
       } catch {
         /* ignore */
@@ -346,7 +407,7 @@ export function createApp() {
       const needsOrg = orgs.length === 0 && user.id !== "api_key";
       const primaryOrgId = orgs[0]?.id ?? (user.orgId?.trim() || undefined);
       return c.json({
-        user: { ...user, orgId: primaryOrgId },
+        user: { ...user, orgId: primaryOrgId, preferences },
         authMode: c.get("authMode") ?? "session",
         orgs,
         needsOrg,

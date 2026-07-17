@@ -189,6 +189,8 @@ export interface StewardUser {
   /** IdP external id (SCIM externalId). */
   externalId?: string;
   scimMeta?: Record<string, unknown>;
+  /** Client UX prefs (product tour, dismissed tips, …). */
+  preferences?: Record<string, unknown>;
   createdAt: string;
   updatedAt?: string;
 }

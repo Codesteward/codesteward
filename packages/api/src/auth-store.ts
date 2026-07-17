@@ -36,6 +36,8 @@ export interface PublicAuthUser {
   orgId: string;
   /** Install-wide platform operator (license / runtime). Not tenant org admin. */
   platformAdmin?: boolean;
+  /** Client UX preferences (product tour, tips, …). */
+  preferences?: Record<string, unknown>;
   createdAt: string;
 }
 
@@ -289,6 +291,7 @@ export class AuthStore {
       active?: boolean;
       externalId?: string | null;
       scimMeta?: Record<string, unknown> | null;
+      preferences?: Record<string, unknown> | null;
     },
   ): Promise<PublicAuthUser | undefined> {
     const b = this.getBackend();
@@ -307,6 +310,12 @@ export class AuthStore {
         throw Object.assign(new Error("email already in use"), { status: 409 });
       }
     }
+    // Merge preferences shallowly so tour flags don't wipe other keys
+    let preferences = patch.preferences;
+    if (preferences && typeof preferences === "object") {
+      const cur = await repo.getById(id);
+      preferences = { ...(cur?.preferences ?? {}), ...preferences };
+    }
     const updated = await repo.update(id, {
       role: patch.role,
       displayName: patch.displayName,
@@ -316,6 +325,7 @@ export class AuthStore {
       active: patch.active,
       externalId: patch.externalId,
       scimMeta: patch.scimMeta,
+      preferences: preferences === undefined ? undefined : preferences,
     });
     if (updated && patch.active === false) {
       await repo.deleteSessionsForUser(id);
