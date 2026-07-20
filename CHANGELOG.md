@@ -26,6 +26,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
     repo-only common → **repo** memory; multi-repo or important (critical/high / gate regret) → **org** memory.
     `POST /v1/analytics/outcomes/consolidate`; also runs after each merge outcome job.
     Source `outcome_aggregate` (auditable on Learnings). No longer writes a repo memory on every single accept.
+  - **Docs** — GitHub App / GitLab webhook events for gate + merge outcomes (`docs/docs/configure/connectors.md`, README).
+  - **GitHub `pull_request_review_thread`** — resolved/unresolved maps comment ids → findings (`scmCommentId`), writes
+    `thread_resolved` / `thread_unresolved` outcomes, soft status tags, consolidator feed.
+  - **GitHub `security_advisory`** (+ repository_advisory) — external GHSA → `security_advisory` outcome + soft pattern
+    memory for coverage / FN; optional org promotion when severity is high.
+  - Manifest defaults include `pull_request_review_thread` and `security_advisory`.
 
 ### Changed
 

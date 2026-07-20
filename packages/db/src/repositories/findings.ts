@@ -339,4 +339,25 @@ export class FindingsRepository {
     const row = res.rows[0];
     return row ? mapFinding(row) : undefined;
   }
+
+  async findByScmCommentId(
+    scmCommentId: string,
+    opts?: { orgId?: string; repoId?: string },
+  ): Promise<Finding | undefined> {
+    const id = String(scmCommentId);
+    const params: unknown[] = [id, `comment:${id}`];
+    let sql = `SELECT * FROM findings WHERE scm_comment_id = $1 OR scm_comment_id = $2`;
+    if (opts?.orgId) {
+      params.push(opts.orgId);
+      sql += ` AND org_id = $${params.length}`;
+    }
+    if (opts?.repoId) {
+      params.push(opts.repoId);
+      sql += ` AND repo_id = $${params.length}`;
+    }
+    sql += ` ORDER BY created_at DESC LIMIT 1`;
+    const res = await this.db.query<FindingRow>(sql, params);
+    const row = res.rows[0];
+    return row ? mapFinding(row) : undefined;
+  }
 }

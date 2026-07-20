@@ -258,7 +258,9 @@ Specialists (correctness, security, performance, testing, rules, …) → option
 @codesteward review
 ```
 
-Override with `STEW_MENTION_TOKEN`. Events: `pull_request` (opened / synchronize / reopened / ready_for_review) and `issue_comment` for mentions.
+Override with `STEW_MENTION_TOKEN`.
+
+**GitHub App webhook events:** `pull_request` (opened / synchronize / reopened / ready_for_review for **gate**; **closed + merged** for **outcome**); `issue_comment` (mentions); `pull_request_review_thread` (resolved/unresolved → soft accept); `security_advisory` (coverage / FN candidates). See [SCM connectors](docs/docs/configure/connectors.md).
 
 ### Identity & orgs
 

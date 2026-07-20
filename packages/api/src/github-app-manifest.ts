@@ -92,9 +92,12 @@ export const MANIFEST_DEFAULT_EVENTS = [
   "pull_request",
   "pull_request_review",
   "pull_request_review_comment",
+  "pull_request_review_thread",
   "issue_comment",
   "check_run",
   "check_suite",
+  // Optional coverage / FN signal (global + repo advisories when available)
+  "security_advisory",
 ] as const;
 
 export const MANIFEST_DEFAULT_PERMISSIONS: Record<

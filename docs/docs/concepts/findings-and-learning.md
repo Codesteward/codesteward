@@ -41,6 +41,8 @@ When a PR **merges**, Codesteward enqueues a lightweight `pr_outcome` job (not a
 | **False positive / dismissed** | Human rejected the finding |
 | **Agent-miss candidate** | Sensitive path changed with **no** prior finding |
 | **Gate regret** | Approve with critical open, or block with only noise |
+| **Thread resolved / unresolved** | GitHub review thread on our comment → soft accept / reopen |
+| **Security advisory** | External GHSA → coverage / FN focus (not a finding 👎) |
 
 Snapshots land in `pr_outcomes` / `finding_outcomes` (Postgres or `.steward-data/outcomes.json`).
 

@@ -67,6 +67,32 @@ export interface GitHubWebhookDeps {
     prTitle?: string;
     orgId: string;
   }) => Promise<CommentTriageHookResult>;
+  /**
+   * Review thread resolved/unresolved → finding outcome (soft accept/reopen).
+   * Wired by API to map comment ids → findings.scmCommentId.
+   */
+  onReviewThread?: (input: {
+    action: "resolved" | "unresolved" | string;
+    orgId: string;
+    repoId: string;
+    prNumber: number;
+    commentIds: string[];
+    threadNodeId?: string;
+    delivery: string;
+  }) => Promise<{ matched: number; outcomeIds: string[] } | void>;
+  /**
+   * Security / repository advisory → agent-miss / coverage signal for eval.
+   */
+  onSecurityAdvisory?: (input: {
+    action: string;
+    orgId: string;
+    repoId?: string;
+    ghsaId?: string;
+    summary?: string;
+    severity?: string;
+    packageNames?: string[];
+    delivery: string;
+  }) => Promise<{ outcomeId?: string } | void>;
 }
 
 export interface HandleResult {
@@ -81,6 +107,8 @@ export interface HandleResult {
  * - pull_request (opened, synchronize, reopened, ready_for_review)
  * - pull_request (closed + merged) → pr_outcome job (indirect eval)
  * - issue_comment (created) when body mentions @codesteward
+ * - pull_request_review_thread (resolved / unresolved) → soft accept / reopen
+ * - security_advisory / repository_advisory → coverage / FN candidates
  */
 export async function handleGitHubWebhook(
   deps: GitHubWebhookDeps,
@@ -115,6 +143,14 @@ export async function handleGitHubWebhook(
 
   if (event === "issue_comment") {
     return handleIssueCommentMention(deps, rawBody, delivery);
+  }
+
+  if (event === "pull_request_review_thread") {
+    return handlePullRequestReviewThread(deps, rawBody, delivery);
+  }
+
+  if (event === "security_advisory" || event === "repository_advisory") {
+    return handleSecurityAdvisory(deps, rawBody, delivery, event);
   }
 
   if (event !== "pull_request") {
@@ -489,6 +525,234 @@ async function enqueueFromPr(
       reviewFocus: extra?.reviewFocus,
     },
   };
+}
+
+/** Extract numeric comment ids from a review thread payload. */
+export function extractThreadCommentIds(thread: {
+  comments?: Array<{ id?: number | string }>;
+}): string[] {
+  const ids: string[] = [];
+  for (const c of thread.comments ?? []) {
+    if (c?.id != null) ids.push(String(c.id));
+  }
+  return ids;
+}
+
+async function handlePullRequestReviewThread(
+  deps: GitHubWebhookDeps,
+  rawBody: string,
+  delivery: string,
+): Promise<HandleResult> {
+  let payload: {
+    action?: string;
+    pull_request?: { number?: number };
+    thread?: {
+      node_id?: string;
+      comments?: Array<{ id?: number | string }>;
+    };
+    repository?: {
+      full_name?: string;
+      name?: string;
+      owner?: { login?: string };
+    };
+    installation?: { id?: number };
+  };
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return { ok: false, status: 400, body: { error: "invalid json" } };
+  }
+
+  const action = payload.action ?? "";
+  if (action !== "resolved" && action !== "unresolved") {
+    return { ok: true, status: 200, body: { ignored: true, action, delivery } };
+  }
+
+  const fullName =
+    payload.repository?.full_name ??
+    `${payload.repository?.owner?.login ?? "unknown"}/${payload.repository?.name ?? "repo"}`;
+  const prNumber = payload.pull_request?.number;
+  if (prNumber == null) {
+    return { ok: true, status: 200, body: { ignored: true, reason: "no pr", delivery } };
+  }
+
+  const commentIds = extractThreadCommentIds(payload.thread ?? {});
+  if (!commentIds.length) {
+    return {
+      ok: true,
+      status: 200,
+      body: { ignored: true, reason: "no comment ids on thread", delivery },
+    };
+  }
+
+  if (!deps.onReviewThread) {
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        accepted: true,
+        delivery,
+        action,
+        deferred: true,
+        message: "onReviewThread hook not configured",
+        commentIds,
+      },
+    };
+  }
+
+  const installationId = payload.installation?.id
+    ? String(payload.installation.id)
+    : undefined;
+  const orgId = deps.resolveProductOrgId
+    ? await deps.resolveProductOrgId({
+        installationId,
+        ownerLogin: payload.repository?.owner?.login,
+      })
+    : process.env.DEFAULT_ORG_ID ?? "local";
+
+  try {
+    const result = await deps.onReviewThread({
+      action,
+      orgId,
+      repoId: fullName,
+      prNumber,
+      commentIds,
+      threadNodeId: payload.thread?.node_id,
+      delivery,
+    });
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        accepted: true,
+        delivery,
+        event: "pull_request_review_thread",
+        action,
+        pr: prNumber,
+        repo: fullName,
+        commentIds,
+        matched: result?.matched ?? 0,
+        outcomeIds: result?.outcomeIds ?? [],
+      },
+    };
+  } catch (err) {
+    console.warn("[webhooks] onReviewThread failed", err);
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        accepted: false,
+        delivery,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    };
+  }
+}
+
+async function handleSecurityAdvisory(
+  deps: GitHubWebhookDeps,
+  rawBody: string,
+  delivery: string,
+  event: string,
+): Promise<HandleResult> {
+  let payload: {
+    action?: string;
+    security_advisory?: {
+      ghsa_id?: string;
+      summary?: string;
+      severity?: string;
+      vulnerabilities?: Array<{
+        package?: { name?: string; ecosystem?: string };
+      }>;
+    };
+    repository?: {
+      full_name?: string;
+      name?: string;
+      owner?: { login?: string };
+    };
+    installation?: { id?: number };
+  };
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return { ok: false, status: 400, body: { error: "invalid json" } };
+  }
+
+  const action = payload.action ?? "published";
+  // Focus on new/updated advisories (skip withdraw noise for learning)
+  if (!["published", "updated", "reported", "created"].includes(action)) {
+    return { ok: true, status: 200, body: { ignored: true, action, event, delivery } };
+  }
+
+  const adv = payload.security_advisory ?? {};
+  const packageNames = [
+    ...new Set(
+      (adv.vulnerabilities ?? [])
+        .map((v) => v.package?.name)
+        .filter((n): n is string => Boolean(n)),
+    ),
+  ];
+
+  if (!deps.onSecurityAdvisory) {
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        accepted: true,
+        delivery,
+        deferred: true,
+        message: "onSecurityAdvisory hook not configured",
+        ghsaId: adv.ghsa_id,
+      },
+    };
+  }
+
+  const installationId = payload.installation?.id
+    ? String(payload.installation.id)
+    : undefined;
+  const orgId = deps.resolveProductOrgId
+    ? await deps.resolveProductOrgId({
+        installationId,
+        ownerLogin: payload.repository?.owner?.login,
+      })
+    : process.env.DEFAULT_ORG_ID ?? "local";
+
+  try {
+    const result = await deps.onSecurityAdvisory({
+      action,
+      orgId,
+      repoId: payload.repository?.full_name,
+      ghsaId: adv.ghsa_id,
+      summary: adv.summary,
+      severity: adv.severity,
+      packageNames,
+      delivery,
+    });
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        accepted: true,
+        delivery,
+        event,
+        action,
+        ghsaId: adv.ghsa_id,
+        repo: payload.repository?.full_name,
+        outcomeId: result?.outcomeId,
+      },
+    };
+  } catch (err) {
+    console.warn("[webhooks] onSecurityAdvisory failed", err);
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        accepted: false,
+        delivery,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    };
+  }
 }
 
 interface GitHubPullRequestEvent {

@@ -75,8 +75,14 @@ const POSITIVE_KINDS = new Set([
   "thumbs_up",
   "agent_miss_candidate",
   "gate_regret_miss",
+  "thread_resolved",
+  "security_advisory",
 ]);
-const NEGATIVE_KINDS = new Set(["false_positive", "dismissed"]);
+const NEGATIVE_KINDS = new Set([
+  "false_positive",
+  "dismissed",
+  "thread_unresolved",
+]);
 const COUNTABLE = new Set([
   "accepted",
   "fixed",
@@ -85,14 +91,25 @@ const COUNTABLE = new Set([
   "dismissed",
   "agent_miss_candidate",
   "gate_regret_miss",
+  "thread_resolved",
+  "thread_unresolved",
+  "security_advisory",
 ]);
 
 function groupKey(o: FindingOutcome): string | null {
   if (o.fingerprint) return `fp:${o.fingerprint}`;
-  if (o.kind === "agent_miss_candidate") {
-    const path = (o.metadata?.path as string) || "";
+  if (o.kind === "agent_miss_candidate" || o.kind === "security_advisory") {
+    const path =
+      (o.metadata?.path as string) ||
+      (Array.isArray(o.metadata?.packages)
+        ? String((o.metadata!.packages as string[])[0] ?? "")
+        : "") ||
+      (o.metadata?.ghsaId as string) ||
+      "";
     if (!path) return null;
-    return `path:${path.replace(/\\/g, "/")}`;
+    return o.kind === "security_advisory"
+      ? `advisory:${path}`
+      : `path:${path.replace(/\\/g, "/")}`;
   }
   return null;
 }
@@ -102,6 +119,10 @@ function isImportant(
   importantSeverities: Set<string>,
 ): boolean {
   if (o.kind === "gate_regret_miss") return true;
+  if (o.kind === "security_advisory") {
+    const sev = String(o.metadata?.severity ?? o.note ?? "").toLowerCase();
+    if (sev.includes("critical") || sev.includes("high")) return true;
+  }
   const sev = String(o.metadata?.severity ?? "").toLowerCase();
   if (sev && importantSeverities.has(sev)) return true;
   if ((o.confidence ?? 0) >= 0.9 && POSITIVE_KINDS.has(o.kind)) return true;

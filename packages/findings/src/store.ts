@@ -28,6 +28,11 @@ export interface FindingsStore {
   list(filter?: FindingFilter): Promise<Finding[]>;
   delete(id: string): Promise<boolean>;
   findByFingerprint(fingerprint: string, repoId?: string): Promise<Finding | undefined>;
+  /** Look up a finding by SCM review/comment id (GitHub comment id as string). */
+  findByScmCommentId?(
+    scmCommentId: string,
+    opts?: { orgId?: string; repoId?: string },
+  ): Promise<Finding | undefined>;
   persist?(): Promise<void>;
 }
 
@@ -53,6 +58,10 @@ export interface FindingsStoreOptions {
       fingerprint: string,
       repoId?: string,
     ): Promise<Finding | undefined>;
+    findByScmCommentId?(
+      scmCommentId: string,
+      opts?: { orgId?: string; repoId?: string },
+    ): Promise<Finding | undefined>;
   };
 }
 
@@ -68,6 +77,19 @@ export function createDbFindingsStore(
     list: (filter) => repo.list(filter),
     delete: (id) => repo.delete(id),
     findByFingerprint: (fp, repoId) => repo.findByFingerprint(fp, repoId),
+    async findByScmCommentId(scmCommentId, opts) {
+      if (typeof repo.findByScmCommentId === "function") {
+        return repo.findByScmCommentId(scmCommentId, opts);
+      }
+      const rows = await repo.list({
+        orgId: opts?.orgId,
+        repoId: opts?.repoId,
+      });
+      const id = String(scmCommentId);
+      return rows.find(
+        (f) => f.scmCommentId === id || f.scmCommentId === `comment:${id}`,
+      );
+    },
     async persist() {
       /* durable by default */
     },
@@ -187,6 +209,16 @@ function createMemoryFindingsStore(filePath?: string): FindingsStore {
       return undefined;
     },
 
+    async findByScmCommentId(scmCommentId, opts) {
+      const id = String(scmCommentId);
+      for (const f of byId.values()) {
+        if (opts?.orgId && (f.orgId ?? "local") !== opts.orgId) continue;
+        if (opts?.repoId && f.repoId !== opts.repoId) continue;
+        if (f.scmCommentId === id || f.scmCommentId === `comment:${id}`) return f;
+      }
+      return undefined;
+    },
+
     async persist() {
       await save();
     },
@@ -277,6 +309,13 @@ function createLazyDbFindingsStore(): FindingsStore {
     },
     async findByFingerprint(fp, repoId) {
       return (await resolve()).findByFingerprint(fp, repoId);
+    },
+    async findByScmCommentId(scmCommentId, opts) {
+      const s = await resolve();
+      if (typeof s.findByScmCommentId === "function") {
+        return s.findByScmCommentId(scmCommentId, opts);
+      }
+      return undefined;
     },
     async persist() {
       return (await resolve()).persist?.();

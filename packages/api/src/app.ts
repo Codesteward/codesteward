@@ -2693,6 +2693,18 @@ export function createApp() {
           }
           return process.env.REPO_PATH;
         },
+        onReviewThread: async (input) => {
+          const { handleReviewThreadOutcome } = await import(
+            "./github-outcome-hooks.js"
+          );
+          return handleReviewThreadOutcome(input);
+        },
+        onSecurityAdvisory: async (input) => {
+          const { handleSecurityAdvisoryOutcome } = await import(
+            "./github-outcome-hooks.js"
+          );
+          return handleSecurityAdvisoryOutcome(input);
+        },
         triageComment: async (input) => {
           const {
             triagePrComment,

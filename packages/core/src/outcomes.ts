@@ -23,6 +23,12 @@ export const FindingOutcomeKindSchema = z.enum([
   "gate_regret_miss",
   /** Gate blocked but only noise was raised */
   "gate_regret_noise",
+  /** GitHub review thread marked resolved (soft accept of our comment) */
+  "thread_resolved",
+  /** GitHub review thread reopened */
+  "thread_unresolved",
+  /** External security advisory signal (FN / coverage candidate) */
+  "security_advisory",
 ]);
 export type FindingOutcomeKind = z.infer<typeof FindingOutcomeKindSchema>;
 

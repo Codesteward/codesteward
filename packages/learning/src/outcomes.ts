@@ -379,13 +379,29 @@ export function outcomesToEvalCases(
         repoId: o.repoId,
         prNumber: o.prNumber,
       });
-    } else if (o.kind === "agent_miss_candidate") {
+    } else if (o.kind === "agent_miss_candidate" || o.kind === "security_advisory") {
       cases.push({
         id: o.id,
         source: "fn_candidate",
         expected: { should_fire: true },
         predicted: { fired: false },
         path: (o.metadata?.path as string) ?? undefined,
+        outcomeKind: o.kind,
+        orgId: o.orgId,
+        repoId: o.repoId,
+        prNumber: o.prNumber,
+      });
+    } else if (o.kind === "thread_resolved") {
+      cases.push({
+        id: o.id,
+        source: "merge",
+        expected: { should_fire: true, line_correct: true },
+        predicted: { fired: true, line_correct: true },
+        fingerprint: o.fingerprint,
+        path: f?.path,
+        title: f?.title,
+        severity: f?.severity,
+        confidence: f?.confidence,
         outcomeKind: o.kind,
         orgId: o.orgId,
         repoId: o.repoId,
