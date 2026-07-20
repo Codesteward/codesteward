@@ -1,0 +1,14 @@
+# Swarm overlay network for docker stack deploy.
+# Usage (only this + docker-compose.stack.yml):
+#
+#   docker swarm init   # once
+#   export STEW_SECRETS_KEY=$(openssl rand -hex 32)
+#   docker compose -f docker-compose.stack.yml -f docker-compose.stack.swarm.yml config > /tmp/cs-stack.yml
+#   docker stack deploy -c /tmp/cs-stack.yml codesteward --with-registry-auth
+#
+# Or from raw URLs after downloading both files.
+
+networks:
+  stew:
+    driver: overlay
+    attachable: true

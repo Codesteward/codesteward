@@ -1,27 +1,27 @@
-# Codesteward Review — pull-only stack (no source tree, no build)
+# Codesteward Review — pull-only stack (no git clone, no build)
 #
-# Uses published GHCR images only. Works with:
-#   Docker Compose v2:
-#     cp deploy/compose/.env.stack.example .env.stack   # edit secrets
-#     docker compose --env-file .env.stack -f deploy/compose/docker-compose.stack.yml pull
-#     docker compose --env-file .env.stack -f deploy/compose/docker-compose.stack.yml up -d
+# Requires only this file (optional: docker-compose.stack.swarm.yml for Swarm).
+# Download and run from any directory:
 #
-#   Docker Swarm:
-#     docker stack deploy -c deploy/compose/docker-compose.stack.yml codesteward \
-#       --with-registry-auth
-#     # Prefer: export vars then envsubst, or use docker stack deploy with a rendered file:
-#     set -a && . ./.env.stack && set +a
-#     docker stack deploy -c <(docker compose --env-file .env.stack -f deploy/compose/docker-compose.stack.yml config) codesteward
+#   curl -fsSL -o docker-compose.stack.yml \
+#     https://raw.githubusercontent.com/Codesteward/codesteward/main/deploy/compose/docker-compose.stack.yml
+#   export STEW_SECRETS_KEY=$(openssl rand -hex 32)
+#   docker compose -f docker-compose.stack.yml pull
+#   docker compose -f docker-compose.stack.yml up -d
 #
-# Defaults pin product image tag 1.4.0. Override IMAGE_TAG / APP_IMAGE / UI_IMAGE.
-# LLM keys can be set later in the product UI (Models); optional at install.
+# Images (override IMAGE_TAG / APP_IMAGE / UI_IMAGE as needed):
+#   ghcr.io/codesteward/codesteward:${IMAGE_TAG:-1.4.0}
+#   ghcr.io/codesteward/codesteward/ui:${IMAGE_TAG:-1.4.0}
+#   ghcr.io/codesteward/codesteward/keycloak:26.7.0
 #
-# Ports (host): UI 8080, API 8081, Keycloak 8083, Postgres 5432 (optional expose)
+# UI http://localhost:8080  ·  API http://localhost:8081  ·  Keycloak http://localhost:8083
+# Private GHCR: docker login ghcr.io
 
 name: codesteward-stack
 
 x-stew-env: &stew-env
   PORT: "8081"
+  SERVICE: api
   GRAPH_MOCK: "0"
   GRAPH_MCP_MODE: stdio
   GRAPH_MCP_COMMAND: codesteward-mcp
@@ -45,7 +45,6 @@ x-stew-env: &stew-env
   STEW_USE_DEEPAGENTS: "1"
   STEW_REQUIRE_TOOL_AGENTS: "1"
   STEW_AUTH_STRICT: ${STEW_AUTH_STRICT:-1}
-  # Generate: openssl rand -hex 32  (required for encrypted connectors in production)
   STEW_SECRETS_KEY: ${STEW_SECRETS_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
   STEW_API_KEY: ${STEW_API_KEY:-}
   STEW_PUBLIC_URL: ${STEW_PUBLIC_URL:-http://localhost:8080}
@@ -69,6 +68,7 @@ x-stew-env: &stew-env
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-steward}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-steward-change-me}
@@ -80,27 +80,16 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-    # Compose-only restart; Swarm uses deploy.restart_policy
-    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PUBLISH_PORT:-5432}:5432"
+    networks: [stew]
     deploy:
       replicas: 1
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-      placement:
-        constraints:
-          - node.role == manager
-    networks:
-      - stew
-    # Host publish optional for debugging (disable in locked-down Swarm)
-    ports:
-      - target: 5432
-        published: ${POSTGRES_PUBLISH_PORT:-5432}
-        protocol: tcp
-        mode: host
+      restart_policy: { condition: on-failure, delay: 5s }
 
   keycloak:
     image: ${KEYCLOAK_IMAGE:-ghcr.io/codesteward/codesteward/keycloak:26.7.0}
+    restart: unless-stopped
     command:
       [
         "start-dev",
@@ -117,96 +106,70 @@ services:
       KC_HOSTNAME_ADMIN_URL: ${KC_HOSTNAME_ADMIN_URL:-http://localhost:8083}
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin-change-me}
-    restart: unless-stopped
+    ports:
+      - "${KEYCLOAK_PUBLISH_PORT:-8083}:8083"
+    networks: [stew]
     deploy:
       replicas: 1
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-    ports:
-      - target: 8083
-        published: ${KEYCLOAK_PUBLISH_PORT:-8083}
-        protocol: tcp
-        mode: ingress
-    networks:
-      - stew
+      restart_policy: { condition: on-failure, delay: 5s }
 
   api:
     image: ${APP_IMAGE:-ghcr.io/codesteward/codesteward:${IMAGE_TAG:-1.4.0}}
+    restart: unless-stopped
     environment:
       <<: *stew-env
       SERVICE: api
     volumes:
       - stew-data:/data
       - stew-workspaces:/workspace
-    restart: unless-stopped
+    ports:
+      - "${API_PUBLISH_PORT:-8081}:8081"
+    networks: [stew]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
     deploy:
       replicas: ${API_REPLICAS:-1}
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-      update_config:
-        parallelism: 1
-        order: start-first
-    ports:
-      - target: 8081
-        published: ${API_PUBLISH_PORT:-8081}
-        protocol: tcp
-        mode: ingress
-    networks:
-      - stew
-    depends_on:
-      - postgres
-      - keycloak
+      restart_policy: { condition: on-failure, delay: 5s }
+      update_config: { parallelism: 1, order: start-first }
 
   worker:
     image: ${APP_IMAGE:-ghcr.io/codesteward/codesteward:${IMAGE_TAG:-1.4.0}}
+    restart: unless-stopped
     environment:
       <<: *stew-env
       SERVICE: worker
     volumes:
       - stew-data:/data
       - stew-workspaces:/workspace
-    restart: unless-stopped
+    networks: [stew]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
     deploy:
       replicas: ${WORKER_REPLICAS:-1}
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-      update_config:
-        parallelism: 1
-        order: start-first
-    networks:
-      - stew
-    depends_on:
-      - postgres
-      - api
+      restart_policy: { condition: on-failure, delay: 5s }
+      update_config: { parallelism: 1, order: start-first }
 
   ui:
     image: ${UI_IMAGE:-ghcr.io/codesteward/codesteward/ui:${IMAGE_TAG:-1.4.0}}
     restart: unless-stopped
-    # Same-origin /v1 proxy → service name `api` (must share network with api).
-    # If login shows the local password form, API proxy is usually 502 (stale DNS);
-    # recreate UI after API is up: docker compose … up -d --force-recreate ui
-    deploy:
-      replicas: ${UI_REPLICAS:-1}
-      restart_policy:
-        condition: on-failure
-        delay: 5s
     ports:
-      - target: 80
-        published: ${UI_PUBLISH_PORT:-8080}
-        protocol: tcp
-        mode: ingress
-    networks:
-      - stew
+      - "${UI_PUBLISH_PORT:-8080}:80"
+    networks: [stew]
     depends_on:
       - api
+    deploy:
+      replicas: ${UI_REPLICAS:-1}
+      restart_policy: { condition: on-failure, delay: 5s }
 
 networks:
   stew:
-    driver: overlay
-    attachable: true
+    driver: bridge
 
 volumes:
   pg-data:

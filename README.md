@@ -374,17 +374,18 @@ See [`.env.example`](.env.example) for the full template.
 
 ## Pull-only deploy (Compose / Swarm)
 
-No monorepo clone required for the app — pull published GHCR images:
-
-See [`deploy/compose/STACK.md`](./deploy/compose/STACK.md) (`docker-compose.stack.yml`).
+No monorepo clone — **one compose file** (optional second for Swarm). Published GHCR images only.
 
 ```bash
-cp deploy/compose/.env.stack.example .env.stack   # set STEW_SECRETS_KEY, passwords
-docker compose --env-file .env.stack \
-  -f deploy/compose/docker-compose.stack.yml \
-  -f deploy/compose/docker-compose.stack.compose.yml \
-  up -d
+# Docker Compose (single host) — only this file:
+curl -fsSL -o docker-compose.stack.yml \
+  https://raw.githubusercontent.com/Codesteward/codesteward/main/deploy/compose/docker-compose.stack.yml
+export STEW_SECRETS_KEY=$(openssl rand -hex 32)
+docker compose -f docker-compose.stack.yml pull && docker compose -f docker-compose.stack.yml up -d
 ```
+
+Swarm: also download `docker-compose.stack.swarm.yml`, then  
+`docker compose -f docker-compose.stack.yml -f docker-compose.stack.swarm.yml config | docker stack deploy -c - codesteward --with-registry-auth`.
 
 ## Changelog & release
 
