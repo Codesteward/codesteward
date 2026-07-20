@@ -85,13 +85,130 @@ export function buildDiffLineIndex(
 }
 
 /**
+ * Map a source path to a GitHub-flavored Markdown fence language id.
+ * Empty string → untagged fence (still valid GFM).
+ */
+export function markdownLanguageFromPath(path?: string): string {
+  if (!path) return "";
+  const base = path.replace(/\\/g, "/").split("/").pop() ?? path;
+  const lower = base.toLowerCase();
+
+  // Multi-dot / special basenames first
+  if (lower === "dockerfile" || lower.endsWith(".dockerfile")) return "dockerfile";
+  if (lower === "makefile" || lower === "gnumakefile") return "makefile";
+  if (lower.endsWith(".tf") || lower.endsWith(".tfvars")) return "hcl";
+  if (lower.endsWith(".yml") || lower.endsWith(".yaml")) return "yaml";
+
+  const dot = lower.lastIndexOf(".");
+  if (dot < 0) return "";
+  const ext = lower.slice(dot + 1);
+
+  const map: Record<string, string> = {
+    ts: "typescript",
+    tsx: "tsx",
+    mts: "typescript",
+    cts: "typescript",
+    js: "javascript",
+    jsx: "jsx",
+    mjs: "javascript",
+    cjs: "javascript",
+    go: "go",
+    rs: "rust",
+    py: "python",
+    rb: "ruby",
+    java: "java",
+    kt: "kotlin",
+    kts: "kotlin",
+    scala: "scala",
+    cs: "csharp",
+    fs: "fsharp",
+    php: "php",
+    swift: "swift",
+    c: "c",
+    h: "c",
+    cc: "cpp",
+    cxx: "cpp",
+    cpp: "cpp",
+    hpp: "cpp",
+    hh: "cpp",
+    m: "objectivec",
+    mm: "objectivec",
+    sql: "sql",
+    sh: "bash",
+    bash: "bash",
+    zsh: "bash",
+    fish: "bash",
+    ps1: "powershell",
+    psm1: "powershell",
+    json: "json",
+    jsonc: "json",
+    json5: "json",
+    toml: "toml",
+    ini: "ini",
+    cfg: "ini",
+    conf: "ini",
+    env: "bash",
+    md: "markdown",
+    mdx: "markdown",
+    css: "css",
+    scss: "scss",
+    less: "less",
+    html: "html",
+    htm: "html",
+    xml: "xml",
+    svg: "xml",
+    graphql: "graphql",
+    gql: "graphql",
+    proto: "protobuf",
+    proto3: "protobuf",
+    r: "r",
+    lua: "lua",
+    pl: "perl",
+    pm: "perl",
+    ex: "elixir",
+    exs: "elixir",
+    erl: "erlang",
+    hs: "haskell",
+    clj: "clojure",
+    cljs: "clojure",
+    dart: "dart",
+    groovy: "groovy",
+    gradle: "groovy",
+    vue: "vue",
+    svelte: "svelte",
+    sol: "solidity",
+    zig: "zig",
+    nim: "nim",
+    bicep: "bicep",
+    cue: "cue",
+    nix: "nix",
+  };
+  return map[ext] ?? "";
+}
+
+/** Fenced block with language tag when known; strips accidental outer fences from content. */
+export function fencedCodeBlock(code: string, language = ""): string {
+  let body = code.trim();
+  // Drop a single outer fence if the model already wrapped the snippet
+  const wrapped = /^```[a-zA-Z0-9_+-]*\n([\s\S]*?)\n```\s*$/.exec(body);
+  if (wrapped) body = wrapped[1]!.trimEnd();
+  // Avoid breaking the outer fence if content contains ```
+  if (body.includes("```")) {
+    body = body.replace(/```/g, "'''");
+  }
+  const lang = language.trim();
+  return lang ? `\`\`\`${lang}\n${body}\n\`\`\`` : `\`\`\`\n${body}\n\`\`\``;
+}
+
+/**
  * Format a finding the way the UI surfaces it: severity, path, explanation,
- * suggestion, and proposed fix code block.
+ * suggestion, and proposed fix code block (with GFM language highlighting).
  */
 export function formatFindingPrCommentBody(
   f: PublishableFinding,
   opts?: { inline?: boolean },
 ): string {
+  const lang = markdownLanguageFromPath(f.path);
   const loc =
     f.path != null
       ? `\`${f.path}${f.startLine != null ? `:${f.startLine}` : ""}${
@@ -107,13 +224,13 @@ export function formatFindingPrCommentBody(
     f.body?.trim() || "_No description._",
   ];
   if (f.existingCode?.trim()) {
-    parts.push("", "**Context:**", "```", f.existingCode.trim(), "```");
+    parts.push("", "**Context:**", fencedCodeBlock(f.existingCode, lang));
   }
   if (f.suggestion?.trim()) {
     parts.push("", `**Suggestion:** ${f.suggestion.trim()}`);
   }
   if (f.suggestedFix?.trim()) {
-    parts.push("", "**Proposed fix:**", "```", f.suggestedFix.trim(), "```");
+    parts.push("", "**Proposed fix:**", fencedCodeBlock(f.suggestedFix, lang));
   }
   if (f.fingerprint) {
     parts.push("", `<!-- fingerprint:${f.fingerprint} -->`);
@@ -330,6 +447,82 @@ export async function publishFindingsToPullRequest(opts: {
     }
   }
 
+  // 3) Map inline review comments → finding ids via body markers (for resolve on re-review)
+  if (
+    result.inlineCount > 0 &&
+    typeof opts.scm.listPullReviewComments === "function"
+  ) {
+    try {
+      const listed = await opts.scm.listPullReviewComments(
+        opts.owner,
+        opts.repo,
+        opts.prNumber,
+      );
+      for (const f of capped) {
+        if (!f.id || result.postedByFindingId[f.id]) continue;
+        const hit = listed.find((c) => {
+          if (f.id && c.body.includes(`<!-- finding:${f.id} -->`)) return true;
+          if (
+            f.fingerprint &&
+            c.body.includes(`<!-- fingerprint:${f.fingerprint} -->`)
+          ) {
+            return true;
+          }
+          return false;
+        });
+        if (hit) result.postedByFindingId[f.id] = hit.id;
+      }
+    } catch (err) {
+      result.errors.push(
+        `list review comments for id map: ${
+          err instanceof Error ? err.message.slice(0, 120) : String(err)
+        }`,
+      );
+    }
+  }
+
   void skipped;
   return result;
+}
+
+/**
+ * After re-review auto-fix, resolve matching GitHub review threads (when possible).
+ */
+export async function resolveFixedFindingsOnScm(opts: {
+  scm: ScmProvider;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  findings: Array<{
+    id: string;
+    fingerprint?: string;
+    scmCommentId?: string;
+  }>;
+}): Promise<{ resolved: number; failed: number; errors: string[] }> {
+  const out = { resolved: 0, failed: 0, errors: [] as string[] };
+  if (typeof opts.scm.resolveReviewThreadForComment !== "function") {
+    return out;
+  }
+  for (const f of opts.findings) {
+    try {
+      const r = await opts.scm.resolveReviewThreadForComment!(
+        opts.owner,
+        opts.repo,
+        opts.prNumber,
+        {
+          commentId: f.scmCommentId,
+          fingerprint: f.fingerprint,
+          findingId: f.id,
+        },
+      );
+      if (r.resolved) out.resolved += 1;
+      else out.failed += 1;
+    } catch (err) {
+      out.failed += 1;
+      out.errors.push(
+        `${f.id}: ${err instanceof Error ? err.message.slice(0, 120) : String(err)}`,
+      );
+    }
+  }
+  return out;
 }

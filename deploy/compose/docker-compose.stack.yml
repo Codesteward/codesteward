@@ -185,6 +185,9 @@ services:
   ui:
     image: ${UI_IMAGE:-ghcr.io/codesteward/codesteward/ui:${IMAGE_TAG:-1.4.0}}
     restart: unless-stopped
+    # Same-origin /v1 proxy → service name `api` (must share network with api).
+    # If login shows the local password form, API proxy is usually 502 (stale DNS);
+    # recreate UI after API is up: docker compose … up -d --force-recreate ui
     deploy:
       replicas: ${UI_REPLICAS:-1}
       restart_policy:

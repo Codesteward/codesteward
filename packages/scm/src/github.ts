@@ -217,6 +217,178 @@ export class GitHubScm implements ScmProvider {
     return { id: String(res.id), htmlUrl: res.html_url };
   }
 
+  async listPullReviewComments(
+    owner: string,
+    repo: string,
+    prNumber: number,
+  ): Promise<Array<{ id: string; path?: string; body: string; htmlUrl?: string }>> {
+    const out: Array<{ id: string; path?: string; body: string; htmlUrl?: string }> =
+      [];
+    let page = 1;
+    for (;;) {
+      const batch = await this.api<
+        Array<{ id: number; path?: string; body: string; html_url?: string }>
+      >(
+        `/repos/${owner}/${repo}/pulls/${prNumber}/comments?per_page=100&page=${page}`,
+      );
+      if (!batch.length) break;
+      for (const c of batch) {
+        out.push({
+          id: String(c.id),
+          path: c.path,
+          body: c.body ?? "",
+          htmlUrl: c.html_url,
+        });
+      }
+      if (batch.length < 100) break;
+      page += 1;
+      if (page > 20) break;
+    }
+    return out;
+  }
+
+  /**
+   * Resolve the review thread for a prior finding comment (re-review auto-fix).
+   * Matches by REST review-comment database id and/or HTML markers in the body.
+   */
+  async resolveReviewThreadForComment(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    match: {
+      commentId?: string | number;
+      fingerprint?: string;
+      findingId?: string;
+    },
+  ): Promise<{ resolved: boolean; threadId?: string; alreadyResolved?: boolean }> {
+    const wantId =
+      match.commentId != null ? String(match.commentId).replace(/^comment:/, "") : undefined;
+    const fp = match.fingerprint?.trim();
+    const fid = match.findingId?.trim();
+    if (!wantId && !fp && !fid) {
+      return { resolved: false };
+    }
+
+    // GraphQL: walk review threads and match comment databaseId / body markers
+    const query = `
+      query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+        repository(owner: $owner, name: $name) {
+          pullRequest(number: $number) {
+            reviewThreads(first: 50, after: $cursor) {
+              pageInfo { hasNextPage endCursor }
+              nodes {
+                id
+                isResolved
+                comments(first: 20) {
+                  nodes {
+                    databaseId
+                    body
+                  }
+                }
+              }
+            }
+          }
+        }
+      }`;
+
+    type ThreadComment = { databaseId?: number; body?: string };
+    type ThreadNode = {
+      id: string;
+      isResolved: boolean;
+      comments?: {
+        nodes?: ThreadComment[];
+      };
+    };
+    type ThreadsQuery = {
+      repository?: {
+        pullRequest?: {
+          reviewThreads?: {
+            pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+            nodes?: ThreadNode[];
+          };
+        };
+      };
+    };
+
+    let cursor: string | null = null;
+    let target: ThreadNode | undefined;
+    for (let page = 0; page < 30 && !target; page++) {
+      const data: ThreadsQuery = await this.graphql<ThreadsQuery>(query, {
+        owner,
+        name: repo,
+        number: prNumber,
+        cursor,
+      });
+      const threads = data.repository?.pullRequest?.reviewThreads;
+      const nodes: ThreadNode[] = threads?.nodes ?? [];
+      for (const th of nodes) {
+        const comments: ThreadComment[] = th.comments?.nodes ?? [];
+        const hit = comments.some((c: ThreadComment) => {
+          if (wantId && c.databaseId != null && String(c.databaseId) === wantId) {
+            return true;
+          }
+          const body = c.body ?? "";
+          if (fp && body.includes(`<!-- fingerprint:${fp} -->`)) return true;
+          if (fid && body.includes(`<!-- finding:${fid} -->`)) return true;
+          return false;
+        });
+        if (hit) {
+          target = th;
+          break;
+        }
+      }
+      if (!threads?.pageInfo?.hasNextPage) break;
+      cursor = threads.pageInfo.endCursor ?? null;
+      if (!cursor) break;
+    }
+
+    if (!target) return { resolved: false };
+    if (target.isResolved) {
+      return { resolved: true, threadId: target.id, alreadyResolved: true };
+    }
+
+    const mut = `
+      mutation($id: ID!) {
+        resolveReviewThread(input: { threadId: $id }) {
+          thread { id isResolved }
+        }
+      }`;
+    await this.graphql(mut, { id: target.id });
+    return { resolved: true, threadId: target.id };
+  }
+
+  private async graphql<T>(
+    query: string,
+    variables: Record<string, unknown>,
+  ): Promise<T> {
+    const base = this.baseUrl.includes("api.github.com")
+      ? "https://api.github.com"
+      : this.baseUrl.replace(/\/$/, "");
+    const res = await this.fetchImpl(`${base}/graphql`, {
+      method: "POST",
+      headers: {
+        ...(await this.headers()),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`GitHub GraphQL ${res.status}: ${text.slice(0, 400)}`);
+    }
+    const json = (await res.json()) as {
+      data?: T;
+      errors?: Array<{ message?: string }>;
+    };
+    if (json.errors?.length) {
+      throw new Error(
+        `GitHub GraphQL: ${json.errors.map((e) => e.message).join("; ").slice(0, 400)}`,
+      );
+    }
+    if (!json.data) throw new Error("GitHub GraphQL: empty data");
+    return json.data;
+  }
+
   /**
    * React on a PR (as issue) or an issue comment — e.g. 👀 when a webhook review starts.
    * Requires issues:write (or equivalent) on the GitHub App / token.

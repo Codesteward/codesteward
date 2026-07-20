@@ -11,7 +11,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Pull-only stack** — `deploy/compose/docker-compose.stack.yml` (+ compose override + `STACK.md`): run from
+  published GHCR images with **Docker Compose** or **Docker Swarm** (no monorepo build).
+- **Re-review GitHub thread resolve** — when lifecycle marks prior findings `fixed` (fingerprint gone after a new
+  push/session), resolve matching PR review threads via GraphQL when `scmCommentId` / fingerprint / finding markers match.
+  Disable with `STEW_RESOLVE_FIXED_THREADS=0`.
+
 ### Changed
+
+- **PR finding code blocks** use GFM language tags from the file path (e.g. `go`, `typescript`, `yaml`) so GitHub
+  highlights **Context** and **Proposed fix** snippets.
+- **UI nginx proxy** — re-resolve Docker DNS for `api` (`resolver 127.0.0.11`) so restarted API containers do not leave
+  the UI stuck on a stale upstream IP (502 → SPA falls back to local password login instead of Keycloak).
 
 ### Fixed
 

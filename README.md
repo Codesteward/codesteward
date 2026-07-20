@@ -372,6 +372,20 @@ See [`.env.example`](.env.example) for the full template.
 
 ---
 
+## Pull-only deploy (Compose / Swarm)
+
+No monorepo clone required for the app — pull published GHCR images:
+
+See [`deploy/compose/STACK.md`](./deploy/compose/STACK.md) (`docker-compose.stack.yml`).
+
+```bash
+cp deploy/compose/.env.stack.example .env.stack   # set STEW_SECRETS_KEY, passwords
+docker compose --env-file .env.stack \
+  -f deploy/compose/docker-compose.stack.yml \
+  -f deploy/compose/docker-compose.stack.compose.yml \
+  up -d
+```
+
 ## Changelog & release
 
 - **[CHANGELOG.md](./CHANGELOG.md)** — Keep a Changelog (current: **1.4.0**)

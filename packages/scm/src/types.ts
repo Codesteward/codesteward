@@ -144,6 +144,30 @@ export interface ScmProvider {
     body: string,
   ): Promise<PostedComment>;
   /**
+   * List PR review comments (inline on files). GitHub: pulls comments API.
+   * Used to map posted bodies → comment ids and resolve threads on re-review.
+   */
+  listPullReviewComments?(
+    owner: string,
+    repo: string,
+    prNumber: number,
+  ): Promise<Array<{ id: string; path?: string; body: string; htmlUrl?: string }>>;
+  /**
+   * Resolve a PR review thread that contains a given review comment id and/or
+   * fingerprint/finding markers in the comment body. GitHub GraphQL.
+   * Returns true if a thread was resolved (or already resolved).
+   */
+  resolveReviewThreadForComment?(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    match: {
+      commentId?: string | number;
+      fingerprint?: string;
+      findingId?: string;
+    },
+  ): Promise<{ resolved: boolean; threadId?: string; alreadyResolved?: boolean }>;
+  /**
    * Upload SARIF to GitHub Code Scanning so findings appear under Security → Code scanning.
    * GitHub only; requires code scanning enabled and token with `security_events: write`.
    */

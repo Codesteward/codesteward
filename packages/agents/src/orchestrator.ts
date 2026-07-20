@@ -1328,6 +1328,74 @@ export class ReviewOrchestrator {
           message: `Lifecycle: auto-fixed ${rec.fixed.length} prior finding(s) no longer present on this ${findingScope.prNumber != null ? `PR #${findingScope.prNumber}` : findingScope.headBranch ? `branch ${findingScope.headBranch}` : "scope"}`,
           ts: nowIso(),
         });
+        // Resolve prior PR review threads on GitHub when we can map comment/fingerprint
+        const scm = this.deps.scm;
+        const owner = job.scm?.owner;
+        const repo = job.scm?.repo;
+        const prNumber = job.scm?.prNumber ?? job.prNumber ?? session.prNumber;
+        if (
+          scm &&
+          owner &&
+          repo &&
+          prNumber != null &&
+          typeof scm.resolveReviewThreadForComment === "function" &&
+          process.env.STEW_RESOLVE_FIXED_THREADS !== "0"
+        ) {
+          try {
+            const { resolveFixedFindingsOnScm } = await import(
+              "./scm-findings-publish.js"
+            );
+            const fixedRows: Array<{
+              id: string;
+              fingerprint?: string;
+              scmCommentId?: string;
+            }> = [];
+            for (const fid of rec.fixed) {
+              const row = await findings.get(fid);
+              if (row) {
+                fixedRows.push({
+                  id: row.id,
+                  fingerprint: row.fingerprint,
+                  scmCommentId: row.scmCommentId,
+                });
+              } else {
+                fixedRows.push({ id: fid });
+              }
+            }
+            const res = await resolveFixedFindingsOnScm({
+              scm,
+              owner,
+              repo,
+              prNumber,
+              findings: fixedRows,
+            });
+            await this.emit({
+              type: "log",
+              sessionId: session.id,
+              level: "info",
+              message: `Lifecycle: resolved ${res.resolved}/${rec.fixed.length} GitHub review thread(s) for auto-fixed findings` +
+                (res.failed ? ` (${res.failed} unmatched/failed)` : ""),
+              ts: nowIso(),
+            });
+            for (const e of res.errors.slice(0, 5)) {
+              await this.emit({
+                type: "log",
+                sessionId: session.id,
+                level: "warn",
+                message: `Lifecycle: resolve thread: ${e}`,
+                ts: nowIso(),
+              });
+            }
+          } catch (err) {
+            await this.emit({
+              type: "log",
+              sessionId: session.id,
+              level: "warn",
+              message: `Lifecycle: resolve GitHub threads failed: ${err instanceof Error ? err.message : String(err)}`,
+              ts: nowIso(),
+            });
+          }
+        }
       }
       if (upsertStats.updated || upsertStats.reopened) {
         await this.emit({

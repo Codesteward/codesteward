@@ -8,6 +8,10 @@ import type {
 import { nowIso } from "@codesteward/core";
 import type { ModelRouter } from "@codesteward/model-router";
 import { severityCounts } from "./judge.js";
+import {
+  fencedCodeBlock,
+  markdownLanguageFromPath,
+} from "./scm-findings-publish.js";
 
 export interface SessionReport {
   /** Full human-readable markdown */
@@ -232,7 +236,10 @@ function findingsSection(findings: BuildSessionReportInput["findings"]): string 
         ? `\n  - **Suggestion:** ${f.suggestion.trim().slice(0, 280)}`
         : "";
       const fix = f.suggestedFix?.trim()
-        ? `\n  - **Proposed fix:**\n\`\`\`\n${f.suggestedFix.trim().slice(0, 800)}\n\`\`\``
+        ? `\n  - **Proposed fix:**\n${fencedCodeBlock(
+            f.suggestedFix.trim().slice(0, 800),
+            markdownLanguageFromPath(f.path),
+          )}`
         : "";
       return (
         `${i + 1}. **[${String(f.severity).toUpperCase()}]** ${f.title}\n` +

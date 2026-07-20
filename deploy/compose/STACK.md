@@ -62,3 +62,18 @@ Notes:
 - Set public URLs (`STEW_PUBLIC_URL`, OIDC/Keycloak hostnames) when exposing beyond localhost.
 - Private GHCR images: `docker login ghcr.io` (and `--with-registry-auth` on stack deploy).
 - Product version pin: change `IMAGE_TAG` / `APP_IMAGE` / `UI_IMAGE` when upgrading.
+
+## Sign-in: Keycloak vs “local” password form
+
+The stack sets `STEW_IDENTITY_MODE=keycloak`. Normal sign-in should redirect to Keycloak.
+
+If the UI shows **local / bootstrap email+password** instead:
+
+1. **UI → API proxy failed (502)** — browser calls `http://localhost:8080/v1/auth/…`; nginx in the UI image proxies to `api:8081`. If that 502s (often stale Docker DNS after API recreated), the SPA cannot load OIDC status and falls back to the local form.
+   - Quick fix: recreate UI after API is healthy  
+     `docker compose … up -d --force-recreate ui`
+   - Confirm: `curl -sS http://localhost:8080/v1/auth/status` should return JSON with `"identityMode":"keycloak"` and `"oidc":{"status":"ready",…}` (not HTML 502).
+2. **`auth.mode: "open"`** on a fresh DB is normal until the first Keycloak login or bootstrap — it does **not** mean Keycloak is off. Org id **`local`** is also normal (single-tenant product org name).
+3. Break-glass only: `/login?local=1` forces the local form on purpose.
+
+Keycloak UI: `http://localhost:8083` (admin from env). Realm client `codesteward-ui` must allow redirect `http://localhost:8080/auth/callback` (and API callback if used).
