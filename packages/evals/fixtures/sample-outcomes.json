@@ -1,0 +1,42 @@
+{
+  "cases": [
+    {
+      "id": "o1",
+      "source": "merge",
+      "expected": { "should_fire": true, "line_correct": true },
+      "predicted": { "fired": true, "line_correct": true },
+      "outcomeKind": "accepted",
+      "title": "SQL injection in query builder"
+    },
+    {
+      "id": "o2",
+      "source": "reaction",
+      "expected": { "should_fire": false },
+      "predicted": { "fired": true, "line_correct": true },
+      "outcomeKind": "false_positive",
+      "title": "Prefer const for loop index"
+    },
+    {
+      "id": "o3",
+      "source": "fn_candidate",
+      "expected": { "should_fire": true },
+      "predicted": { "fired": false },
+      "outcomeKind": "agent_miss_candidate",
+      "path": "src/auth/password.ts"
+    },
+    {
+      "id": "o4",
+      "source": "merge",
+      "expected": { "should_fire": true },
+      "predicted": { "fired": true },
+      "outcomeKind": "unaddressed_at_merge"
+    },
+    {
+      "id": "o5",
+      "source": "reaction",
+      "expected": { "should_fire": true, "line_correct": true },
+      "predicted": { "fired": true, "line_correct": true },
+      "outcomeKind": "thumbs_up"
+    }
+  ]
+}

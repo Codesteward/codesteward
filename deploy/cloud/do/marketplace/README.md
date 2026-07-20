@@ -1,7 +1,10 @@
-# DigitalOcean Marketplace — 1-Click App (vendor)
+# DigitalOcean Marketplace — 1-Click App (vendor, not live)
 
-This directory describes how to publish **Codesteward** as a Droplet 1-Click App.
-End users create a Droplet from Marketplace; first boot runs the shared cloud stack
+**Status:** packaging notes only. There is **no public Codesteward Marketplace listing** yet.  
+End users should use [`../deploy.sh`](../deploy.sh) or [`../cloud-init.yaml`](../cloud-init.yaml).
+
+This directory describes how to publish **Codesteward** as a Droplet 1-Click App later.
+End users would create a Droplet from Marketplace; first boot runs the shared cloud stack
 (Keycloak + nginx edge + Compose). **No LLM key at install.**
 
 ## Architecture
@@ -44,7 +47,7 @@ Document for Marketplace listing:
 ## Validation checklist
 
 - [ ] Fresh droplet boots to healthy `docker compose ps`
-- [ ] Keycloak login works on `http://$IP/auth/`
+- [ ] Keycloak login works on `https://$IP/auth/` (or HTTP redirect)
 - [ ] UI loads; no LLM key required until Models UI
 - [ ] Optional domain + TLS path works
 - [ ] Security: no default weak secrets reused across droplets (first-boot regenerates)

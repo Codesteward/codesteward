@@ -101,11 +101,29 @@ export async function runReviewJob(
   const log: RunJobLog = opts.log ?? ((msg, ...args) => console.log(`[${label}] ${msg}`, ...args));
   const healConfig = resolveSelfHealConfig();
 
-  log(`processing job ${job.id} session=${job.sessionId} mode=${job.mode}`);
+  const jobKind =
+    job.jobKind ??
+    (job.metadata?.jobKind === "pr_outcome" ? "pr_outcome" : "review");
+
+  log(
+    `processing job ${job.id} session=${job.sessionId} mode=${job.mode} kind=${jobKind}`,
+  );
   await globalSessionStore.reload();
   let session = globalSessionStore.get(job.sessionId);
   if (!session) {
     console.warn(`[${label}] session ${job.sessionId} not found — skip`);
+    return;
+  }
+
+  // Post-merge outcome analysis (no agent pipeline)
+  if (jobKind === "pr_outcome") {
+    const { runPrOutcomeJob } = await import("./run-outcome-job.js");
+    await runPrOutcomeJob(job, session, log);
+    try {
+      await globalQueue.complete?.(job.id);
+    } catch {
+      /* optional complete */
+    }
     return;
   }
 

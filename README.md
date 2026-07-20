@@ -127,8 +127,8 @@ flowchart TB
 ## Deploy to your cloud
 
 <p align="center">
-  <strong>Try Codesteward in your own account in one click.</strong><br />
-  Single VM · Traefik · <strong>Keycloak</strong> · API · worker · UI · Postgres<br />
+  <strong>Try Codesteward in your own cloud account.</strong><br />
+  Single VM · nginx edge (HTTPS) · <strong>Keycloak</strong> · API · worker · UI · Postgres<br />
   <em>No LLM key at install — add providers in Settings → Models after login.</em>
 </p>
 
@@ -148,8 +148,9 @@ flowchart TB
     <img src="docs/static/img/readme/deploy/gcp.png" alt="Open in Google Cloud Shell" width="200" height="35" />
   </a>
   &nbsp;&nbsp;
-  <a href="https://marketplace.digitalocean.com/apps/docker">
-    <img src="docs/static/img/readme/deploy/digitalocean.png" alt="1-Click on DigitalOcean" width="200" height="35" />
+  <!-- DO: no Marketplace product listing yet — doctl/user-data installs Codesteward (not the Docker marketplace app) -->
+  <a href="https://github.com/Codesteward/codesteward/blob/main/deploy/cloud/do/README.md">
+    <img src="docs/static/img/readme/deploy/digitalocean.png" alt="Deploy on DigitalOcean" width="200" height="35" />
   </a>
 </p>
 

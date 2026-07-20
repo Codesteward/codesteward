@@ -8,3 +8,4 @@ export * from "./models.js";
 export * from "./events.js";
 export * from "./fingerprint.js";
 export * from "./job.js";
+export * from "./outcomes.js";

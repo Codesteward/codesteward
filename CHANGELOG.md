@@ -11,6 +11,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Automatic / indirect eval (outcome loop)** — learn from what users and merges actually do:
+  - Merge webhooks (GitHub `closed`+merged, GitLab `merge`) enqueue `jobKind=pr_outcome` (no agent pipeline)
+  - Classifies findings: accepted / fixed / thumbs_up / false_positive / dismissed / unaddressed_at_merge
+  - Mines **agent-miss candidates** on sensitive paths changed with no finding
+  - Gate regret: approve+critical open, or request_changes+only noise
+  - Durable `pr_outcomes` + `finding_outcomes` (migration `015_review_outcomes.sql` or file store)
+  - 👍 creates **positive** preference memories (mirrors 👎 suppress)
+  - Preference **bag-of-words embeddings** filter in noise stack (near 👎 → drop)
+  - Analytics: split **fixAcceptRate / noiseRate / openRate** + confidence calibration
+    (`GET /v1/analytics/address-rate`, `/v1/analytics/outcomes`, `/eval-export`)
+  - Offline eval harness consumes production outcome fixtures (`packages/evals`)
+  - **Outcome consolidator** — promote frequent merge outcomes to memories with correct scope:
+    repo-only common → **repo** memory; multi-repo or important (critical/high / gate regret) → **org** memory.
+    `POST /v1/analytics/outcomes/consolidate`; also runs after each merge outcome job.
+    Source `outcome_aggregate` (auditable on Learnings). No longer writes a repo memory on every single accept.
+
 ### Changed
 
 ### Fixed
@@ -35,7 +51,9 @@ Cloud one-click trial deploys, first-review product tour, and Scorecard publish 
   - AWS CloudFormation Launch Stack (`deploy/cloud/aws/`)
   - Azure Bicep/ARM Deploy (`deploy/cloud/azure/`)
   - GCP Cloud Shell + `gcloud` (`deploy/cloud/gcp/`)
-  - DigitalOcean Marketplace 1-Click vendor assets (`deploy/cloud/do/`)
+  - DigitalOcean trial path (`deploy/cloud/do/`): `doctl` `deploy.sh` + `cloud-init.yaml`
+    (full product install via `first-boot.sh`). Native Marketplace 1-Click is **not** published yet;
+    do not use the generic Docker Marketplace app as a Codesteward installer.
 
 ### Fixed
 

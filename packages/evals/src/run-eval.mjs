@@ -1,15 +1,27 @@
 #!/usr/bin/env node
 /**
- * Offline precision/recall harness for CodeSteward findings quality.\n * Uses labeled regression fixtures (predicted vs expected) as CI quality gate.\n * Not a live-model eval — run live suites separately against held-out PRs.
- * Fixture-based until live model evals are wired.
+ * Offline precision/recall harness for CodeSteward findings quality.
+ *
+ * Modes:
+ *  1) Fixture file (default): packages/evals/fixtures/sample-findings.json
+ *  2) Outcome export: JSON from GET /v1/analytics/outcomes/eval-export
+ *     { cases: OutcomeEvalCase[] }
+ *
+ * Not a live-model eval — production labels come from reactions + merge outcomes.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const args = process.argv.slice(2);
+const writeOut = args.includes("--write-summary")
+  ? args[args.indexOf("--write-summary") + 1]
+  : null;
 const fixturePath =
-  process.argv[2] ?? join(__dirname, "../fixtures/sample-findings.json");
+  args.find((a) => !a.startsWith("-") && a !== writeOut) ??
+  join(__dirname, "../fixtures/sample-findings.json");
+
 const data = JSON.parse(readFileSync(fixturePath, "utf8"));
 const cases = data.cases ?? [];
 
@@ -19,6 +31,8 @@ let tp = 0,
   tn = 0,
   lineOk = 0,
   lineN = 0;
+
+const bySource = {};
 
 for (const c of cases) {
   const should = Boolean(c.expected?.should_fire);
@@ -31,6 +45,12 @@ for (const c of cases) {
     lineN++;
     if (c.predicted?.line_correct) lineOk++;
   }
+  const src = c.source ?? "fixture";
+  bySource[src] = bySource[src] ?? { tp: 0, fp: 0, fn: 0, tn: 0 };
+  if (should && fired) bySource[src].tp++;
+  else if (!should && fired) bySource[src].fp++;
+  else if (should && !fired) bySource[src].fn++;
+  else bySource[src].tn++;
 }
 
 const precision = tp + fp === 0 ? 1 : tp / (tp + fp);
@@ -49,11 +69,14 @@ const report = {
   recall: Math.round(recall * 1000) / 1000,
   f1: Math.round(f1 * 1000) / 1000,
   lineAccuracy: Math.round(lineAccuracy * 1000) / 1000,
+  bySource,
   gates: {
     minPrecision: 0.5,
     minRecall: 0.5,
     minLineAccuracy: 0.5,
   },
+  note:
+    "When cases come from production outcomes (eval-export), treat metrics as indirect quality proxies — not live model precision marketing.",
 };
 
 const pass =
@@ -61,15 +84,24 @@ const pass =
   report.recall >= report.gates.minRecall &&
   report.lineAccuracy >= report.gates.minLineAccuracy;
 
-console.log(JSON.stringify({ ...report, pass }, null, 2));
+const out = { ...report, pass };
+console.log(JSON.stringify(out, null, 2));
+
+if (writeOut) {
+  mkdirSync(dirname(writeOut), { recursive: true });
+  writeFileSync(writeOut, JSON.stringify(out, null, 2));
+}
+
 if (!pass) {
   console.error("EVAL FAILED quality gates");
   process.exit(1);
 }
-// Structural schema check for finding shape used by product
-const structureOk = cases.every((c) =>
-  c.expected && typeof c.expected.should_fire === "boolean" &&
-  c.predicted && typeof c.predicted.fired === "boolean"
+const structureOk = cases.every(
+  (c) =>
+    c.expected &&
+    typeof c.expected.should_fire === "boolean" &&
+    c.predicted &&
+    typeof c.predicted.fired === "boolean",
 );
 if (!structureOk) {
   console.error("EVAL FAILED structure");

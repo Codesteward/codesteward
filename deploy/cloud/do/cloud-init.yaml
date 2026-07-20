@@ -1,7 +1,8 @@
 #cloud-config
-# Used by DO Marketplace droplet image / custom image first boot.
-# Marketplace fabricator should bake /opt/codesteward from the release tarball
-# so clone is optional; this cloud-init still works from stock Ubuntu + script.
+# Codesteward trial user-data for DigitalOcean (or any cloud-init host).
+# Paste into Droplet "Startup scripts / User data", or prefer ../deploy.sh (doctl).
+# This installs Codesteward via first-boot.sh — it is NOT the Docker Marketplace app.
+# Marketplace fabricator may bake /opt/codesteward so the clone step is skipped.
 package_update: true
 packages:
   - curl

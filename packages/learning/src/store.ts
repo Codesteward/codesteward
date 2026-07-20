@@ -406,6 +406,21 @@ function createPgLearningStore(): LearningStore {
           weight: 1,
         });
       }
+      if (reactionNorm === "up" && (input.fingerprint || input.note)) {
+        await api.addMemory({
+          orgId: reaction.orgId,
+          repoId: reaction.repoId,
+          scope: reaction.repoId ? "repo" : "org",
+          kind: "preference",
+          polarity: "positive",
+          fingerprint: input.fingerprint,
+          pattern: input.note,
+          title: input.note?.slice(0, 120) ?? "Useful finding pattern",
+          body: `User upvoted finding ${input.findingId} — prefer similar high-signal issues`,
+          source: "reaction",
+          weight: 1,
+        });
+      }
       return reaction;
     },
 
@@ -679,6 +694,21 @@ function createFileLearningStore(opts: LearningStoreOptions = {}): LearningStore
           pattern: input.note,
           title: input.note?.slice(0, 120),
           body: `User downvoted finding ${input.findingId}`,
+          source: "reaction",
+          weight: 1,
+        });
+      }
+      if (reaction.reaction === "up" && (input.fingerprint || input.note)) {
+        await api.addMemory({
+          orgId: reaction.orgId,
+          repoId: reaction.repoId,
+          scope: reaction.repoId ? "repo" : "org",
+          kind: "preference",
+          polarity: "positive",
+          fingerprint: input.fingerprint,
+          pattern: input.note,
+          title: input.note?.slice(0, 120) ?? "Useful finding pattern",
+          body: `User upvoted finding ${input.findingId} — prefer similar high-signal issues`,
           source: "reaction",
           weight: 1,
         });

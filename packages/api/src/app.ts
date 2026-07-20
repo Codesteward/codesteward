@@ -3983,7 +3983,7 @@ export function createApp() {
     return c.json({ ok: true, revoked: true });
   });
 
-  // Address-rate analytics (real — no fake series)
+  // Quality KPIs — fix/accept vs noise (not FP-inflated "address rate")
   app.get("/v1/analytics/address-rate", async (c) => {
     const orgId = c.get("orgId") ?? "local";
     try {
@@ -3999,6 +3999,7 @@ export function createApp() {
     const findings = await findingsStore.list({ orgId });
     const sessions = globalSessionStore.list({ orgId });
     const floor = c.req.query("minSeverity"); // optional
+    const windowDays = Number(c.req.query("windowDays") ?? 14);
     const sevRank: Record<string, number> = {
       critical: 5,
       high: 4,
@@ -4011,39 +4012,219 @@ export function createApp() {
     const considered = findings.filter(
       (f) => (sevRank[f.severity] ?? 0) >= minRank,
     );
-    const addressed = considered.filter((f) =>
-      ["fixed", "wontfix", "false_positive"].includes(f.status) ||
-      (f.tags ?? []).some((t) => t === "reaction:up"),
+    const { computeQualityKpis, createOutcomeStore } = await import("@codesteward/learning");
+    let outcomes: Awaited<ReturnType<ReturnType<typeof createOutcomeStore>["listFindingOutcomes"]>> =
+      [];
+    try {
+      outcomes = await createOutcomeStore().listFindingOutcomes({
+        orgId: String(orgId),
+        limit: 2000,
+      });
+    } catch {
+      /* optional */
+    }
+    const kpis = computeQualityKpis({
+      findings: considered.map((f) => ({
+        id: f.id,
+        repoId: f.repoId,
+        title: f.title,
+        fingerprint: f.fingerprint,
+        status: f.status,
+        tags: f.tags,
+        severity: f.severity,
+        confidence: f.confidence,
+        path: f.path,
+      })),
+      outcomes,
+      windowDays,
+    });
+    // Legacy "addressed" kept for UI compatibility but split fields are preferred
+    const addressedLegacy = considered.filter(
+      (f) =>
+        ["fixed", "wontfix", "false_positive"].includes(f.status) ||
+        (f.tags ?? []).some((t) => t === "reaction:up"),
     );
-    const dismissed = considered.filter(
-      (f) => f.status === "false_positive" || (f.tags ?? []).includes("reaction:down"),
-    );
-    // Weekly buckets from real data only
     const weeks: number[] = [0, 0, 0, 0, 0, 0, 0];
     const now = Date.now();
-    for (const f of addressed) {
+    for (const f of considered.filter(
+      (x) =>
+        x.status === "fixed" ||
+        (x.tags ?? []).includes("reaction:up") ||
+        (x.tags ?? []).some((t) => t.startsWith("auto-fixed:")),
+    )) {
       const ts = new Date(f.updatedAt ?? f.createdAt ?? now).getTime();
       const days = Math.min(6, Math.max(0, Math.floor((now - ts) / 86400000)));
       const idx = 6 - days;
       weeks[idx] = (weeks[idx] ?? 0) + 1;
     }
-    const addressRate =
-      considered.length === 0
+    const fixAcceptRatePct =
+      kpis.fixAcceptRate == null
         ? null
-        : Math.round((addressed.length / considered.length) * 1000) / 10;
+        : Math.round(kpis.fixAcceptRate * 1000) / 10;
     return c.json({
       orgId,
-      addressRate,
-      considered: considered.length,
-      addressed: addressed.length,
-      dismissed: dismissed.length,
-      open: considered.filter((f) => f.status === "open").length,
+      /** North-star: fixed|auto-fixed|thumbs_up (does NOT include FP/wontfix) */
+      addressRate: fixAcceptRatePct,
+      fixAcceptRate: fixAcceptRatePct,
+      noiseRate:
+        kpis.noiseRate == null ? null : Math.round(kpis.noiseRate * 1000) / 10,
+      openRate:
+        kpis.openRate == null ? null : Math.round(kpis.openRate * 1000) / 10,
+      considered: kpis.considered,
+      fixAccept: kpis.fixAccept,
+      noise: kpis.noise,
+      addressed: kpis.fixAccept,
+      dismissed: kpis.noise,
+      open: kpis.open,
+      /** @deprecated mixed legacy count — prefer fixAccept + noise */
+      addressedLegacy: addressedLegacy.length,
       sessions: sessions.length,
       completedSessions: sessions.filter((s) => s.status === "completed").length,
       weekBuckets: weeks,
+      confidenceCalibration: kpis.confidenceCalibration,
+      windowDays,
       empty: considered.length === 0,
-      definition:
-        "address_rate = (fixed|wontfix|false_positive|thumbs_up) / findings with severity ≥ floor",
+      definition: kpis.definition,
+    });
+  });
+
+  /** Merge-time PR outcomes + gate regret summary */
+  app.get("/v1/analytics/outcomes", async (c) => {
+    const orgId = c.get("orgId") ?? "local";
+    try {
+      const { requireOrgEntitled } = await import("./license.js");
+      await requireOrgEntitled(String(orgId), "analytics");
+    } catch (err) {
+      const e = err as Error & { status?: number; code?: string };
+      if (e.status === 402) {
+        return c.json({ error: e.message, code: e.code ?? "ORG_LICENSE_REQUIRED" }, 402);
+      }
+      throw err;
+    }
+    const { createOutcomeStore } = await import("@codesteward/learning");
+    const store = createOutcomeStore();
+    const limit = Number(c.req.query("limit") ?? 50);
+    const prOutcomes = await store.listPrOutcomes({ orgId: String(orgId), limit });
+    const findingOutcomes = await store.listFindingOutcomes({
+      orgId: String(orgId),
+      limit: 500,
+    });
+    const gateRegretMiss = findingOutcomes.filter((o) => o.kind === "gate_regret_miss").length;
+    const gateRegretNoise = findingOutcomes.filter((o) => o.kind === "gate_regret_noise").length;
+    const agentMiss = findingOutcomes.filter((o) => o.kind === "agent_miss_candidate").length;
+    const ignoreAtMerge = findingOutcomes.filter((o) => o.kind === "unaddressed_at_merge").length;
+    return c.json({
+      orgId,
+      prOutcomes,
+      summary: {
+        prs: prOutcomes.length,
+        gateRegretMiss,
+        gateRegretNoise,
+        agentMissCandidates: agentMiss,
+        unaddressedAtMerge: ignoreAtMerge,
+      },
+    });
+  });
+
+  /**
+   * Promote outcome history → memories with correct scope:
+   * repo-only patterns → repo; multi-repo or important → org.
+   */
+  app.post("/v1/analytics/outcomes/consolidate", async (c) => {
+    const orgId = c.get("orgId") ?? "local";
+    try {
+      const { requireOrgEntitled } = await import("./license.js");
+      await requireOrgEntitled(String(orgId), "analytics");
+    } catch (err) {
+      const e = err as Error & { status?: number; code?: string };
+      if (e.status === 402) {
+        return c.json({ error: e.message, code: e.code ?? "ORG_LICENSE_REQUIRED" }, 402);
+      }
+      throw err;
+    }
+    const body = (await c.req.json().catch(() => ({}))) as {
+      windowDays?: number;
+      minRepoCount?: number;
+      minOrgRepos?: number;
+      minOrgCount?: number;
+      minImportantCount?: number;
+    };
+    const { createOutcomeStore, consolidateOutcomeMemories } = await import(
+      "@codesteward/learning"
+    );
+    const result = await consolidateOutcomeMemories(
+      createOutcomeStore(),
+      learningStore,
+      {
+        orgId: String(orgId),
+        windowDays: body.windowDays,
+        minRepoCount: body.minRepoCount,
+        minOrgRepos: body.minOrgRepos,
+        minOrgCount: body.minOrgCount,
+        minImportantCount: body.minImportantCount,
+      },
+    );
+    return c.json({
+      ok: true,
+      ...result,
+      // Don't dump full planned bodies by default in huge orgs — include summary
+      plannedSummary: result.planned.map((p) => ({
+        key: p.key,
+        scope: p.scope,
+        repoId: p.repoId,
+        polarity: p.polarity,
+        weight: p.weight,
+        reason: p.evidence.reason,
+        total: p.evidence.total,
+        repos: p.evidence.repos,
+      })),
+    });
+  });
+
+  /** Export outcome-derived eval fixtures (production → offline harness) */
+  app.get("/v1/analytics/outcomes/eval-export", async (c) => {
+    const orgId = c.get("orgId") ?? "local";
+    try {
+      const { requireOrgEntitled } = await import("./license.js");
+      await requireOrgEntitled(String(orgId), "analytics");
+    } catch (err) {
+      const e = err as Error & { status?: number; code?: string };
+      if (e.status === 402) {
+        return c.json({ error: e.message, code: e.code ?? "ORG_LICENSE_REQUIRED" }, 402);
+      }
+      throw err;
+    }
+    const { createOutcomeStore, outcomesToEvalCases } = await import(
+      "@codesteward/learning"
+    );
+    const store = createOutcomeStore();
+    const outcomes = await store.listFindingOutcomes({
+      orgId: String(orgId),
+      limit: Number(c.req.query("limit") ?? 1000),
+    });
+    const findings = await findingsStore.list({ orgId: String(orgId) });
+    const byId = new Map(findings.map((f) => [f.id, f]));
+    const cases = outcomesToEvalCases(
+      outcomes,
+      byId as Map<
+        string,
+        {
+          id: string;
+          path?: string;
+          title: string;
+          severity?: string;
+          confidence?: number;
+          repoId: string;
+          fingerprint: string;
+          status: string;
+        }
+      >,
+    );
+    return c.json({
+      orgId,
+      generatedAt: new Date().toISOString(),
+      cases,
+      n: cases.length,
     });
   });
 

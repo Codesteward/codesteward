@@ -23,6 +23,8 @@ import type { DiffFile, ScmProvider } from "@codesteward/scm";
 import type { LearningStore } from "@codesteward/learning";
 import {
   buildOrgLearningPrompt,
+  findingEmbedText,
+  textEmbedding,
   formatLinkedIssuesContext,
   loadLinkedIssues,
   parseLinkedIssueRefs,
@@ -1062,6 +1064,14 @@ export class ReviewOrchestrator {
     let suppressedFingerprints: Set<string> | undefined;
     let negativePatterns: string[] | undefined;
     let priorFingerprints: ReturnType<typeof priorMapFromFindings> | undefined;
+    let preferencePrototypes:
+      | Array<{
+          polarity: "positive" | "negative";
+          embedding: number[];
+          fingerprint?: string;
+          subjectId: string;
+        }>
+      | undefined;
 
     if (learning) {
       try {
@@ -1072,6 +1082,32 @@ export class ReviewOrchestrator {
         });
         suppressedFingerprints = neg.fingerprints;
         negativePatterns = neg.patterns;
+      } catch {
+        /* optional */
+      }
+      // Preference embeddings from 👍/👎 memories (bow-v1, no external API)
+      try {
+        const mems = await learning.listMemories({
+          orgId: session.orgId ?? "local",
+          repoId: job.repoId,
+          applicable: true,
+        });
+        preferencePrototypes = mems
+          .filter((m) => m.polarity === "positive" || m.polarity === "negative")
+          .slice(0, 80)
+          .map((m) => ({
+            polarity: m.polarity,
+            embedding: textEmbedding(
+              findingEmbedText({
+                title: m.title,
+                body: m.body,
+                path: m.pattern,
+              }) + (m.fingerprint ? ` ${m.fingerprint}` : ""),
+            ),
+            fingerprint: m.fingerprint,
+            subjectId: m.id,
+          }));
+        if (!preferencePrototypes.length) preferencePrototypes = undefined;
       } catch {
         /* optional */
       }
@@ -1095,6 +1131,7 @@ export class ReviewOrchestrator {
       suppressedFingerprints,
       negativePatterns,
       priorFingerprints,
+      preferencePrototypes,
       commentCap: Number(process.env.STEW_COMMENT_CAP ?? 25),
     });
     this.deps.audit?.setJudge({

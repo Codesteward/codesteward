@@ -30,7 +30,7 @@ Requires a **paid cloud account**. Resources bill to that account.
 | [AWS](aws/README.md) | CloudFormation Launch Stack |
 | [Azure](azure/README.md) | Bicep / ARM portal deploy |
 | [GCP](gcp/README.md) | Cloud Shell + `deploy.sh` |
-| [DigitalOcean](do/README.md) | Docker Marketplace 1-Click, then `first-boot.sh` |
+| [DigitalOcean](do/README.md) | `doctl` + user-data (`deploy.sh`) or paste `cloud-init.yaml` — **not** the Docker Marketplace app |
 
 ## After boot
 

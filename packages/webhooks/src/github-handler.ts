@@ -79,6 +79,7 @@ export interface HandleResult {
  * Handle GitHub webhook events for PR Gate path.
  * Supported:
  * - pull_request (opened, synchronize, reopened, ready_for_review)
+ * - pull_request (closed + merged) → pr_outcome job (indirect eval)
  * - issue_comment (created) when body mentions @codesteward
  */
 export async function handleGitHubWebhook(
@@ -132,6 +133,12 @@ export async function handleGitHubWebhook(
   }
 
   const action = payload.action;
+
+  // Merged PR → outcome analysis (accepted / ignored / agent-miss candidates)
+  if (action === "closed" && payload.pull_request.merged === true) {
+    return enqueuePrOutcome(deps, payload, delivery, "merged");
+  }
+
   if (
     !["opened", "synchronize", "reopened", "ready_for_review"].includes(action)
   ) {
@@ -490,6 +497,8 @@ interface GitHubPullRequestEvent {
   pull_request: {
     number: number;
     draft?: boolean;
+    merged?: boolean;
+    merge_commit_sha?: string | null;
     title?: string;
     body?: string;
     base: { ref: string; sha: string };
@@ -501,6 +510,132 @@ interface GitHubPullRequestEvent {
     owner: { login: string };
   };
   installation?: { id: number };
+}
+
+/** Enqueue lightweight session + pr_outcome job (no agent review). */
+async function enqueuePrOutcome(
+  deps: GitHubWebhookDeps,
+  payload: GitHubPullRequestEvent,
+  delivery: string,
+  action: string,
+): Promise<HandleResult> {
+  const owner = payload.repository.owner.login;
+  const repo = payload.repository.name;
+  const fullName = payload.repository.full_name;
+  const prNumber = payload.pull_request.number;
+  const baseSha = payload.pull_request.base.sha;
+  const headSha = payload.pull_request.head.sha;
+  const mergeSha =
+    payload.pull_request.merge_commit_sha || headSha || undefined;
+  const baseBranch = payload.pull_request.base.ref;
+  const headBranch = payload.pull_request.head.ref;
+
+  let paths: string[] = [];
+  let patches: ReviewJob["patches"];
+  try {
+    const files = await deps.scm.getDiff(owner, repo, prNumber);
+    paths = files.map((f) => f.path);
+    patches = files.map((f) => ({
+      path: f.path,
+      patch: f.patch,
+      status: f.status as "added" | "modified" | "removed" | "renamed" | undefined,
+      additions: f.additions,
+      deletions: f.deletions,
+      previousPath: f.previousPath,
+    }));
+  } catch (err) {
+    console.warn("[webhooks] getDiff for merge outcome failed", err);
+    paths = [];
+  }
+
+  const repoPath = deps.resolveRepoPath?.(owner, repo);
+  const sid = sessionId();
+  const installationId = payload.installation?.id
+    ? String(payload.installation.id)
+    : undefined;
+  const productOrgId = deps.resolveProductOrgId
+    ? await deps.resolveProductOrgId({
+        installationId,
+        ownerLogin: owner,
+      })
+    : process.env.DEFAULT_ORG_ID ?? "local";
+
+  const metadata: Record<string, unknown> = {
+    jobKind: "pr_outcome",
+    mergeSha,
+    pathsChanged: paths,
+    prTitle: payload.pull_request.title,
+  };
+
+  const result = await deps.enqueueGate({
+    session: {
+      id: sid,
+      repoId: fullName,
+      tenantId: process.env.DEFAULT_TENANT_ID ?? "local",
+      orgId: productOrgId,
+      repoPath,
+      mode: "gate",
+      trigger: "webhook",
+      baseSha,
+      headSha: mergeSha ?? headSha,
+      baseBranch,
+      headBranch,
+      prNumber,
+      scmProvider: "github",
+      scmFullName: fullName,
+      riskTier: deps.defaultRiskTier ?? "full",
+      depth: "normal",
+      status: "pending",
+      stage: "queued",
+      paths,
+      metadata,
+    },
+    job: {
+      sessionId: sid,
+      mode: "gate",
+      jobKind: "pr_outcome",
+      tenantId: process.env.DEFAULT_TENANT_ID ?? "local",
+      orgId: productOrgId,
+      repoId: fullName,
+      repoPath,
+      baseSha,
+      headSha: mergeSha ?? headSha,
+      baseBranch,
+      prNumber,
+      riskTier: deps.defaultRiskTier ?? "full",
+      depth: "normal",
+      paths,
+      crossRepo: false,
+      webhookDeliveryId: delivery,
+      installationId,
+      patches,
+      scm: {
+        provider: "github",
+        owner,
+        repo,
+        prNumber,
+        publish: false,
+      },
+      metadata,
+    },
+  });
+
+  return {
+    ok: true,
+    status: 202,
+    body: {
+      accepted: true,
+      delivery,
+      action,
+      jobKind: "pr_outcome",
+      pr: prNumber,
+      repo: fullName,
+      sessionId: result.sessionId,
+      jobId: result.jobId,
+      files: paths.length,
+      mergeSha,
+    },
+  };
 }
 
 interface GitHubIssueCommentEvent {

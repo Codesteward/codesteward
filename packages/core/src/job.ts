@@ -10,10 +10,20 @@ export const ScmProviderNameSchema = z.enum([
   "gitea",
 ]);
 
+/** Worker job kinds — review runs the agent pipeline; pr_outcome scores merge results. */
+export const JobKindSchema = z.enum(["review", "pr_outcome"]);
+export type JobKind = z.infer<typeof JobKindSchema>;
+
 export const ReviewJobSchema = z.object({
   id: z.string(),
   sessionId: z.string(),
   mode: ReviewModeSchema,
+  /**
+   * `review` (default) — full agentic review.
+   * `pr_outcome` — post-merge outcome analysis (no specialists).
+   * Omitted on legacy jobs → treated as review.
+   */
+  jobKind: JobKindSchema.optional(),
   tenantId: z.string().default("local"),
   /**
    * Product organization id (multi-tenant). Used for workspace layout
@@ -52,8 +62,8 @@ export const ReviewJobSchema = z.object({
   /** Force full review even if last_reviewed_sha is set */
   fullReview: z.boolean().optional(),
   /**
-   * Opaque job metadata (webhook triage focus, PR body snippet, etc.).
-   * Not used for scheduling — free-form context for the orchestrator.
+   * Opaque job metadata (webhook triage focus, PR body snippet, merge outcome, etc.).
+   * Not used for scheduling — free-form context for the orchestrator / outcome job.
    */
   metadata: z.record(z.unknown()).optional(),
   /** Diff patches for packing (path → patch text) */

@@ -27,6 +27,7 @@ export interface GitLabWebhookDeps {
       status: "pending";
       stage: "queued";
       paths: string[];
+      metadata?: Record<string, unknown>;
     };
     job: Omit<ReviewJob, "id" | "enqueuedAt" | "attempts">;
   }) => Promise<{ sessionId: string; jobId: string }>;
@@ -124,20 +125,9 @@ export async function handleGitLabWebhook(
   }
 
   const action = payload.object_attributes?.action ?? "";
-  if (!["open", "update", "reopen", "merge"].includes(action) || action === "merge") {
-    // Accept open/update/reopen only
-    if (!["open", "update", "reopen"].includes(action)) {
-      return { ok: true, status: 200, body: { ignored: true, action, delivery } };
-    }
-  }
-
   const attrs = payload.object_attributes;
   if (!attrs) {
     return { ok: false, status: 400, body: { error: "missing object_attributes" } };
-  }
-
-  if (attrs.draft || attrs.work_in_progress) {
-    return { ok: true, status: 200, body: { ignored: true, reason: "draft", delivery } };
   }
 
   const pathWithNamespace =
@@ -151,6 +141,108 @@ export async function handleGitLabWebhook(
   const headSha = attrs.diff_refs?.head_sha ?? attrs.last_commit?.id ?? attrs.sha ?? "";
   const baseBranch = attrs.target_branch;
   const headBranch = attrs.source_branch;
+  const mergeSha = attrs.merge_commit_sha ?? headSha;
+
+  // Merged MR → outcome analysis (not a full re-review)
+  if (action === "merge") {
+    let paths: string[] = [];
+    let patches: ReviewJob["patches"];
+    try {
+      const files = await deps.scm.getDiff(owner!, repo, prNumber);
+      paths = files.map((f) => f.path);
+      patches = files.map((f) => ({
+        path: f.path,
+        patch: f.patch,
+        status: f.status as "added" | "modified" | "removed" | "renamed" | undefined,
+        additions: f.additions,
+        deletions: f.deletions,
+        previousPath: f.previousPath,
+      }));
+    } catch (err) {
+      console.warn("[webhooks/gitlab] getDiff for merge outcome failed", err);
+    }
+    const repoPath = deps.resolveRepoPath?.(owner!, repo);
+    const sid = sessionId();
+    const metadata: Record<string, unknown> = {
+      jobKind: "pr_outcome",
+      mergeSha,
+      pathsChanged: paths,
+    };
+    const result = await deps.enqueueGate({
+      session: {
+        id: sid,
+        repoId: fullName,
+        tenantId: process.env.DEFAULT_TENANT_ID ?? "local",
+        orgId: owner ?? "local",
+        repoPath,
+        mode: "gate",
+        trigger: "webhook",
+        baseSha,
+        headSha: mergeSha || headSha,
+        baseBranch,
+        headBranch,
+        prNumber,
+        scmProvider: "gitlab",
+        scmFullName: fullName,
+        riskTier: deps.defaultRiskTier ?? "full",
+        depth: "normal",
+        status: "pending",
+        stage: "queued",
+        paths,
+        metadata,
+      },
+      job: {
+        sessionId: sid,
+        mode: "gate",
+        jobKind: "pr_outcome",
+        tenantId: process.env.DEFAULT_TENANT_ID ?? "local",
+        orgId: owner ?? "local",
+        repoId: fullName,
+        repoPath,
+        baseSha,
+        headSha: mergeSha || headSha,
+        baseBranch,
+        prNumber,
+        riskTier: deps.defaultRiskTier ?? "full",
+        depth: "normal",
+        paths,
+        crossRepo: false,
+        webhookDeliveryId: delivery,
+        patches,
+        scm: {
+          provider: "gitlab",
+          owner: owner!,
+          repo,
+          prNumber,
+          publish: false,
+        },
+        metadata,
+      },
+    });
+    return {
+      ok: true,
+      status: 202,
+      body: {
+        accepted: true,
+        delivery,
+        action,
+        jobKind: "pr_outcome",
+        pr: prNumber,
+        repo: fullName,
+        sessionId: result.sessionId,
+        jobId: result.jobId,
+        mergeSha,
+      },
+    };
+  }
+
+  if (!["open", "update", "reopen"].includes(action)) {
+    return { ok: true, status: 200, body: { ignored: true, action, delivery } };
+  }
+
+  if (attrs.draft || attrs.work_in_progress) {
+    return { ok: true, status: 200, body: { ignored: true, reason: "draft", delivery } };
+  }
 
   let paths: string[] = [];
   try {
@@ -241,6 +333,7 @@ interface GitLabMrEvent {
     work_in_progress?: boolean;
     sha?: string;
     oldrev?: string;
+    merge_commit_sha?: string;
     last_commit?: { id?: string };
     diff_refs?: { base_sha?: string; head_sha?: string };
   };

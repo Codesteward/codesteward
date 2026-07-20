@@ -6,6 +6,7 @@ import {
   type Severity,
 } from "@codesteward/core";
 import type { Policy } from "@codesteward/policy";
+import { findingEmbedText, matchPreference } from "@codesteward/learning";
 
 export interface NoiseOptions {
   /** Override severity floor (defaults to policy.severityFloor). */
@@ -29,6 +30,16 @@ export interface NoiseOptions {
   >;
   /** Suppress fingerprints present in negative learning memories. */
   suppressedFingerprints?: Set<string>;
+  /**
+   * Preference prototypes from 👍/👎 (bag-of-words embeddings).
+   * Candidates near negative prototypes are dropped; positive is informational only here.
+   */
+  preferencePrototypes?: Array<{
+    polarity: "positive" | "negative";
+    embedding: number[];
+    fingerprint?: string;
+    subjectId: string;
+  }>;
   /** When true, drop findings whose title/body looks like pure style nits. */
   filterNits?: boolean;
 }
@@ -101,6 +112,24 @@ export function applyNoiseStack(
     if (suppressed?.has(fp)) {
       dropped.push({ title: c.title, reason: "suppressed by negative memory" });
       continue;
+    }
+    if (opts.preferencePrototypes?.length) {
+      const pref = matchPreference(
+        findingEmbedText({
+          title: c.title,
+          body: c.body,
+          category: c.category,
+          path: c.path,
+        }),
+        opts.preferencePrototypes,
+      );
+      if (pref.suppress) {
+        dropped.push({
+          title: c.title,
+          reason: `suppressed by preference embedding (sim=${pref.score.toFixed(2)})`,
+        });
+        continue;
+      }
     }
     afterFloor.push(c);
   }

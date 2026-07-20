@@ -4,3 +4,7 @@ export * from "./incremental.js";
 export * from "./prompt.js";
 export * from "./comment-triage.js";
 export * from "./linked-issues.js";
+export * from "./outcomes.js";
+export * from "./embeddings.js";
+export * from "./outcome-store.js";
+export * from "./consolidate-outcomes.js";
