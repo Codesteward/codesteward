@@ -1,0 +1,211 @@
+# Codesteward Review — pull-only stack (no source tree, no build)
+#
+# Uses published GHCR images only. Works with:
+#   Docker Compose v2:
+#     cp deploy/compose/.env.stack.example .env.stack   # edit secrets
+#     docker compose --env-file .env.stack -f deploy/compose/docker-compose.stack.yml pull
+#     docker compose --env-file .env.stack -f deploy/compose/docker-compose.stack.yml up -d
+#
+#   Docker Swarm:
+#     docker stack deploy -c deploy/compose/docker-compose.stack.yml codesteward \
+#       --with-registry-auth
+#     # Prefer: export vars then envsubst, or use docker stack deploy with a rendered file:
+#     set -a && . ./.env.stack && set +a
+#     docker stack deploy -c <(docker compose --env-file .env.stack -f deploy/compose/docker-compose.stack.yml config) codesteward
+#
+# Defaults pin product image tag 1.4.0. Override IMAGE_TAG / APP_IMAGE / UI_IMAGE.
+# LLM keys can be set later in the product UI (Models); optional at install.
+#
+# Ports (host): UI 8080, API 8081, Keycloak 8083, Postgres 5432 (optional expose)
+
+name: codesteward-stack
+
+x-stew-env: &stew-env
+  PORT: "8081"
+  GRAPH_MOCK: "0"
+  GRAPH_MCP_MODE: stdio
+  GRAPH_MCP_COMMAND: codesteward-mcp
+  GRAPH_BACKEND: ${GRAPH_BACKEND:-graphqlite}
+  GRAPHQLITE_PATH: /data/graph.db
+  STEW_DEBUG_LLM: ${STEW_DEBUG_LLM:-0}
+  STEW_CODE_TOKEN_BUDGET: ${STEW_CODE_TOKEN_BUDGET:-14000}
+  MODEL_PROVIDER: ${MODEL_PROVIDER:-openai-compatible}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+  MODEL_NAME: ${MODEL_NAME:-gpt-4.1-mini}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  XAI_API_KEY: ${XAI_API_KEY:-}
+  SPACEXAI_API_KEY: ${SPACEXAI_API_KEY:-}
+  STEW_DATA_DIR: /data
+  STEW_WORKSPACE_DIR: /workspace
+  DATABASE_URL: postgres://${POSTGRES_USER:-steward}:${POSTGRES_PASSWORD:-steward-change-me}@postgres:5432/${POSTGRES_DB:-codesteward}
+  REPO_PATH: /repos/project
+  STEW_WORKSPACE_CLONE: ${STEW_WORKSPACE_CLONE:-1}
+  STEW_INLINE_WORKER: "0"
+  STEW_USE_DEEPAGENTS: "1"
+  STEW_REQUIRE_TOOL_AGENTS: "1"
+  STEW_AUTH_STRICT: ${STEW_AUTH_STRICT:-1}
+  # Generate: openssl rand -hex 32  (required for encrypted connectors in production)
+  STEW_SECRETS_KEY: ${STEW_SECRETS_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+  STEW_API_KEY: ${STEW_API_KEY:-}
+  STEW_PUBLIC_URL: ${STEW_PUBLIC_URL:-http://localhost:8080}
+  STEW_API_PUBLIC_URL: ${STEW_API_PUBLIC_URL:-http://localhost:8081}
+  STEW_WEBHOOK_PUBLIC_URL: ${STEW_WEBHOOK_PUBLIC_URL:-}
+  GITHUB_APP_NAME: ${GITHUB_APP_NAME:-Codesteward}
+  OIDC_ISSUER: ${OIDC_ISSUER:-http://keycloak:8083/realms/codesteward}
+  OIDC_PUBLIC_ISSUER: ${OIDC_PUBLIC_ISSUER:-http://localhost:8083/realms/codesteward}
+  OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-codesteward-ui}
+  OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-http://localhost:8081/v1/auth/oidc/callback}
+  STEW_IDENTITY_MODE: ${STEW_IDENTITY_MODE:-keycloak}
+  KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-codesteward-api}
+  KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-steward-api-change-me}
+  OIDC_SCOPES: ${OIDC_SCOPES:-openid profile email}
+  GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+  STEW_MENTION_TOKEN: ${STEW_MENTION_TOKEN:-@codesteward}
+  STEW_SANDBOX_PROVIDER: ${STEW_SANDBOX_PROVIDER:-local}
+  STEW_REQUIRE_PG_TENANCY: "1"
+  STEW_SCIM_ORG_ID: ${STEW_SCIM_ORG_ID:-local}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-steward}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-steward-change-me}
+      POSTGRES_DB: ${POSTGRES_DB:-codesteward}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Compose-only restart; Swarm uses deploy.restart_policy
+    restart: unless-stopped
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+      placement:
+        constraints:
+          - node.role == manager
+    networks:
+      - stew
+    # Host publish optional for debugging (disable in locked-down Swarm)
+    ports:
+      - target: 5432
+        published: ${POSTGRES_PUBLISH_PORT:-5432}
+        protocol: tcp
+        mode: host
+
+  keycloak:
+    image: ${KEYCLOAK_IMAGE:-ghcr.io/codesteward/codesteward/keycloak:26.7.0}
+    command:
+      [
+        "start-dev",
+        "--import-realm",
+        "--http-port=8083",
+        "--hostname-strict=false",
+      ]
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin-change-me}
+      KC_HTTP_PORT: 8083
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_URL: ${KC_HOSTNAME_URL:-http://localhost:8083}
+      KC_HOSTNAME_ADMIN_URL: ${KC_HOSTNAME_ADMIN_URL:-http://localhost:8083}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin-change-me}
+    restart: unless-stopped
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    ports:
+      - target: 8083
+        published: ${KEYCLOAK_PUBLISH_PORT:-8083}
+        protocol: tcp
+        mode: ingress
+    networks:
+      - stew
+
+  api:
+    image: ${APP_IMAGE:-ghcr.io/codesteward/codesteward:${IMAGE_TAG:-1.4.0}}
+    environment:
+      <<: *stew-env
+      SERVICE: api
+    volumes:
+      - stew-data:/data
+      - stew-workspaces:/workspace
+    restart: unless-stopped
+    deploy:
+      replicas: ${API_REPLICAS:-1}
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+      update_config:
+        parallelism: 1
+        order: start-first
+    ports:
+      - target: 8081
+        published: ${API_PUBLISH_PORT:-8081}
+        protocol: tcp
+        mode: ingress
+    networks:
+      - stew
+    depends_on:
+      - postgres
+      - keycloak
+
+  worker:
+    image: ${APP_IMAGE:-ghcr.io/codesteward/codesteward:${IMAGE_TAG:-1.4.0}}
+    environment:
+      <<: *stew-env
+      SERVICE: worker
+    volumes:
+      - stew-data:/data
+      - stew-workspaces:/workspace
+    restart: unless-stopped
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+      update_config:
+        parallelism: 1
+        order: start-first
+    networks:
+      - stew
+    depends_on:
+      - postgres
+      - api
+
+  ui:
+    image: ${UI_IMAGE:-ghcr.io/codesteward/codesteward/ui:${IMAGE_TAG:-1.4.0}}
+    restart: unless-stopped
+    deploy:
+      replicas: ${UI_REPLICAS:-1}
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    ports:
+      - target: 80
+        published: ${UI_PUBLISH_PORT:-8080}
+        protocol: tcp
+        mode: ingress
+    networks:
+      - stew
+    depends_on:
+      - api
+
+networks:
+  stew:
+    driver: overlay
+    attachable: true
+
+volumes:
+  pg-data:
+  stew-data:
+  stew-workspaces:

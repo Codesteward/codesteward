@@ -1,0 +1,12 @@
+# Optional override for plain Docker Compose (non-Swarm): use bridge network.
+#   docker compose --env-file .env.stack \
+#     -f deploy/compose/docker-compose.stack.yml \
+#     -f deploy/compose/docker-compose.stack.compose.yml up -d
+#
+# Without this file, compose v2 still accepts `driver: overlay` only when
+# Swarm is initialized; on a non-swarm host use this override.
+
+networks:
+  stew:
+    driver: bridge
+    attachable: true
