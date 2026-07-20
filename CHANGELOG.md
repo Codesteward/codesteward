@@ -18,6 +18,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   Disable with `STEW_RESOLVE_FIXED_THREADS=0`.
 - **Org Analytics** — token totals, average tokens per session, estimated total cost, and average cost per session
   (from session `tokenUsage` / list-price estimates).
+- **Platform ClickHouse product traces** — optional install-wide sink (UI: Platform settings). When enabled, **every
+  org** dual-writes full session observations (agents, tools, LLM I/O, metadata; secret-redacted, no normal truncation)
+  for session deep-dive + analytics. Orgs cannot disable ingestion; they may only override **TTL days**
+  (`GET/PUT /v1/org/trace-ttl`). Read path: `GET /v1/sessions/:id/traces`. Env: `CLICKHOUSE_URL`, `CLICKHOUSE_USER`,
+  `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE`, `STEW_CLICKHOUSE_DEFAULT_TTL_DAYS`.
 
 ### Changed
 

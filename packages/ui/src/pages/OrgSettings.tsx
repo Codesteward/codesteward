@@ -9,6 +9,7 @@ import {
   OrgPublishSarifPanel,
   OrgScimPanel,
   OrgSuggestedCodeFixesPanel,
+  OrgTraceTtlPanel,
 } from "./settings/panels";
 
 export function OrgSettings() {
@@ -271,6 +272,11 @@ export function OrgSettings() {
         <div style={{ gridColumn: "1 / -1" }}>
           <OrgLangfusePanel />
         </div>
+        {canAdmin && (
+          <div style={{ gridColumn: "1 / -1" }}>
+            <OrgTraceTtlPanel />
+          </div>
+        )}
         <div style={{ gridColumn: "1 / -1" }}>
           <OrgScimPanel />
         </div>

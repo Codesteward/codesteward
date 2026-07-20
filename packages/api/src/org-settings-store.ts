@@ -82,6 +82,11 @@ export interface OrgSettingsDoc {
   promptPack?: OrgPromptPackDoc | null;
   /** Per-tenant Langfuse observability (optional; falls back to platform env). */
   langfuse?: OrgLangfuseConfig | null;
+  /**
+   * Optional retention for platform ClickHouse traces (days).
+   * Orgs cannot disable ClickHouse ingestion — only TTL when platform sink is on.
+   */
+  traceTtlDays?: number | null;
   updatedAt: string;
 }
 
@@ -94,8 +99,21 @@ function empty(orgId: string): OrgSettingsDoc {
     runtime: {},
     promptPack: null,
     langfuse: null,
+    traceTtlDays: null,
     updatedAt: new Date().toISOString(),
   };
+}
+
+/** Load org-level ClickHouse TTL override (days), or null for platform default. */
+export async function loadOrgTraceTtlDays(orgId: string): Promise<number | null> {
+  try {
+    const doc = await getOrgSettingsStore().get(orgId);
+    const n = doc.traceTtlDays;
+    if (n == null || !Number.isFinite(n)) return null;
+    return Math.max(1, Math.min(3650, Math.floor(Number(n))));
+  } catch {
+    return null;
+  }
 }
 
 function encryptLangfuse(cfg: OrgLangfuseConfig | null | undefined): OrgLangfuseConfig | null {
@@ -305,6 +323,11 @@ export class OrgSettingsStore {
             langfuseRaw && typeof langfuseRaw === "object"
               ? (langfuseRaw as OrgLangfuseConfig)
               : null;
+          const ttlRaw = settings.traceTtlDays;
+          const traceTtlDays =
+            typeof ttlRaw === "number" && Number.isFinite(ttlRaw)
+              ? Math.max(1, Math.min(3650, Math.floor(ttlRaw)))
+              : null;
           return {
             orgId,
             modelMatrix:
@@ -318,6 +341,7 @@ export class OrgSettingsStore {
             runtime,
             promptPack,
             langfuse,
+            traceTtlDays,
             updatedAt: row.updatedAt,
           };
         }
@@ -335,6 +359,7 @@ export class OrgSettingsStore {
       doc.runtime = doc.runtime ?? {};
       doc.promptPack = doc.promptPack ?? null;
       doc.langfuse = doc.langfuse ?? null;
+      doc.traceTtlDays = doc.traceTtlDays ?? null;
       return doc;
     } catch {
       return empty(orgId);
@@ -346,6 +371,7 @@ export class OrgSettingsStore {
       runtime: doc.runtime ?? {},
       promptPack: doc.promptPack ?? null,
       langfuse: doc.langfuse ?? null,
+      traceTtlDays: doc.traceTtlDays ?? null,
     };
   }
 
@@ -422,6 +448,7 @@ export class OrgSettingsStore {
       runtime: prev.runtime ?? {},
       promptPack: prev.promptPack ?? null,
       langfuse: prev.langfuse ?? null,
+      traceTtlDays: prev.traceTtlDays ?? null,
       updatedAt: new Date().toISOString(),
     };
     if (isDatabaseEnabled()) {
@@ -516,6 +543,50 @@ export class OrgSettingsStore {
         }
       } catch (err) {
         console.warn("[org-settings] db putLangfuse failed", err);
+      }
+    }
+    await mkdir(dataDir(), { recursive: true });
+    await writeFile(this.file(orgId), JSON.stringify(next, null, 2), "utf8");
+    return next;
+  }
+
+  /**
+   * Org TTL override for platform ClickHouse rows (days).
+   * Pass null to use platform default. Does not enable/disable ingestion.
+   */
+  async putTraceTtlDays(
+    orgId: string,
+    traceTtlDays: number | null,
+  ): Promise<OrgSettingsDoc> {
+    const prev = await this.get(orgId);
+    const next: OrgSettingsDoc = {
+      ...prev,
+      orgId,
+      traceTtlDays:
+        traceTtlDays == null || !Number.isFinite(traceTtlDays)
+          ? null
+          : Math.max(1, Math.min(3650, Math.floor(traceTtlDays))),
+      updatedAt: new Date().toISOString(),
+    };
+    if (isDatabaseEnabled()) {
+      try {
+        const db = tryCreateStewardDb();
+        if (db) {
+          const row = await db.configs.getOrCreate(orgId);
+          await db.configs.upsert({
+            orgId,
+            modelProfiles:
+              (next.modelMatrix as unknown as Record<string, unknown>) ??
+              row.modelProfiles,
+            settings: {
+              ...(row.settings ?? {}),
+              ...this.settingsBlob(next),
+            },
+          });
+          return next;
+        }
+      } catch (err) {
+        console.warn("[org-settings] db putTraceTtlDays failed", err);
       }
     }
     await mkdir(dataDir(), { recursive: true });

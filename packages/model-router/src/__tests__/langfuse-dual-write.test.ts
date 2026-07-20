@@ -117,5 +117,6 @@ describe("langfuse multi-level dual-write", () => {
       exposed.map((d) => d.source).sort(),
       ["org", "platform"],
     );
+    assert.equal(router.getClickHouseWriter(), null);
   });
 });

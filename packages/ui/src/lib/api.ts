@@ -530,6 +530,82 @@ export const api = {
         baseUrl?: string;
       };
     }>("/v1/platform/langfuse", { method: "PUT", body: JSON.stringify(body) }),
+  platformClickhouse: () =>
+    req<{
+      config: {
+        enabled: boolean;
+        urlSet: boolean;
+        urlHint?: string;
+        username?: string;
+        passwordSet: boolean;
+        database?: string;
+        table?: string;
+        defaultTtlDays: number;
+      };
+      effective: {
+        url: string;
+        database?: string;
+        table?: string;
+        defaultTtlDays?: number;
+      } | null;
+      envFallback: boolean;
+      note?: string;
+    }>("/v1/platform/clickhouse"),
+  putPlatformClickhouse: (body: {
+    enabled?: boolean;
+    url?: string;
+    username?: string;
+    password?: string;
+    database?: string;
+    table?: string;
+    defaultTtlDays?: number;
+    clear?: boolean;
+    test?: boolean;
+  }) =>
+    req<{
+      ok: boolean;
+      config: {
+        enabled: boolean;
+        urlSet: boolean;
+        urlHint?: string;
+        username?: string;
+        passwordSet: boolean;
+        database?: string;
+        table?: string;
+        defaultTtlDays: number;
+      };
+      test?: { ok: boolean; message?: string };
+    }>("/v1/platform/clickhouse", { method: "PUT", body: JSON.stringify(body) }),
+  orgTraceTtl: () =>
+    req<{
+      orgId: string;
+      platformEnabled: boolean;
+      platformDefaultTtlDays: number;
+      orgTtlDays: number | null;
+      effectiveTtlDays: number;
+      note?: string;
+    }>("/v1/org/trace-ttl"),
+  putOrgTraceTtl: (body: { traceTtlDays?: number | null; clear?: boolean }) =>
+    req<{
+      ok: boolean;
+      orgId: string;
+      orgTtlDays: number | null;
+      platformDefaultTtlDays: number;
+      effectiveTtlDays: number;
+    }>("/v1/org/trace-ttl", { method: "PUT", body: JSON.stringify(body) }),
+  sessionTraces: (sessionId: string, limit?: number) =>
+    req<{
+      sessionId: string;
+      orgId: string;
+      enabled: boolean;
+      count?: number;
+      observations: Array<Record<string, unknown>>;
+      note?: string;
+    }>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/traces${
+        limit != null ? `?limit=${limit}` : ""
+      }`,
+    ),
   platformGithubApp: () =>
     req<{
       config: {

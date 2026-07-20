@@ -4040,6 +4040,210 @@ export function createApp() {
   });
 
   /**
+   * Platform ClickHouse product trace store.
+   * When enabled, every org dual-writes full observations (orgs cannot disable ingestion).
+   */
+  app.get("/v1/platform/clickhouse", async (c) => {
+    const authMode = c.get("authMode") as string | undefined;
+    const user = c.get("user") as import("./auth-store.js").PublicAuthUser | undefined;
+    try {
+      const { requirePlatformAdmin } = await import("./platform-admin.js");
+      requirePlatformAdmin(user ?? null, authMode);
+    } catch (err) {
+      const e = err as Error & { status?: number };
+      return c.json({ error: "forbidden", message: e.message }, 403);
+    }
+    const {
+      getPlatformClickHouse,
+      maskClickHouse,
+      loadPlatformClickHouseForRuntime,
+    } = await import("./platform-clickhouse-store.js");
+    const stored = await getPlatformClickHouse();
+    const effective = await loadPlatformClickHouseForRuntime();
+    return c.json({
+      config: maskClickHouse(stored),
+      effective: effective
+        ? {
+            url: effective.url.replace(/\/\/([^:]+):[^@]+@/, "//$1:***@"),
+            database: effective.database,
+            table: effective.table,
+            defaultTtlDays: effective.defaultTtlDays,
+          }
+        : null,
+      envFallback: Boolean(process.env.CLICKHOUSE_URL),
+      note:
+        "When enabled, all orgs dual-write full session traces to this ClickHouse (product SoT for session deep-dive + analytics). Orgs cannot disable ingestion; they may only override TTL days.",
+    });
+  });
+
+  app.put("/v1/platform/clickhouse", async (c) => {
+    const authMode = c.get("authMode") as string | undefined;
+    const user = c.get("user") as import("./auth-store.js").PublicAuthUser | undefined;
+    try {
+      const { requirePlatformAdmin } = await import("./platform-admin.js");
+      requirePlatformAdmin(user ?? null, authMode);
+    } catch (err) {
+      const e = err as Error & { status?: number };
+      return c.json({ error: "forbidden", message: e.message }, 403);
+    }
+    const body = (await c.req.json().catch(() => ({}))) as {
+      enabled?: boolean;
+      url?: string;
+      username?: string;
+      password?: string;
+      database?: string;
+      table?: string;
+      defaultTtlDays?: number;
+      clear?: boolean;
+      test?: boolean;
+    };
+    const { putPlatformClickHouse, maskClickHouse, loadPlatformClickHouseForRuntime } =
+      await import("./platform-clickhouse-store.js");
+    const saved = await putPlatformClickHouse(body.clear ? { clear: true } : body);
+    let test: { ok: boolean; message?: string } | undefined;
+    if (body.test && !body.clear) {
+      try {
+        const cfg = await loadPlatformClickHouseForRuntime();
+        if (!cfg) {
+          test = { ok: false, message: "ClickHouse not fully configured" };
+        } else {
+          const { ensureClickHouseSchema } = await import("@codesteward/model-router");
+          await ensureClickHouseSchema(cfg);
+          test = { ok: true, message: "Schema ensure OK" };
+        }
+      } catch (err) {
+        test = {
+          ok: false,
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }
+    try {
+      const { auditLog, auditContextFromRequest } = await import("./audit.js");
+      await auditLog({
+        action: "clickhouse.platform.update",
+        ...auditContextFromRequest(c),
+        resourceType: "clickhouse",
+        resourceId: "platform",
+        metadata: {
+          enabled: saved?.enabled !== false,
+          urlSet: Boolean(saved?.url),
+          clear: Boolean(body.clear),
+        },
+      });
+    } catch {
+      /* optional */
+    }
+    return c.json({ ok: true, config: maskClickHouse(saved), test });
+  });
+
+  /** Org TTL for platform ClickHouse traces (days). Does not enable/disable ingestion. */
+  app.get("/v1/org/trace-ttl", async (c) => {
+    const orgId = c.get("orgId") ?? "local";
+    const { getOrgSettingsStore } = await import("./org-settings-store.js");
+    const { loadPlatformClickHouseForRuntime, resolveTraceTtlDays } = await import(
+      "./platform-clickhouse-store.js"
+    );
+    const doc = await getOrgSettingsStore().get(orgId);
+    const platform = await loadPlatformClickHouseForRuntime();
+    const platformDefault = platform?.defaultTtlDays ?? 90;
+    const orgTtl = doc.traceTtlDays ?? null;
+    return c.json({
+      orgId,
+      platformEnabled: Boolean(platform),
+      platformDefaultTtlDays: platformDefault,
+      orgTtlDays: orgTtl,
+      effectiveTtlDays: resolveTraceTtlDays(platformDefault, orgTtl),
+      note: platform
+        ? "Platform ClickHouse is enabled for all orgs. You may only override retention (TTL days)."
+        : "Platform ClickHouse is not enabled. Contact your platform admin to turn on product trace storage.",
+    });
+  });
+
+  app.put("/v1/org/trace-ttl", async (c) => {
+    const role = c.get("role");
+    if (role !== "admin" && c.get("authMode") !== "api_key" && c.get("authMode") !== "dev_open") {
+      return c.json({ error: "forbidden", message: "admin role required" }, 403);
+    }
+    const orgId = c.get("orgId") ?? "local";
+    const body = (await c.req.json().catch(() => ({}))) as {
+      traceTtlDays?: number | null;
+      clear?: boolean;
+    };
+    const { getOrgSettingsStore } = await import("./org-settings-store.js");
+    const { loadPlatformClickHouseForRuntime, resolveTraceTtlDays } = await import(
+      "./platform-clickhouse-store.js"
+    );
+    const ttl =
+      body.clear || body.traceTtlDays === null || body.traceTtlDays === undefined
+        ? null
+        : body.traceTtlDays;
+    const doc = await getOrgSettingsStore().putTraceTtlDays(orgId, ttl);
+    const platform = await loadPlatformClickHouseForRuntime();
+    const platformDefault = platform?.defaultTtlDays ?? 90;
+    return c.json({
+      ok: true,
+      orgId,
+      orgTtlDays: doc.traceTtlDays ?? null,
+      platformDefaultTtlDays: platformDefault,
+      effectiveTtlDays: resolveTraceTtlDays(platformDefault, doc.traceTtlDays),
+    });
+  });
+
+  /** Session trace tree from platform ClickHouse (product SoT). */
+  app.get("/v1/sessions/:sessionId/traces", async (c) => {
+    const orgId = c.get("orgId") ?? "local";
+    const sessionId = c.req.param("sessionId");
+    if (!sessionId) return c.json({ error: "sessionId required" }, 400);
+    // Session must belong to org (when session store has it)
+    try {
+      const session = globalSessionStore.get(sessionId);
+      if (session && session.orgId && session.orgId !== orgId) {
+        return c.json({ error: "forbidden", message: "session not in this org" }, 403);
+      }
+    } catch {
+      /* optional */
+    }
+    const { loadPlatformClickHouseForRuntime } = await import(
+      "./platform-clickhouse-store.js"
+    );
+    const { querySessionObservations } = await import("@codesteward/model-router");
+    const cfg = await loadPlatformClickHouseForRuntime();
+    if (!cfg) {
+      return c.json({
+        sessionId,
+        orgId,
+        enabled: false,
+        observations: [],
+        note: "Platform ClickHouse is not configured. Traces are not stored in product DB.",
+      });
+    }
+    try {
+      const limit = Number(c.req.query("limit") ?? 2000);
+      const rows = await querySessionObservations(cfg, {
+        orgId,
+        sessionId,
+        limit: Number.isFinite(limit) ? limit : 2000,
+      });
+      return c.json({
+        sessionId,
+        orgId,
+        enabled: true,
+        count: rows.length,
+        observations: rows,
+      });
+    } catch (err) {
+      return c.json(
+        {
+          error: "clickhouse_query_failed",
+          message: err instanceof Error ? err.message : String(err),
+        },
+        502,
+      );
+    }
+  });
+
+  /**
    * SCIM multi-tenant status for the active org.
    * Canonical IdP base: /scim/v2/orgs/{orgId|slug} — path scopes tenant on a shared domain.
    */

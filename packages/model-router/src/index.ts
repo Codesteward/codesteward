@@ -4,6 +4,7 @@ export * from "./pricing.js";
 export * from "./config.js";
 export * from "./router.js";
 export * from "./langfuse.js";
+export * from "./clickhouse.js";
 export * from "./llm-retry.js";
 export { createOpenAICompatModel } from "./providers/openai-compat.js";
 export { createAnthropicModel } from "./providers/anthropic.js";

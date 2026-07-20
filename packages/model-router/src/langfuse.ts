@@ -173,6 +173,11 @@ const SECRETISH =
 
 const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 
+/**
+ * Secret/email redaction. Optional max length via STEW_LANGFUSE_MAX_CHARS
+ * (Langfuse UI path). Product ClickHouse store sets a very high max so content
+ * is not truncated under normal LLM sizes.
+ */
 export function redactForLangfuse(text: string, env: NodeJS.ProcessEnv = process.env): string {
   if (env.STEW_LANGFUSE_REDACT === "0") return text;
   let out = text.replace(SECRETISH, "[REDACTED]");
@@ -180,8 +185,18 @@ export function redactForLangfuse(text: string, env: NodeJS.ProcessEnv = process
     out = out.replace(EMAIL_RE, "[EMAIL]");
   }
   const max = Number(env.STEW_LANGFUSE_MAX_CHARS ?? 12_000);
-  if (out.length > max) {
+  if (Number.isFinite(max) && max > 0 && out.length > max) {
     out = `${out.slice(0, max)}\n…[truncated ${out.length - max} chars]`;
+  }
+  return out;
+}
+
+/** Redact secrets only — never truncate (for product ClickHouse SoT). */
+export function redactSecretsOnly(text: string, env: NodeJS.ProcessEnv = process.env): string {
+  if (env.STEW_LANGFUSE_REDACT === "0") return text;
+  let out = text.replace(SECRETISH, "[REDACTED]");
+  if (env.STEW_LANGFUSE_REDACT_EMAIL !== "0") {
+    out = out.replace(EMAIL_RE, "[EMAIL]");
   }
   return out;
 }

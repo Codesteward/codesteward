@@ -636,6 +636,39 @@ export async function runReviewJob(
       console.warn("[run-job] langfuse destinations unavailable", err);
     }
   }
+
+  // Platform ClickHouse product SoT — when enabled, ALL orgs dual-write (no org opt-out)
+  let clickhouseWriter: import("@codesteward/model-router").ClickHouseWriter | null =
+    null;
+  try {
+    const {
+      loadPlatformClickHouseForRuntime,
+      resolveTraceTtlDays,
+    } = await import("./platform-clickhouse-store.js");
+    const { loadOrgTraceTtlDays } = await import("./org-settings-store.js");
+    const {
+      createClickHouseWriter,
+    } = await import("@codesteward/model-router");
+    const chCfg = await loadPlatformClickHouseForRuntime();
+    if (chCfg) {
+      const orgTtl = await loadOrgTraceTtlDays(orgId);
+      const ttlDays = resolveTraceTtlDays(chCfg.defaultTtlDays ?? 90, orgTtl);
+      clickhouseWriter = createClickHouseWriter(chCfg, { defaultTtlDays: ttlDays });
+      // Stamp ttl on every record via writer default
+      log(
+        `clickhouse sink on sessionId=${job.sessionId} ttlDays=${ttlDays} (org=${orgTtl ?? "platform-default"})`,
+      );
+      // Ensure schema early so first observations don't race
+      void clickhouseWriter.ensureSchema().catch((err) =>
+        console.warn(
+          "[run-job] clickhouse ensureSchema failed",
+          err instanceof Error ? err.message : err,
+        ),
+      );
+    }
+  } catch (err) {
+    console.warn("[run-job] clickhouse sink unavailable", err);
+  }
   void license;
 
   // Per-org model matrix + encrypted provider API keys (env is host fallback only).
@@ -645,6 +678,7 @@ export async function runReviewJob(
     sessionId: job.sessionId,
     orgId,
     langfuseDestinations,
+    clickhouse: clickhouseWriter,
   });
   try {
     const { createOrgModelRouter } = await import("./org-model-router.js");
@@ -656,6 +690,7 @@ export async function runReviewJob(
       sessionId: job.sessionId,
       orgId,
       langfuseDestinations,
+      clickhouse: clickhouseWriter,
     });
     if (orgBound.fromOrgMatrix) {
       log(`org model matrix loaded for org=${orgId}`);
@@ -1010,10 +1045,15 @@ export async function runReviewJob(
     }
   } finally {
     clearInterval(leaseHeartbeat);
-    // Ship Langfuse traces for this review session (session-scoped grouping)
+    // Ship Langfuse + ClickHouse traces for this review session
     try {
       const { flushLangfuse } = await import("@codesteward/model-router");
       await flushLangfuse(langfuseDestinations);
+    } catch {
+      /* optional */
+    }
+    try {
+      await clickhouseWriter?.flush();
     } catch {
       /* optional */
     }

@@ -12,6 +12,7 @@ import {
 import {
   PlatformGithubAppPanel,
   PlatformLangfusePanel,
+  PlatformClickHousePanel,
   RuntimeConfigPanel,
 } from "./settings/panels";
 
@@ -336,6 +337,9 @@ export function PlatformSettings() {
         </div>
         <div style={{ gridColumn: "1 / -1" }}>
           <PlatformLangfusePanel />
+        </div>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <PlatformClickHousePanel />
         </div>
         <RuntimeConfigPanel />
       </div>

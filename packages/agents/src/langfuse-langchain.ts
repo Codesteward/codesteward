@@ -15,6 +15,7 @@ import {
   getLangfuse,
   redactForLangfuse,
   sanitizeLangfuseSessionId,
+  type ClickHouseWriter,
   type LangfuseCredentials,
   type LangfuseTraceContext,
 } from "@codesteward/model-router";
@@ -39,6 +40,8 @@ type DestRun = {
 
 export interface DualLangfuseCallbackOptions {
   destinations: LangfuseCredentials[];
+  /** Platform ClickHouse sink — when set, every observation is dual-written (full I/O). */
+  clickhouse?: ClickHouseWriter | null;
   sessionId: string;
   orgId?: string;
   userId?: string;
@@ -49,6 +52,8 @@ export interface DualLangfuseCallbackOptions {
   /** Optional stable trace id; defaults to sessionId in session mode */
   traceId?: string;
   traceName?: string;
+  repoId?: string;
+  tenantId?: string;
 }
 
 function messageContentToString(content: unknown): string {
@@ -448,33 +453,50 @@ type BoundTrace = {
  * - Use client.generation/span directly with explicit `traceId` (TraceClient.generation
  *   overwrites parentObservationId with null and can confuse nesting)
  */
+type PendingCh = {
+  kind: "generation" | "span" | "tool";
+  name: string;
+  input?: unknown;
+  model?: string;
+  startedAt: number;
+  metadata?: Record<string, unknown>;
+};
+
 export class DualLangfuseCallbackHandler extends BaseCallbackHandler {
   /** Unique per review so ALS/inherit never reuses another session's handler by name */
   override name: string;
   override awaitHandlers = true;
 
   private readonly destinations: LangfuseCredentials[];
+  private readonly clickhouse: ClickHouseWriter | null;
   private readonly ctx: LangfuseTraceContext;
   private readonly role: string;
   private readonly unitId?: string;
   private readonly unitLabel?: string;
+  private readonly repoId?: string;
+  private readonly tenantId?: string;
   private readonly resolvedTraceId: string;
 
   /** runId → open observations (one per destination) */
   private readonly open = new Map<string, DestRun[]>();
   /** Per-destination bound client + trace (this handler instance only) */
   private readonly bound = new Map<string, BoundTrace>();
+  /** Pending ClickHouse rows until end (full input+output) */
+  private readonly chPending = new Map<string, PendingCh>();
   private loggedSession = false;
 
   constructor(opts: DualLangfuseCallbackOptions) {
     super();
-    this.destinations = opts.destinations.filter(
+    this.destinations = (opts.destinations ?? []).filter(
       (d) => d.enabled !== false && d.publicKey?.trim() && d.secretKey?.trim(),
     );
+    this.clickhouse = opts.clickhouse?.enabled ? opts.clickhouse : null;
     const sessionId = sanitizeLangfuseSessionId(opts.sessionId);
     this.role = opts.role;
     this.unitId = opts.unitId;
     this.unitLabel = opts.unitLabel;
+    this.repoId = opts.repoId;
+    this.tenantId = opts.tenantId;
     // Unique handler name → no cross-session callback reuse by name
     this.name = `cs_lf_${sessionId ?? "nosession"}_${opts.role}_${opts.unitId ?? "u"}`;
 
@@ -505,15 +527,17 @@ export class DualLangfuseCallbackHandler extends BaseCallbackHandler {
   }
 
   static create(opts: DualLangfuseCallbackOptions): DualLangfuseCallbackHandler | null {
-    if (!opts.destinations?.length) return null;
+    const hasLf = (opts.destinations ?? []).some(
+      (d) => d.enabled !== false && d.publicKey?.trim() && d.secretKey?.trim(),
+    );
+    const hasCh = Boolean(opts.clickhouse?.enabled);
+    if (!hasLf && !hasCh) return null;
     if (!sanitizeLangfuseSessionId(opts.sessionId) && !opts.sessionId?.trim()) {
       console.warn(
-        "[langfuse] DeepAgents callback created without sessionId — Langfuse Sessions will not group traces",
+        "[langfuse] DeepAgents callback created without sessionId — session grouping will be weak",
       );
     }
-    const h = new DualLangfuseCallbackHandler(opts);
-    if (!h.destinations.length) return null;
-    return h;
+    return new DualLangfuseCallbackHandler(opts);
   }
 
   private destKey(d: LangfuseCredentials): string {
@@ -585,6 +609,29 @@ export class DualLangfuseCallbackHandler extends BaseCallbackHandler {
   ): Promise<void> {
     const handles: DestRun[] = [];
     const { metadata: bodyMeta, ...rest } = body;
+    const obsName = String(rest.name ?? kind);
+    const chKind: PendingCh["kind"] =
+      kind === "generation"
+        ? "generation"
+        : String(obsName).startsWith("tool:")
+          ? "tool"
+          : "span";
+
+    // Platform ClickHouse product sink — full I/O (no truncation); secrets redacted on write
+    if (this.clickhouse && this.ctx.sessionId) {
+      this.chPending.set(runId, {
+        kind: chKind,
+        name: obsName,
+        input: rest.input,
+        model: rest.model != null ? String(rest.model) : undefined,
+        startedAt: Date.now(),
+        metadata: {
+          parentObservationId: parentRunId ? this.obsId(parentRunId) : undefined,
+          ...((bodyMeta as Record<string, unknown> | undefined) ?? {}),
+        },
+      });
+    }
+
     for (const dest of this.destinations) {
       try {
         const binding = await this.ensureTrace(dest);
@@ -645,13 +692,67 @@ export class DualLangfuseCallbackHandler extends BaseCallbackHandler {
 
   private endObs(runId: string, endArgs: Record<string, unknown>): void {
     const handles = this.open.get(runId);
-    if (!handles) return;
-    this.open.delete(runId);
-    for (const h of handles) {
+    if (handles) {
+      this.open.delete(runId);
+      for (const h of handles) {
+        try {
+          h.obs.end(endArgs);
+        } catch {
+          /* per-dest */
+        }
+      }
+    }
+
+    const pending = this.chPending.get(runId);
+    if (pending && this.clickhouse && this.ctx.sessionId) {
+      this.chPending.delete(runId);
+      const usage = endArgs.usage as
+        | { promptTokens?: number; completionTokens?: number; totalTokens?: number }
+        | undefined;
+      const level =
+        endArgs.level === "ERROR" || endArgs.level === "WARNING" || endArgs.level === "DEBUG"
+          ? (endArgs.level as "ERROR" | "WARNING" | "DEBUG")
+          : "DEFAULT";
       try {
-        h.obs.end(endArgs);
-      } catch {
-        /* per-dest */
+        this.clickhouse.record({
+          orgId: this.ctx.orgId ?? "local",
+          sessionId: this.ctx.sessionId,
+          traceId: this.resolvedTraceId,
+          observationId: this.obsId(runId),
+          parentObservationId:
+            typeof pending.metadata?.parentObservationId === "string"
+              ? pending.metadata.parentObservationId
+              : undefined,
+          kind: pending.kind,
+          name: pending.name,
+          role: this.role,
+          model:
+            (typeof endArgs.model === "string" ? endArgs.model : undefined) ?? pending.model,
+          unitId: this.unitId,
+          unitLabel: this.unitLabel,
+          repoId: this.repoId,
+          tenantId: this.tenantId,
+          runner: "deepagents",
+          level,
+          statusMessage:
+            typeof endArgs.statusMessage === "string" ? endArgs.statusMessage : undefined,
+          input: pending.input,
+          output: endArgs.output,
+          promptTokens: usage?.promptTokens,
+          completionTokens: usage?.completionTokens,
+          totalTokens: usage?.totalTokens,
+          durationMs: Math.max(0, Date.now() - pending.startedAt),
+          metadata: {
+            sessionId: this.ctx.sessionId,
+            reviewSessionId: this.ctx.sessionId,
+            ...pending.metadata,
+          },
+        });
+      } catch (err) {
+        console.warn(
+          "[clickhouse] record failed",
+          err instanceof Error ? err.message : err,
+        );
       }
     }
   }
@@ -861,3 +962,6 @@ export function createDualLangfuseCallbacks(
   const h = DualLangfuseCallbackHandler.create(opts);
   return h ? [h] : [];
 }
+
+/** @deprecated alias — dual-write Langfuse + optional ClickHouse */
+export const createTraceCallbacks = createDualLangfuseCallbacks;

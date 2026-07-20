@@ -8,6 +8,12 @@ import {
   type ModelRouter,
 } from "@codesteward/model-router";
 import { createDualLangfuseCallbacks } from "./langfuse-langchain.js";
+
+function getClickHouseWriter(router: ModelRouter) {
+  return typeof router.getClickHouseWriter === "function"
+    ? router.getClickHouseWriter()
+    : null;
+}
 import type { Policy } from "@codesteward/policy";
 import type { Sandbox } from "@codesteward/sandbox";
 import { createSandbox } from "@codesteward/sandbox";
@@ -327,6 +333,7 @@ export class DeepAgentRunner implements AgentRunner {
         typeof modelRouter.getLangfuseDestinations === "function"
           ? modelRouter.getLangfuseDestinations()
           : [];
+      const clickhouse = getClickHouseWriter(modelRouter);
       // Sessions UI groups by sessionId (= review session). Trace id is per specialist
       // so parallel agents don't interleave under one flat tree.
       const specialistTraceId = [
@@ -338,11 +345,14 @@ export class DeepAgentRunner implements AgentRunner {
         .slice(0, 200);
       const langfuseCallbacks = createDualLangfuseCallbacks({
         destinations: langfuseDests,
+        clickhouse,
         sessionId: ctx.sessionId,
         orgId: ctx.orgId,
         role: String(role),
         unitId: unit.id,
         unitLabel: unit.label,
+        repoId: ctx.repoId,
+        tenantId: ctx.tenantId,
         traceName: `steward.${role}`,
         traceId: specialistTraceId,
         metadata: {
@@ -352,9 +362,9 @@ export class DeepAgentRunner implements AgentRunner {
           reviewSessionId: ctx.sessionId,
         },
       });
-      if (langfuseDests.length) {
+      if (langfuseDests.length || clickhouse) {
         console.info(
-          `[agents] deepagent langfuse dual-write sessionId=${ctx.sessionId} dests=${langfuseDests.map((d) => d.source).join("+")}`,
+          `[agents] deepagent trace sinks sessionId=${ctx.sessionId} langfuse=${langfuseDests.map((d) => d.source).join("+") || "off"} clickhouse=${clickhouse ? "on" : "off"}`,
         );
       }
 
@@ -419,36 +429,64 @@ export class DeepAgentRunner implements AgentRunner {
 
       const content = extractMessageContent(result);
 
-      // Enrich top-level trace I/O so Sessions/Traces list shows content (not only nested gens)
-      if (langfuseDests.length) {
+      // Enrich top-level trace I/O + flush sinks (Langfuse + platform ClickHouse)
+      if (langfuseDests.length || clickhouse) {
         try {
-          await upsertLangfuseTraceSummary(langfuseDests, {
-            sessionId: ctx.sessionId,
-            traceId: specialistTraceId,
-            name: `steward.${role}`,
-            orgId: ctx.orgId,
-            role: String(role),
-            input: {
-              system: redactForLangfuse(system).slice(0, 8000),
-              user: redactForLangfuse(user).slice(0, 8000),
-            },
-            output: redactForLangfuse(content || "(empty)").slice(0, 12000),
-            metadata: {
-              runner: "deepagents",
+          if (langfuseDests.length) {
+            await upsertLangfuseTraceSummary(langfuseDests, {
+              sessionId: ctx.sessionId,
+              traceId: specialistTraceId,
+              name: `steward.${role}`,
+              orgId: ctx.orgId,
+              role: String(role),
+              input: {
+                system: redactForLangfuse(system).slice(0, 8000),
+                user: redactForLangfuse(user).slice(0, 8000),
+              },
+              output: redactForLangfuse(content || "(empty)").slice(0, 12000),
+              metadata: {
+                runner: "deepagents",
+                unitId: unit.id,
+                unitLabel: unit.label,
+                promptTokens: deepUsage.promptTokens,
+                completionTokens: deepUsage.completionTokens,
+                totalTokens: deepUsage.totalTokens,
+              },
+            });
+            await flushLangfuse(langfuseDests);
+          }
+          if (clickhouse) {
+            // Full specialist summary for product UI (no content truncation)
+            clickhouse.record({
+              orgId: ctx.orgId ?? "local",
+              sessionId: ctx.sessionId,
+              traceId: specialistTraceId,
+              kind: "trace_summary",
+              name: `steward.${role}`,
+              role: String(role),
               unitId: unit.id,
               unitLabel: unit.label,
+              repoId: ctx.repoId,
+              tenantId: ctx.tenantId,
+              runner: "deepagents",
+              input: { system, user },
+              output: content || "(empty)",
               promptTokens: deepUsage.promptTokens,
               completionTokens: deepUsage.completionTokens,
               totalTokens: deepUsage.totalTokens,
-            },
-          });
-          await flushLangfuse(langfuseDests);
+              metadata: {
+                paths: unit.paths.slice(0, 40),
+                reviewSessionId: ctx.sessionId,
+              },
+            });
+            await clickhouse.flush();
+          }
           console.info(
-            `[langfuse] flushed specialist role=${role} sessionId=${ctx.sessionId} traceId=${specialistTraceId}`,
+            `[trace-sink] flushed specialist role=${role} sessionId=${ctx.sessionId} lf=${langfuseDests.length} ch=${clickhouse ? 1 : 0}`,
           );
         } catch (err) {
           console.warn(
-            "[deep-agent] langfuse flush failed:",
+            "[deep-agent] trace sink flush failed:",
             err instanceof Error ? err.message : err,
           );
         }

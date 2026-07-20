@@ -10,9 +10,11 @@ import {
   withLangfuseGeneration,
   type LangfuseCredentials,
 } from "./langfuse.js";
+import type { ClickHouseWriter } from "./clickhouse.js";
 import { createAnthropicModel } from "./providers/anthropic.js";
 import { createOpenAICompatModel } from "./providers/openai-compat.js";
 import type { ChatModel, ModelRole, TokenBudget } from "./types.js";
+import { randomUUID } from "node:crypto";
 
 export interface ModelRouter {
   createChatModel(role: ModelRole | AgentRole): ChatModel;
@@ -23,6 +25,8 @@ export interface ModelRouter {
    * Used by DeepAgents path which bypasses createChatModel().complete.
    */
   getLangfuseDestinations(): LangfuseCredentials[];
+  /** Platform ClickHouse writer when platform sink is enabled (all orgs). */
+  getClickHouseWriter(): ClickHouseWriter | null;
 }
 
 export function createModelRouter(
@@ -37,6 +41,8 @@ export function createModelRouter(
      */
     langfuse?: LangfuseCredentials | null;
     langfuseDestinations?: LangfuseCredentials[] | null;
+    /** Platform ClickHouse dual-write (enablement is platform-only). */
+    clickhouse?: ClickHouseWriter | null;
   },
 ): ModelRouter {
   const cfg = opts?.config ?? loadEnvModelConfig(env);
@@ -44,11 +50,13 @@ export function createModelRouter(
   const lfDests: LangfuseCredentials[] =
     opts?.langfuseDestinations ??
     (opts?.langfuse != null ? [opts.langfuse] : []);
+  const ch = opts?.clickhouse?.enabled ? opts.clickhouse : null;
 
   return {
     getConfig: () => cfg,
     getBudget: () => budget,
     getLangfuseDestinations: () => lfDests,
+    getClickHouseWriter: () => ch,
     createChatModel(role: ModelRole | AgentRole): ChatModel {
       const target = resolveModelForRole(role as ModelRole, cfg);
       let model: ChatModel;
@@ -58,18 +66,21 @@ export function createModelRouter(
         model = createOpenAICompatModel(role as ModelRole, target);
       }
 
-      // Wrap to track token budget + Langfuse (dual-write when multiple destinations)
+      // Wrap to track token budget + Langfuse + optional ClickHouse
       const original = model.complete.bind(model);
       model.complete = async (req) => {
+        const started = Date.now();
+        const sessionId = opts?.sessionId ?? "";
+        const orgId = opts?.orgId ?? opts?.langfuse?.orgId ?? "local";
         const res = await withLangfuseGeneration(
           {
             role: String(role),
-            sessionId: opts?.sessionId,
-            orgId: opts?.orgId ?? opts?.langfuse?.orgId,
+            sessionId,
+            orgId,
             metadata: {
               provider: target.provider,
               model: target.model,
-              orgId: opts?.orgId,
+              orgId,
             },
           },
           target.model,
@@ -84,6 +95,33 @@ export function createModelRouter(
           totalTokens: res.usage.totalTokens,
           model: res.model || target.model,
         });
+        if (ch && sessionId) {
+          const traceId = `${sessionId}:${role}`;
+          ch.record({
+            orgId,
+            sessionId,
+            traceId,
+            observationId: randomUUID(),
+            kind: "generation",
+            name: `steward.${role}`,
+            role: String(role),
+            model: res.model || target.model,
+            runner: "model-router",
+            input: {
+              system: req.system,
+              messages: req.messages,
+            },
+            output: res.content,
+            promptTokens: res.usage.promptTokens,
+            completionTokens: res.usage.completionTokens,
+            totalTokens: res.usage.totalTokens,
+            durationMs: Date.now() - started,
+            metadata: {
+              provider: target.provider,
+              orgId,
+            },
+          });
+        }
         return res;
       };
       return model;

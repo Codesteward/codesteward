@@ -1571,6 +1571,308 @@ export function PlatformGithubAppPanel() {
   );
 }
 
+export function PlatformClickHousePanel() {
+  const toast = useToast();
+  const [enabled, setEnabled] = useState(true);
+  const [url, setUrl] = useState("");
+  const [username, setUsername] = useState("default");
+  const [password, setPassword] = useState("");
+  const [database, setDatabase] = useState("default");
+  const [table, setTable] = useState("steward_observations");
+  const [defaultTtlDays, setDefaultTtlDays] = useState(90);
+  const [cfg, setCfg] = useState<{
+    enabled: boolean;
+    urlSet: boolean;
+    urlHint?: string;
+    passwordSet: boolean;
+    defaultTtlDays: number;
+  } | null>(null);
+  const [effective, setEffective] = useState<{
+    url: string;
+    database?: string;
+    table?: string;
+    defaultTtlDays?: number;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [testMsg, setTestMsg] = useState<string | null>(null);
+
+  function load() {
+    setLoading(true);
+    return api
+      .platformClickhouse()
+      .then((r) => {
+        setCfg(r.config);
+        setEffective(r.effective);
+        setEnabled(r.config.enabled);
+        setUsername(r.config.username ?? "default");
+        setDatabase(r.config.database ?? "default");
+        setTable(r.config.table ?? "steward_observations");
+        setDefaultTtlDays(r.config.defaultTtlDays ?? 90);
+        setUrl("");
+        setPassword("");
+        setErr(null);
+      })
+      .catch((e: Error) => setErr(e.message))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  return (
+    <div className="card" style={{ padding: "1rem 1.1rem" }}>
+      <div className="row" style={{ justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <strong>ClickHouse — platform product traces</strong>
+          <div className="muted" style={{ fontSize: "0.82rem", marginTop: 4, maxWidth: 720 }}>
+            When enabled, <strong>every org</strong> dual-writes full session traces (agents,
+            subagents, LLM I/O, tools) to this ClickHouse. Orgs cannot disable ingestion — only
+            override TTL. Langfuse remains optional external mirror.
+          </div>
+        </div>
+        {effective ? (
+          <Badge tone="ok">active · TTL {effective.defaultTtlDays ?? "?"}d</Badge>
+        ) : (
+          <Badge tone="warn">product tracing off</Badge>
+        )}
+      </div>
+      {loading ? (
+        <p className="muted" style={{ marginTop: 12 }}>
+          Loading…
+        </p>
+      ) : (
+        <div style={{ marginTop: 14, display: "grid", gap: 10, maxWidth: 560 }}>
+          <label className="row" style={{ gap: 8, fontSize: "0.88rem" }}>
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+            />
+            Enable platform ClickHouse sink (all orgs)
+          </label>
+          <div className="field" style={{ margin: 0 }}>
+            <label>HTTP URL</label>
+            <input
+              className="mono"
+              placeholder={cfg?.urlHint || "http://clickhouse:8123"}
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+          </div>
+          <div className="row" style={{ gap: 10 }}>
+            <div className="field" style={{ margin: 0, flex: 1 }}>
+              <label>Username</label>
+              <input value={username} onChange={(e) => setUsername(e.target.value)} />
+            </div>
+            <div className="field" style={{ margin: 0, flex: 1 }}>
+              <label>Password {cfg?.passwordSet ? "(set)" : ""}</label>
+              <input
+                type="password"
+                autoComplete="new-password"
+                placeholder={cfg?.passwordSet ? "•••• leave blank to keep" : ""}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="row" style={{ gap: 10 }}>
+            <div className="field" style={{ margin: 0, flex: 1 }}>
+              <label>Database</label>
+              <input value={database} onChange={(e) => setDatabase(e.target.value)} />
+            </div>
+            <div className="field" style={{ margin: 0, flex: 1 }}>
+              <label>Table</label>
+              <input value={table} onChange={(e) => setTable(e.target.value)} />
+            </div>
+            <div className="field" style={{ margin: 0, width: 120 }}>
+              <label>Default TTL (days)</label>
+              <input
+                type="number"
+                min={1}
+                max={3650}
+                value={defaultTtlDays}
+                onChange={(e) => setDefaultTtlDays(Number(e.target.value) || 90)}
+              />
+            </div>
+          </div>
+          {err && (
+            <div className="banner error" style={{ margin: 0 }}>
+              {err}
+            </div>
+          )}
+          {testMsg && (
+            <div className="muted mono" style={{ fontSize: "0.8rem" }}>
+              {testMsg}
+            </div>
+          )}
+          <div className="row" style={{ gap: 8 }}>
+            <button
+              type="button"
+              className="primary sm"
+              disabled={busy}
+              onClick={() => {
+                setBusy(true);
+                setTestMsg(null);
+                void api
+                  .putPlatformClickhouse({
+                    enabled,
+                    url: url.trim() || undefined,
+                    username: username.trim() || undefined,
+                    password: password.trim() || undefined,
+                    database: database.trim() || undefined,
+                    table: table.trim() || undefined,
+                    defaultTtlDays,
+                    test: true,
+                  })
+                  .then((r) => {
+                    toast.success("Platform ClickHouse saved");
+                    if (r.test) {
+                      setTestMsg(
+                        r.test.ok
+                          ? `Test OK: ${r.test.message ?? "connected"}`
+                          : `Test failed: ${r.test.message ?? "unknown"}`,
+                      );
+                    }
+                    return load();
+                  })
+                  .catch((e: Error) => {
+                    setErr(e.message);
+                    toast.error(e.message);
+                  })
+                  .finally(() => setBusy(false));
+              }}
+            >
+              {busy ? "Saving…" : "Save & test"}
+            </button>
+            <button
+              type="button"
+              className="ghost sm"
+              disabled={busy}
+              onClick={() => {
+                setBusy(true);
+                void api
+                  .putPlatformClickhouse({ clear: true })
+                  .then(() => {
+                    toast.success("Platform ClickHouse cleared (env still applies if set)");
+                    return load();
+                  })
+                  .catch((e: Error) => {
+                    setErr(e.message);
+                    toast.error(e.message);
+                  })
+                  .finally(() => setBusy(false));
+              }}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Org-only TTL override for platform ClickHouse (cannot disable ingestion). */
+export function OrgTraceTtlPanel() {
+  const toast = useToast();
+  const [platformEnabled, setPlatformEnabled] = useState(false);
+  const [platformDefault, setPlatformDefault] = useState(90);
+  const [orgTtl, setOrgTtl] = useState<string>("");
+  const [effective, setEffective] = useState(90);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  function load() {
+    return api
+      .orgTraceTtl()
+      .then((r) => {
+        setPlatformEnabled(r.platformEnabled);
+        setPlatformDefault(r.platformDefaultTtlDays);
+        setOrgTtl(r.orgTtlDays != null ? String(r.orgTtlDays) : "");
+        setEffective(r.effectiveTtlDays);
+        setNote(r.note ?? "");
+        setErr(null);
+      })
+      .catch((e: Error) => setErr(e.message));
+  }
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  return (
+    <div className="card" style={{ padding: "1rem 1.1rem" }}>
+      <strong>Trace retention (ClickHouse)</strong>
+      <div className="muted" style={{ fontSize: "0.82rem", marginTop: 4 }}>
+        {note ||
+          "When platform ClickHouse is on, all orgs store full traces. Set an optional org TTL override."}
+      </div>
+      <div className="row" style={{ gap: 12, marginTop: 12, flexWrap: "wrap", alignItems: "end" }}>
+        <div className="field" style={{ margin: 0, minWidth: 140 }}>
+          <label>Platform default</label>
+          <div className="mono">{platformDefault} days</div>
+        </div>
+        <div className="field" style={{ margin: 0, minWidth: 140 }}>
+          <label>Org override (days)</label>
+          <input
+            type="number"
+            min={1}
+            max={3650}
+            placeholder="use platform"
+            value={orgTtl}
+            disabled={!platformEnabled}
+            onChange={(e) => setOrgTtl(e.target.value)}
+          />
+        </div>
+        <div className="field" style={{ margin: 0, minWidth: 120 }}>
+          <label>Effective</label>
+          <div className="mono">{effective} days</div>
+        </div>
+        <button
+          type="button"
+          className="primary sm"
+          disabled={busy || !platformEnabled}
+          onClick={() => {
+            setBusy(true);
+            const n = orgTtl.trim() === "" ? null : Number(orgTtl);
+            void api
+              .putOrgTraceTtl(
+                n == null || !Number.isFinite(n)
+                  ? { clear: true }
+                  : { traceTtlDays: n },
+              )
+              .then(() => {
+                toast.success("Trace TTL saved");
+                return load();
+              })
+              .catch((e: Error) => {
+                setErr(e.message);
+                toast.error(e.message);
+              })
+              .finally(() => setBusy(false));
+          }}
+        >
+          {busy ? "Saving…" : "Save TTL"}
+        </button>
+      </div>
+      {err && (
+        <div className="banner error" style={{ marginTop: 10 }}>
+          {err}
+        </div>
+      )}
+      {!platformEnabled && (
+        <div className="muted" style={{ marginTop: 8, fontSize: "0.8rem" }}>
+          Platform ClickHouse is not enabled — contact your install admin.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function PlatformLangfusePanel() {
   const toast = useToast();
   const [cfg, setCfg] = useState<LangfuseCfg | null>(null);
