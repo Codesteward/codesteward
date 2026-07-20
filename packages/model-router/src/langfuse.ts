@@ -25,6 +25,23 @@ export interface LangfuseTraceContext {
   orgId?: string;
 }
 
+/**
+ * Langfuse Sessions require a US-ASCII sessionId &lt; 200 chars.
+ * @see https://langfuse.com/docs/observability/features/sessions
+ * Returns undefined when empty after sanitization (caller may skip session grouping).
+ */
+export function sanitizeLangfuseSessionId(
+  sessionId: string | null | undefined,
+): string | undefined {
+  if (sessionId == null) return undefined;
+  const trimmed = String(sessionId).trim();
+  if (!trimmed) return undefined;
+  // Keep printable US-ASCII only; replace others so IDs stay valid
+  const ascii = trimmed.replace(/[^\x20-\x7E]/g, "_");
+  if (!ascii) return undefined;
+  return ascii.length > 200 ? ascii.slice(0, 200) : ascii;
+}
+
 /** Resolved credentials for one Langfuse project (org or platform). */
 export interface LangfuseCredentials {
   publicKey: string;
@@ -38,19 +55,33 @@ export interface LangfuseCredentials {
 
 type LangfuseGeneration = {
   end: (args?: Record<string, unknown>) => void;
+  id?: string;
+};
+
+type LangfuseSpan = {
+  end: (args?: Record<string, unknown>) => void;
+  id?: string;
+  generation?: (args: Record<string, unknown>) => LangfuseGeneration;
+  span?: (args: Record<string, unknown>) => LangfuseSpan;
 };
 
 type LangfuseTrace = {
   generation: (args: Record<string, unknown>) => LangfuseGeneration;
+  span?: (args: Record<string, unknown>) => LangfuseSpan;
   update?: (args: Record<string, unknown>) => void;
+  id?: string;
 };
 
 type LangfuseClient = {
   trace: (args: Record<string, unknown>) => LangfuseTrace;
   generation: (args: Record<string, unknown>) => LangfuseGeneration;
+  span?: (args: Record<string, unknown>) => LangfuseSpan;
   flushAsync?: () => Promise<void>;
   shutdownAsync?: () => Promise<void>;
 };
+
+/** @internal exported for agent LangChain callback dual-write */
+export type { LangfuseClient, LangfuseTrace, LangfuseGeneration, LangfuseSpan };
 
 const clients = new Map<string, LangfuseClient | null>();
 
@@ -218,8 +249,17 @@ export async function flushLangfuse(
       if (lf?.flushAsync) {
         try {
           await lf.flushAsync();
+          if (process.env.STEW_LANGFUSE_DEBUG === "1") {
+            console.info(
+              `[langfuse] flush ok dest=${c.source ?? "?"} pk=${c.publicKey?.slice(0, 12) ?? "?"}`,
+            );
+          }
         } catch (err) {
-          console.warn("[langfuse] flush failed", err);
+          console.warn(
+            "[langfuse] flush failed",
+            c.source,
+            err instanceof Error ? err.message : err,
+          );
         }
       }
     }
@@ -237,6 +277,155 @@ export async function flushLangfuse(
   }
 }
 
+/**
+ * Upsert top-level trace input/output so Langfuse Sessions/Traces list is not empty
+ * (nested generations may still hold full turn history).
+ */
+export async function upsertLangfuseTraceSummary(
+  credentials: LangfuseCredentials | LangfuseCredentials[] | null | undefined,
+  args: {
+    sessionId: string;
+    traceId: string;
+    name?: string;
+    input?: unknown;
+    output?: unknown;
+    metadata?: Record<string, unknown>;
+    orgId?: string;
+    role?: string;
+  },
+): Promise<void> {
+  const list = Array.isArray(credentials)
+    ? credentials.filter(isComplete)
+    : credentials
+      ? [credentials]
+      : [];
+  if (!list.length) return;
+
+  const sessionId = sanitizeLangfuseSessionId(args.sessionId);
+  let traceId = String(args.traceId || "").trim();
+  if (sessionId && traceId && !traceId.startsWith(sessionId)) {
+    traceId = `${sessionId}:${traceId}`;
+  }
+  if (!traceId) traceId = sessionId ?? `trace_${Date.now()}`;
+
+  for (const dest of list) {
+    try {
+      const lf = await getLangfuse(dest);
+      if (!lf) continue;
+      lf.trace({
+        id: traceId.slice(0, 200),
+        sessionId,
+        name: args.name ?? "codesteward.review",
+        input: args.input,
+        output: args.output,
+        metadata: {
+          sessionId,
+          reviewSessionId: sessionId,
+          orgId: args.orgId,
+          role: args.role,
+          langfuseSource: dest.source,
+          ...args.metadata,
+        },
+        tags: [
+          "codesteward",
+          args.role,
+          args.orgId ? `org:${args.orgId}` : undefined,
+          dest.source ? `lf:${dest.source}` : undefined,
+          sessionId ? "session" : undefined,
+        ].filter(Boolean),
+      });
+    } catch (err) {
+      console.warn(
+        "[langfuse] trace summary upsert failed",
+        dest.source,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+}
+
+/**
+ * Resolve a Langfuse trace id that is always scoped to the current review session.
+ * Never returns another session's id (prevents sticky/cross-session traces).
+ */
+export function resolveLangfuseTraceId(
+  ctx: Pick<LangfuseTraceContext, "sessionId" | "traceId" | "role">,
+): string | undefined {
+  const sessionId = sanitizeLangfuseSessionId(ctx.sessionId);
+  let raw = ctx.traceId?.trim() || undefined;
+  if (raw) {
+    raw = sanitizeLangfuseSessionId(raw) ?? raw.slice(0, 200);
+  }
+  if (sessionId) {
+    // Prefer role-scoped traces under the session so specialists don't interleave
+    if (!raw || raw === sessionId) {
+      return ctx.role ? `${sessionId}:${ctx.role}`.slice(0, 200) : sessionId;
+    }
+    if (!raw.startsWith(sessionId)) {
+      return `${sessionId}:${raw}`.slice(0, 200);
+    }
+    return raw.slice(0, 200);
+  }
+  return raw;
+}
+
+/**
+ * Build trace args so Langfuse Sessions UI groups by CodeSteward review session.
+ * Always sets `sessionId` on the trace when a valid id is available.
+ */
+export function buildLangfuseTraceArgs(
+  ctx: LangfuseTraceContext,
+  destSource?: string,
+  opts?: { name?: string; mode?: string },
+): Record<string, unknown> {
+  const sessionId = sanitizeLangfuseSessionId(ctx.sessionId);
+  const mode = (opts?.mode ?? process.env.STEW_LANGFUSE_TRACE_MODE ?? "session").toLowerCase();
+  const tags = [
+    "codesteward",
+    ctx.role,
+    ctx.orgId ? `org:${ctx.orgId}` : undefined,
+    destSource ? `lf:${destSource}` : undefined,
+    sessionId ? "session" : undefined,
+  ].filter(Boolean) as string[];
+
+  const meta = {
+    sessionId,
+    reviewSessionId: sessionId,
+    orgId: ctx.orgId,
+    langfuseSource: destSource,
+    ...ctx.metadata,
+  };
+
+  const traceId = resolveLangfuseTraceId(ctx);
+
+  if (sessionId && mode !== "per_call") {
+    return {
+      id: traceId ?? sessionId,
+      sessionId,
+      userId: ctx.userId,
+      name: opts?.name ?? ctx.traceName ?? "codesteward.review",
+      metadata: meta,
+      tags,
+    };
+  }
+  if (sessionId) {
+    return {
+      // per_call: still set sessionId so Sessions UI groups traces
+      sessionId,
+      userId: ctx.userId,
+      name: opts?.name ?? ctx.traceName ?? `steward.${ctx.role ?? "model"}`,
+      metadata: meta,
+      tags,
+    };
+  }
+  return {
+    userId: ctx.userId,
+    name: opts?.name ?? ctx.traceName ?? `steward.${ctx.role ?? "model"}`,
+    metadata: meta,
+    tags,
+  };
+}
+
 function startGeneration(
   lf: LangfuseClient,
   ctx: LangfuseTraceContext,
@@ -245,7 +434,7 @@ function startGeneration(
   req: CompleteRequest,
   destSource?: string,
 ): LangfuseGeneration {
-  const sessionId = ctx.sessionId?.trim() || undefined;
+  const sessionId = sanitizeLangfuseSessionId(ctx.sessionId);
   const mode = (process.env.STEW_LANGFUSE_TRACE_MODE ?? "session").toLowerCase();
   const genName = `steward.${ctx.role ?? "model"}`;
   const genArgs: Record<string, unknown> = {
@@ -261,49 +450,25 @@ function startGeneration(
       role: ctx.role,
       provider,
       orgId: ctx.orgId,
+      sessionId,
+      reviewSessionId: sessionId,
       langfuseSource: destSource,
       redacted: process.env.STEW_LANGFUSE_REDACT !== "0",
       ...ctx.metadata,
     },
   };
 
-  const tags = [
-    "codesteward",
-    ctx.role,
-    ctx.orgId ? `org:${ctx.orgId}` : undefined,
-    destSource ? `lf:${destSource}` : undefined,
-  ].filter(Boolean) as string[];
-
-  if (sessionId && mode !== "per_call") {
-    const trace = lf.trace({
-      id: ctx.traceId ?? sessionId,
-      sessionId,
-      userId: ctx.userId,
-      name: ctx.traceName ?? "codesteward.review",
-      metadata: {
-        sessionId,
-        orgId: ctx.orgId,
-        langfuseSource: destSource,
-        ...ctx.metadata,
-      },
-      tags,
-    });
-    return trace.generation(genArgs);
-  }
+  // Always open a session-scoped trace, then create generation with explicit traceId
+  // (do not use TraceClient.generation — it forces parentObservationId=null).
   if (sessionId) {
-    const trace = lf.trace({
-      sessionId,
-      userId: ctx.userId,
-      name: genName,
-      metadata: {
-        sessionId,
-        orgId: ctx.orgId,
-        langfuseSource: destSource,
-        ...ctx.metadata,
-      },
-      tags,
+    const traceArgs = buildLangfuseTraceArgs(ctx, destSource, { mode });
+    const traceId = String(traceArgs.id ?? resolveLangfuseTraceId(ctx) ?? sessionId);
+    // Re-assert session on every trace-create (idempotent upsert by id)
+    lf.trace({ ...traceArgs, id: traceId, sessionId });
+    return lf.generation({
+      ...genArgs,
+      traceId,
     });
-    return trace.generation(genArgs);
   }
   return lf.generation(genArgs);
 }

@@ -12,6 +12,51 @@ const SEV_COLORS: Record<string, string> = {
   nit: "#64748b",
 };
 
+/** false_positive → False positive; open → Open */
+function humanizeStatusLabel(status: string): string {
+  const known: Record<string, string> = {
+    open: "Open",
+    fixed: "Fixed",
+    dismissed: "Dismissed",
+    false_positive: "False positive",
+    wontfix: "Won't fix",
+    wont_fix: "Won't fix",
+    auto_fixed: "Auto-fixed",
+  };
+  if (known[status]) return known[status];
+  return status
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function formatTokens(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 1 : 2)}M`;
+  if (n >= 10_000) return `${(n / 1000).toFixed(1)}k`;
+  return Math.round(n).toLocaleString();
+}
+
+function formatUsd(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "$0";
+  if (n < 0.01) return `$${n.toFixed(4)}`;
+  if (n < 10) return `$${n.toFixed(2)}`;
+  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+function sessionTokenTotal(s: Session): number {
+  const u = s.tokenUsage;
+  if (!u) return 0;
+  if (typeof u.totalTokens === "number" && u.totalTokens > 0) return u.totalTokens;
+  return (u.promptTokens ?? 0) + (u.completionTokens ?? 0);
+}
+
+function sessionCostUsd(s: Session): number {
+  const c = s.tokenUsage?.costUsd;
+  return typeof c === "number" && Number.isFinite(c) ? c : 0;
+}
+
 export function Analytics() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -48,7 +93,49 @@ export function Analytics() {
     for (const f of findings) {
       byStatus[f.status] = (byStatus[f.status] ?? 0) + 1;
     }
-    return { completed, failed, bySev, byMode, byStatus };
+
+    let totalTokens = 0;
+    let totalCost = 0;
+    let sessionsWithTokens = 0;
+    let sessionsWithCost = 0;
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let costEstimated = false;
+    for (const s of sessions) {
+      const t = sessionTokenTotal(s);
+      if (t > 0) {
+        totalTokens += t;
+        sessionsWithTokens += 1;
+        promptTokens += s.tokenUsage?.promptTokens ?? 0;
+        completionTokens += s.tokenUsage?.completionTokens ?? 0;
+      }
+      const c = sessionCostUsd(s);
+      if (c > 0) {
+        totalCost += c;
+        sessionsWithCost += 1;
+      }
+      if (s.tokenUsage?.costEstimated !== false && c > 0) costEstimated = true;
+    }
+    const avgTokens =
+      sessionsWithTokens > 0 ? totalTokens / sessionsWithTokens : 0;
+    const avgCost = sessionsWithCost > 0 ? totalCost / sessionsWithCost : 0;
+
+    return {
+      completed,
+      failed,
+      bySev,
+      byMode,
+      byStatus,
+      totalTokens,
+      avgTokens,
+      totalCost,
+      avgCost,
+      sessionsWithTokens,
+      sessionsWithCost,
+      promptTokens,
+      completionTokens,
+      costEstimated,
+    };
   }, [sessions, findings]);
 
   const sevEntries = Object.entries(metrics.bySev);
@@ -81,7 +168,7 @@ export function Analytics() {
       <PageHero
         kicker="Insights"
         title="Analytics"
-        subtitle="Address rate, severity mix, and session outcomes — pure CSS charts, no chart library."
+        subtitle="Address rate, severity mix, tokens, estimated cost, and session outcomes — pure CSS charts."
       />
 
       <div className="grid cols-4" style={{ marginBottom: "1rem" }}>
@@ -111,6 +198,57 @@ export function Analytics() {
           label="Gate vs steward"
           value={`${metrics.byMode.gate ?? 0}/${metrics.byMode.stewardship ?? 0}`}
           meta="gate / stewardship"
+          loading={loading}
+        />
+      </div>
+
+      <div className="grid cols-4" style={{ marginBottom: "1rem" }}>
+        <KpiCard
+          label="Tokens used"
+          value={formatTokens(metrics.totalTokens)}
+          meta={
+            metrics.sessionsWithTokens
+              ? `${metrics.promptTokens.toLocaleString()} in · ${metrics.completionTokens.toLocaleString()} out · ${metrics.sessionsWithTokens} session(s)`
+              : "from session tokenUsage"
+          }
+          loading={loading}
+        />
+        <KpiCard
+          label="Avg tokens / session"
+          value={
+            metrics.sessionsWithTokens > 0
+              ? formatTokens(metrics.avgTokens)
+              : "—"
+          }
+          meta={
+            metrics.sessionsWithTokens
+              ? `across ${metrics.sessionsWithTokens} session(s) with usage`
+              : "no token usage recorded yet"
+          }
+          loading={loading}
+        />
+        <KpiCard
+          label="Est. cost (total)"
+          value={metrics.totalCost > 0 ? formatUsd(metrics.totalCost) : "—"}
+          meta={
+            metrics.totalCost > 0
+              ? metrics.costEstimated
+                ? "list-price estimate · not an invoice"
+                : "from session costUsd"
+              : "costs appear after reviews with priced models"
+          }
+          loading={loading}
+        />
+        <KpiCard
+          label="Avg cost / session"
+          value={
+            metrics.sessionsWithCost > 0 ? formatUsd(metrics.avgCost) : "—"
+          }
+          meta={
+            metrics.sessionsWithCost
+              ? `across ${metrics.sessionsWithCost} session(s) with cost`
+              : "no cost data yet"
+          }
           loading={loading}
         />
       </div>
@@ -227,7 +365,7 @@ export function Analytics() {
               {Object.entries(metrics.byStatus).map(([st, n]) => (
                 <div key={st}>
                   <div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
-                    <span style={{ textTransform: "capitalize", fontSize: "0.85rem" }}>{st}</span>
+                    <span style={{ fontSize: "0.85rem" }}>{humanizeStatusLabel(st)}</span>
                     <span className="mono muted">{n}</span>
                   </div>
                   <div className="progress-bar">

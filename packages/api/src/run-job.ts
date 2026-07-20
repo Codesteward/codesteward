@@ -629,7 +629,7 @@ export async function runReviewJob(
       langfuseDestinations = await loadLangfuseDestinationsForRuntime(orgId);
       if (langfuseDestinations.length) {
         log(
-          `langfuse destinations: ${langfuseDestinations.map((d) => d.source).join("+")}`,
+          `langfuse destinations: ${langfuseDestinations.map((d) => d.source).join("+")} sessionId=${job.sessionId}`,
         );
       }
     } catch (err) {

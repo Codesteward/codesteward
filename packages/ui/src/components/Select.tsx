@@ -79,22 +79,44 @@ export function Select({
     const spaceBelow = window.innerHeight - r.bottom - 8;
     const openUp = spaceBelow < 160 && r.top > spaceBelow;
     const width = Math.max(r.width, 140);
-    setMenuStyle({
+    const next: CSSProperties = {
       position: "fixed",
       left: Math.min(r.left, window.innerWidth - width - 8),
       width,
       zIndex: 2000,
       maxHeight: maxH,
       ...(openUp
-        ? { bottom: window.innerHeight - r.top + 6 }
-        : { top: r.bottom + 6 }),
+        ? { bottom: window.innerHeight - r.top + 6, top: "auto" }
+        : { top: r.bottom + 6, bottom: "auto" }),
+    };
+    // Avoid re-render (and scrollTop reset) when geometry is unchanged
+    setMenuStyle((prev) => {
+      if (
+        prev.left === next.left &&
+        prev.width === next.width &&
+        prev.top === next.top &&
+        prev.bottom === next.bottom &&
+        prev.maxHeight === next.maxHeight
+      ) {
+        return prev;
+      }
+      return next;
     });
   }, []);
 
   useLayoutEffect(() => {
     if (!open) return;
     placeMenu();
-    const onScroll = () => placeMenu();
+    // Reposition when the page scrolls — but NOT when the menu list itself scrolls.
+    // Listening to menu scroll re-ran placeMenu → setState → re-render → scroll thrash
+    // ("vibrating" list that never moves past the first page of options).
+    const onScroll = (e: Event) => {
+      const t = e.target;
+      if (t instanceof Node && listRef.current) {
+        if (t === listRef.current || listRef.current.contains(t)) return;
+      }
+      placeMenu();
+    };
     window.addEventListener("resize", placeMenu);
     window.addEventListener("scroll", onScroll, true);
     return () => {

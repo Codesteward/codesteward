@@ -1,9 +1,13 @@
 import type { AgentRole, FindingCandidate, ReviewUnit } from "@codesteward/core";
 import type { GraphClient } from "@codesteward/graph-client";
 import {
+  flushLangfuse,
+  redactForLangfuse,
   resolveModelForRole,
+  upsertLangfuseTraceSummary,
   type ModelRouter,
 } from "@codesteward/model-router";
+import { createDualLangfuseCallbacks } from "./langfuse-langchain.js";
 import type { Policy } from "@codesteward/policy";
 import type { Sandbox } from "@codesteward/sandbox";
 import { createSandbox } from "@codesteward/sandbox";
@@ -127,8 +131,17 @@ export class DeepAgentRunner implements AgentRunner {
   private readonly fallback: SimpleAgentRunner;
   private readonly sandbox: Sandbox;
   private ready: boolean | null = null;
-  private createDeepAgent: ((params: Record<string, unknown>) => { invoke: (i: unknown) => Promise<unknown> } | Promise<{ invoke: (i: unknown) => Promise<unknown> }>) | null =
-    null;
+  private createDeepAgent:
+    | ((
+        params: Record<string, unknown>,
+      ) =>
+        | {
+            invoke: (i: unknown, config?: Record<string, unknown>) => Promise<unknown>;
+          }
+        | Promise<{
+            invoke: (i: unknown, config?: Record<string, unknown>) => Promise<unknown>;
+          }>)
+    | null = null;
 
   constructor(deps: DeepAgentRunnerOptions) {
     this.deps = deps;
@@ -309,21 +322,88 @@ export class DeepAgentRunner implements AgentRunner {
       const agentMaybe = this.createDeepAgent(agentArgs);
       const agent = await Promise.resolve(agentMaybe);
 
+      // Dual-write (org + platform) full-turn Langfuse: every LLM/tool/subagent span
+      const langfuseDests =
+        typeof modelRouter.getLangfuseDestinations === "function"
+          ? modelRouter.getLangfuseDestinations()
+          : [];
+      // Sessions UI groups by sessionId (= review session). Trace id is per specialist
+      // so parallel agents don't interleave under one flat tree.
+      const specialistTraceId = [
+        ctx.sessionId,
+        unit.id || "unit",
+        String(role),
+      ]
+        .join(":")
+        .slice(0, 200);
+      const langfuseCallbacks = createDualLangfuseCallbacks({
+        destinations: langfuseDests,
+        sessionId: ctx.sessionId,
+        orgId: ctx.orgId,
+        role: String(role),
+        unitId: unit.id,
+        unitLabel: unit.label,
+        traceName: `steward.${role}`,
+        traceId: specialistTraceId,
+        metadata: {
+          paths: unit.paths.slice(0, 40),
+          repoId: ctx.repoId,
+          tenantId: ctx.tenantId,
+          reviewSessionId: ctx.sessionId,
+        },
+      });
+      if (langfuseDests.length) {
+        console.info(
+          `[agents] deepagent langfuse dual-write sessionId=${ctx.sessionId} dests=${langfuseDests.map((d) => d.source).join("+")}`,
+        );
+      }
+
       const timeoutMs = specialistTimeoutMs();
       console.info(
         `[agents] deepagent start role=${role} unit=${unit.label} timeoutMs=${timeoutMs}`,
       );
+      const invokeConfig: Record<string, unknown> = {
+        runName: `specialist.${role}`,
+        tags: [
+          "codesteward",
+          "deepagents",
+          String(role),
+          ctx.orgId ? `org:${ctx.orgId}` : "",
+          unit.id ? `unit:${unit.id}` : "",
+        ].filter(Boolean),
+        metadata: {
+          sessionId: ctx.sessionId,
+          orgId: ctx.orgId,
+          role: String(role),
+          unitId: unit.id,
+          unitLabel: unit.label,
+          // Also expose for any OTEL/LangSmith-style consumers
+          langfuseSessionId: ctx.sessionId,
+        },
+      };
+      if (langfuseCallbacks.length) {
+        invokeConfig.callbacks = langfuseCallbacks;
+      }
+
       const result = await withTimeout(
-        agent.invoke({
-          messages: [{ role: "user", content: user }],
-        }),
+        agent.invoke(
+          {
+            messages: [{ role: "user", content: user }],
+          },
+          invokeConfig,
+        ),
         timeoutMs,
         `DeepAgent specialist ${role} (${unit.label})`,
       );
 
-      // DeepAgents bypasses ModelRouter.complete — fold LangChain usage into session budget
+      // DeepAgents bypasses ModelRouter.complete — fold usage into budget
+      let deepUsage = {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      };
       try {
-        const deepUsage = extractUsageFromDeepResult(result);
+        deepUsage = extractUsageFromDeepResult(result);
         if (deepUsage.promptTokens + deepUsage.completionTokens + deepUsage.totalTokens > 0) {
           const target = resolveModelForRole(role as never, modelRouter.getConfig());
           modelRouter.getBudget().record({
@@ -338,6 +418,41 @@ export class DeepAgentRunner implements AgentRunner {
       }
 
       const content = extractMessageContent(result);
+
+      // Enrich top-level trace I/O so Sessions/Traces list shows content (not only nested gens)
+      if (langfuseDests.length) {
+        try {
+          await upsertLangfuseTraceSummary(langfuseDests, {
+            sessionId: ctx.sessionId,
+            traceId: specialistTraceId,
+            name: `steward.${role}`,
+            orgId: ctx.orgId,
+            role: String(role),
+            input: {
+              system: redactForLangfuse(system).slice(0, 8000),
+              user: redactForLangfuse(user).slice(0, 8000),
+            },
+            output: redactForLangfuse(content || "(empty)").slice(0, 12000),
+            metadata: {
+              runner: "deepagents",
+              unitId: unit.id,
+              unitLabel: unit.label,
+              promptTokens: deepUsage.promptTokens,
+              completionTokens: deepUsage.completionTokens,
+              totalTokens: deepUsage.totalTokens,
+            },
+          });
+          await flushLangfuse(langfuseDests);
+          console.info(
+            `[langfuse] flushed specialist role=${role} sessionId=${ctx.sessionId} traceId=${specialistTraceId}`,
+          );
+        } catch (err) {
+          console.warn(
+            "[deep-agent] langfuse flush failed:",
+            err instanceof Error ? err.message : err,
+          );
+        }
+      }
       if (process.env.STEW_DEBUG_LLM === "1") {
         try {
           const { mkdir, writeFile } = await import("node:fs/promises");

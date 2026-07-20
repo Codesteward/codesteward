@@ -16,11 +16,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - **Re-review GitHub thread resolve** — when lifecycle marks prior findings `fixed` (fingerprint gone after a new
   push/session), resolve matching PR review threads via GraphQL when `scmCommentId` / fingerprint / finding markers match.
   Disable with `STEW_RESOLVE_FIXED_THREADS=0`.
+- **Org Analytics** — token totals, average tokens per session, estimated total cost, and average cost per session
+  (from session `tokenUsage` / list-price estimates).
 
 ### Changed
 
 - **PR finding code blocks** use GFM language tags from the file path (e.g. `go`, `typescript`, `yaml`) so GitHub
   highlights **Context** and **Proposed fix** snippets.
+- **Finding status mix** labels are humanized (`false_positive` → “False positive”).
 
 ### Fixed
 

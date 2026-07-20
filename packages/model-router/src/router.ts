@@ -18,6 +18,11 @@ export interface ModelRouter {
   createChatModel(role: ModelRole | AgentRole): ChatModel;
   getBudget(): TokenBudget;
   getConfig(): EnvModelConfig;
+  /**
+   * Org/platform Langfuse destinations for this router (if any).
+   * Used by DeepAgents path which bypasses createChatModel().complete.
+   */
+  getLangfuseDestinations(): LangfuseCredentials[];
 }
 
 export function createModelRouter(
@@ -36,13 +41,14 @@ export function createModelRouter(
 ): ModelRouter {
   const cfg = opts?.config ?? loadEnvModelConfig(env);
   const budget = createTokenBudget(cfg.maxBudgetTokens);
-  const lfDests =
+  const lfDests: LangfuseCredentials[] =
     opts?.langfuseDestinations ??
-    (opts?.langfuse != null ? [opts.langfuse] : undefined);
+    (opts?.langfuse != null ? [opts.langfuse] : []);
 
   return {
     getConfig: () => cfg,
     getBudget: () => budget,
+    getLangfuseDestinations: () => lfDests,
     createChatModel(role: ModelRole | AgentRole): ChatModel {
       const target = resolveModelForRole(role as ModelRole, cfg);
       let model: ChatModel;
@@ -70,7 +76,7 @@ export function createModelRouter(
           target.provider,
           req,
           () => original(req),
-          lfDests,
+          lfDests.length ? lfDests : undefined,
         );
         budget.record({
           promptTokens: res.usage.promptTokens,
