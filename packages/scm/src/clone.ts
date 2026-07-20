@@ -11,7 +11,10 @@ export interface MaterializeGitOpts {
   /** API base for enterprise hosts (e.g. https://github.example.com) */
   host?: string;
   headSha?: string;
+  /** PR head branch name (not base). Used to fetch the commit when shallow clone lacks the SHA. */
   headBranch?: string;
+  /** PR number — enables `pull/<n>/head` fetch on GitHub when SHA is missing locally. */
+  prNumber?: number;
   /** Wipe workdir if it exists */
   force?: boolean;
 }
@@ -173,27 +176,68 @@ export async function materializeGitWorkspace(
       await runGit(opts.workdir, ["fetch", "--depth", "50", "origin"]);
     }
 
+    // Checkout target commit/branch.
+    //
+    // CRITICAL: do NOT use `git checkout --force -- <ref>`.
+    // After `--`, git treats arguments as *pathspecs* (files), not a branch/SHA.
+    // That yields: pathspec '<sha>' did not match any file(s) known to git
+    // even when the object is already in the repo. Refs are validated above
+    // (no leading `-`) so option-injection is already blocked.
     const rawRef = opts.headSha || opts.headBranch;
     if (rawRef) {
-      // ref validated not to start with "-" so cannot be parsed as a git option
-      const ref = assertSafeGitArg("ref", rawRef);
-      // "--" ends option parsing (blocks --upload-pack style injection via ref)
-      const co = await runGit(opts.workdir, ["checkout", "--force", "--", ref]);
-      if (!co.ok && opts.headSha) {
-        // Fetch by object id only (hex) — never a free-form refspec
-        const sha = assertGitObjectId("headSha", opts.headSha);
-        await runGit(opts.workdir, ["fetch", "--depth", "1", "origin", sha]);
-        const co2 = await runGit(opts.workdir, ["checkout", "--force", "--", sha]);
-        if (!co2.ok) {
-          await scrubRemote(opts.workdir, safeOpts);
-          return {
-            ok: false,
-            workdir: opts.workdir,
-            verified: false,
-            error: scrubGitError(co2.stderr).slice(0, 400),
-            cloneUrlHost: cloneUrl.host,
-          };
+      const wantSha = opts.headSha
+        ? assertGitObjectId("headSha", opts.headSha)
+        : undefined;
+      let co = await checkoutRef(opts.workdir, rawRef);
+
+      if (!co.ok) {
+        // Ensure the object is present: PR ref → head branch → object id
+        const fetchAttempts: string[][] = [];
+        const p = opts.provider.toLowerCase();
+        if (
+          opts.prNumber != null &&
+          Number.isFinite(opts.prNumber) &&
+          opts.prNumber > 0 &&
+          (p === "github" || p === "github_enterprise")
+        ) {
+          const n = Math.floor(opts.prNumber);
+          fetchAttempts.push([
+            "fetch",
+            "--depth",
+            "50",
+            "origin",
+            `pull/${n}/head:refs/remotes/origin/pr-${n}`,
+          ]);
         }
+        if (opts.headBranch) {
+          const br = assertSafeGitArg("ref", opts.headBranch);
+          fetchAttempts.push([
+            "fetch",
+            "--depth",
+            "50",
+            "origin",
+            `${br}:refs/remotes/origin/review-head`,
+          ]);
+        }
+        if (wantSha) {
+          fetchAttempts.push(["fetch", "--depth", "1", "origin", wantSha]);
+        }
+        for (const args of fetchAttempts) {
+          await runGit(opts.workdir, args);
+          co = await checkoutRef(opts.workdir, wantSha ?? rawRef);
+          if (co.ok) break;
+        }
+      }
+
+      if (!co.ok) {
+        await scrubRemote(opts.workdir, safeOpts);
+        return {
+          ok: false,
+          workdir: opts.workdir,
+          verified: false,
+          error: scrubGitError(co.stderr || co.stdout).slice(0, 400),
+          cloneUrlHost: cloneUrl.host,
+        };
       }
     }
 
@@ -291,6 +335,26 @@ export function buildAuthenticatedCloneUrl(opts: {
 function buildPublicCloneUrl(opts: MaterializeGitOpts): string | null {
   const built = buildAuthenticatedCloneUrl({ ...opts, token: undefined });
   return built?.url ?? null;
+}
+
+/**
+ * Checkout a branch name or object id (detached HEAD for SHAs).
+ * Ref must already be safe (assertSafeGitArg / assertGitObjectId).
+ */
+async function checkoutRef(
+  cwd: string,
+  rawRef: string,
+): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  const ref = assertSafeGitArg("ref", rawRef);
+  // Prefer modern switch --detach for object ids; fall back to checkout -f
+  if (/^[0-9a-f]{7,64}$/i.test(ref)) {
+    const sw = await runGit(cwd, ["switch", "--detach", ref]);
+    if (sw.ok) return sw;
+    return runGit(cwd, ["checkout", "--force", ref]);
+  }
+  const sw = await runGit(cwd, ["switch", "--force", ref]);
+  if (sw.ok) return sw;
+  return runGit(cwd, ["checkout", "--force", ref]);
 }
 
 function runGit(

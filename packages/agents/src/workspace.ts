@@ -120,6 +120,13 @@ export async function prepareSessionWorkspace(
     await mkdir(root, { recursive: true, mode: 0o700 });
     await mkdir(join(workdir, ".."), { recursive: true, mode: 0o700 });
     const provider = opts.cloneAuth.provider || job.scm?.provider || "github";
+    const headBranch =
+      (typeof (job as { headBranch?: string }).headBranch === "string"
+        ? (job as { headBranch?: string }).headBranch
+        : undefined) ||
+      (typeof job.metadata?.headBranch === "string"
+        ? job.metadata.headBranch
+        : undefined);
     const mat = await materializeGitWorkspace({
       provider,
       owner: ownerRepo.owner,
@@ -128,8 +135,9 @@ export async function prepareSessionWorkspace(
       token: opts.cloneAuth.token,
       host: opts.cloneAuth.host,
       headSha: job.headSha,
-      // Prefer head SHA; branch name only as clone ref when SHA unknown
-      headBranch: job.baseBranch,
+      // PR head branch (NOT base) — used when shallow clone lacks the head SHA
+      headBranch,
+      prNumber: job.prNumber ?? job.scm?.prNumber,
       force: true,
     });
     if (mat.ok) {

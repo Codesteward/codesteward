@@ -609,6 +609,29 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ paths }),
     }),
+  /**
+   * Republish findings to the PR for a finished gate session (no agent re-run).
+   */
+  publishSession: (
+    id: string,
+    opts?: { summaryOnly?: boolean; cloneForGrounding?: boolean },
+  ) =>
+    req<{
+      ok: boolean;
+      sessionId: string;
+      publishedReviewId?: string;
+      htmlUrl?: string;
+      inlineCount: number;
+      conversationCount?: number;
+      findingCount: number;
+      summaryOnly: boolean;
+      statusCommentId?: string;
+      error?: string;
+      session?: Session;
+    }>(`/v1/sessions/${id}/publish`, {
+      method: "POST",
+      body: JSON.stringify(opts ?? {}),
+    }),
   sessionFindings: (id: string) =>
     req<{ findings: Finding[] }>(`/v1/sessions/${id}/findings`),
   eventsUrl: (sessionId: string) => {

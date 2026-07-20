@@ -83,8 +83,8 @@ export function evaluateGate(input: {
       reviewEvent: "COMMENT",
       checkConclusion: shouldBlock ? "neutral" : "success",
       checkTitle: shouldBlock
-        ? "CodeSteward (advisory): issues reported"
-        : "CodeSteward (advisory): clear",
+        ? "Codesteward (advisory): issues reported"
+        : "Codesteward (advisory): clear",
       checkSummary: shouldBlock
         ? `Advisory mode — would block in enforce: ${reasons.join("; ") || "findings present"}. ${input.findingCount} finding(s).`
         : `Advisory mode — no blocking issues. ${input.findingCount} finding(s).`,
@@ -99,7 +99,7 @@ export function evaluateGate(input: {
       verdict: "unknown",
       reviewEvent: "COMMENT",
       checkConclusion: "failure",
-      checkTitle: "CodeSteward: incomplete / failed",
+      checkTitle: "Codesteward: incomplete / failed",
       checkSummary: reasons.join("; ") || "Review failed",
       blockedBy,
       advisory: false,
@@ -112,7 +112,7 @@ export function evaluateGate(input: {
       verdict: "request_changes",
       reviewEvent: "REQUEST_CHANGES",
       checkConclusion: "failure",
-      checkTitle: "CodeSteward: changes requested",
+      checkTitle: "Codesteward: changes requested",
       checkSummary: `${input.findingCount} finding(s). ${reasons.join("; ")}`,
       blockedBy,
       advisory: false,
@@ -125,7 +125,7 @@ export function evaluateGate(input: {
       verdict: "comment",
       reviewEvent: "COMMENT",
       checkConclusion: "success",
-      checkTitle: "CodeSteward: comments only",
+      checkTitle: "Codesteward: comments only",
       checkSummary: `${input.findingCount} non-blocking finding(s) posted as comments.`,
       blockedBy: [],
       advisory: false,
@@ -137,7 +137,7 @@ export function evaluateGate(input: {
     verdict: "approve",
     reviewEvent: "COMMENT",
     checkConclusion: "success",
-    checkTitle: "CodeSteward: passed",
+    checkTitle: "Codesteward: passed",
     checkSummary: "No findings above the severity floor / block threshold.",
     blockedBy: [],
     advisory: false,

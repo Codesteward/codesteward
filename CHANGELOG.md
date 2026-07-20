@@ -32,10 +32,36 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   - **GitHub `security_advisory`** (+ repository_advisory) — external GHSA → `security_advisory` outcome + soft pattern
     memory for coverage / FN; optional org promotion when severity is high.
   - Manifest defaults include `pull_request_review_thread` and `security_advisory`.
+- **PR status comments** — webhook-triggered reviews post a progress comment on the PR (“Reviewing / Re-reviewing now…”),
+  then update it on prepare failure, crash (exhausted retries), or successful completion so GitHub-only readers are not stuck.
+- **Republish to PR** — post findings for a finished gate session without re-running agents:
+  - `POST /v1/sessions/:id/publish` (reviewer+)
+  - Sessions UI drawer action **Republish to PR**
+  - Diff-aware inline comments + conversation fallbacks with full finding body (suggestion / proposed fix)
 
 ### Changed
 
+- **SCM publish** posts per-finding PR comments with UI-style bodies (severity, path, explanation, suggestion, proposed fix),
+  not only a summary review. Default cap raised to **40** findings (`STEW_COMMENT_CAP`).
+- **Display brand** in PR summary / gate check titles: **Codesteward** (not “CodeSteward”).
+- Gate review jobs carry `headBranch` for clone/checkout of the PR tip (not base).
+
 ### Fixed
+
+- **GitHub webhook redeliver** — same `X-GitHub-Delivery` id is reprocessed after `processed`/`failed` (or stale
+  `received`), instead of always returning `{ duplicate: true }` with no new session. Concurrent in-flight claims
+  still dedupe (~2 min, `STEW_WEBHOOK_CLAIM_STALE_MS`).
+- **Multi-install GitHub App token pick** — mint installation tokens for the **repo owner** (e.g. `scigility`) instead of a
+  stale connector `accountLogin: local` install. Applied to webhook SCM, clone auth, check runs, publish, and republish.
+  Fixes clone “Repository not found”, `getPullRequest` 404 on mentions, and `postReview` 404 after a successful review.
+- **Workspace clone checkout** — `git checkout --force -- <sha>` treated the SHA as a *pathspec* and failed with
+  `pathspec '…' did not match any file(s) known to git`. Checkout now uses `switch --detach` / `checkout -f <ref>`;
+  fetch fallbacks include `pull/<n>/head`, head branch, then object id.
+- **PR review comments 422 “Line could not be resolved”** — only attach inline comments to lines present in PR diff hunks;
+  other findings become conversation comments so they are not dropped when a batch fails.
+- **Stuck “Re-reviewing now” comment** — completion path now updates the status comment (and notes when SCM publish failed).
+- **Webhook delivery logging** — outcomes (ignored reason, session/job ids, publish errors) written to logs / delivery row
+  so redeliver forensics is not silent.
 
 ---
 

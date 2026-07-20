@@ -204,6 +204,19 @@ export class GitHubScm implements ScmProvider {
     return { id: String(res.id), htmlUrl: res.html_url };
   }
 
+  async updateComment(
+    owner: string,
+    repo: string,
+    commentId: string | number,
+    body: string,
+  ): Promise<PostedComment> {
+    const res = await this.api<{ id: number; html_url: string }>(
+      `/repos/${owner}/${repo}/issues/comments/${commentId}`,
+      { method: "PATCH", body: JSON.stringify({ body }) },
+    );
+    return { id: String(res.id), htmlUrl: res.html_url };
+  }
+
   /**
    * React on a PR (as issue) or an issue comment — e.g. 👀 when a webhook review starts.
    * Requires issues:write (or equivalent) on the GitHub App / token.

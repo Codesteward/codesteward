@@ -19,6 +19,106 @@ import { globalConnectorsStore } from "./connectors-store.js";
 
 export type RunJobLog = (msg: string, ...args: unknown[]) => void;
 
+/**
+ * Update the webhook progress comment after a job finishes so PR readers are not
+ * stuck on "Re-reviewing now…". Uses owner-matched SCM install (same as clone/publish).
+ */
+async function updatePrStatusCommentAfterJob(input: {
+  orgId: string;
+  job: ReviewJob;
+  sessionId: string;
+  preferredOwner?: string | null;
+  status: string;
+  verdict?: string;
+  findingCount: number;
+  publishedReviewId?: string;
+  error?: string;
+  statusCommentId?: string;
+  log: RunJobLog;
+}): Promise<void> {
+  if (process.env.STEW_PR_STATUS_COMMENT === "0") return;
+  const owner =
+    input.job.scm?.owner ??
+    input.preferredOwner ??
+    input.job.repoId?.split("/")[0];
+  const repo =
+    input.job.scm?.repo ?? input.job.repoId?.split("/")[1];
+  const prNumber =
+    input.job.scm?.prNumber ?? input.job.prNumber;
+  if (!owner || !repo || prNumber == null) return;
+
+  // Prefer latest store metadata (status comment is written by API after enqueue)
+  const latest = globalSessionStore.get(input.sessionId);
+  const existingId =
+    input.statusCommentId ||
+    (latest?.metadata?.statusCommentId as string | undefined) ||
+    (latest?.metadata?.prStatusCommentId as string | undefined);
+
+  try {
+    const {
+      upsertPrStatusComment,
+      reviewCompletedCommentBody,
+      reviewFailedCommentBody,
+    } = await import("./pr-status-comment.js");
+    const scm = await createOrgScmProvider(
+      input.orgId,
+      input.job.scm?.provider ?? "github",
+      owner,
+    );
+    const uiBase =
+      process.env.STEW_PUBLIC_URL ||
+      process.env.STEW_UI_PUBLIC_URL ||
+      process.env.STEW_API_PUBLIC_URL;
+    const failed =
+      input.status === "failed" ||
+      (Boolean(input.error) && input.status !== "completed" && input.status !== "completed_with_errors");
+    const body = failed
+      ? reviewFailedCommentBody({
+          sessionId: input.sessionId,
+          error: input.error ?? "review failed",
+          uiBase,
+        })
+      : reviewCompletedCommentBody({
+          sessionId: input.sessionId,
+          verdict: input.verdict,
+          findingCount: input.findingCount,
+          uiBase,
+          published: Boolean(input.publishedReviewId),
+          publishError:
+            !input.publishedReviewId && input.job.scm?.publish
+              ? "SCM publish did not return a review id (check worker logs for GitHub 404 / permissions)."
+              : undefined,
+        });
+    const posted = await upsertPrStatusComment({
+      scm,
+      owner,
+      repo,
+      prNumber,
+      body,
+      existingCommentId: existingId,
+    });
+    if (posted?.id) {
+      const cur = globalSessionStore.get(input.sessionId);
+      if (cur) {
+        globalSessionStore.update(input.sessionId, {
+          metadata: {
+            ...cur.metadata,
+            statusCommentId: posted.id,
+            prStatusCommentId: posted.id,
+          },
+        });
+      }
+      input.log(
+        `pr status comment updated id=${posted.id} session=${input.sessionId} published=${input.publishedReviewId ?? "-"}`,
+      );
+    }
+  } catch (err) {
+    input.log(
+      `pr status comment update failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 /** Human wall duration for worker logs (matches audit.timings units). */
 function formatDurationMs(ms: number | undefined | null): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return "?";
@@ -160,10 +260,43 @@ export async function runReviewJob(
   // Bind code plane: prefer SCM clone when credentials exist
   const scmProviderName =
     job.scm?.provider ?? session.scmProvider ?? process.env.SCM_PROVIDER ?? "github";
+  const { repoOwnerFromJob, pickGithubInstallation } = await import(
+    "./github-installation-pick.js"
+  );
+  const preferredGhAccount = repoOwnerFromJob({
+    owner: job.scm?.owner,
+    scmFullName: session.scmFullName,
+    repoId: job.repoId ?? session.repoId,
+  });
   let cloneAuth: { provider: string; token?: string; host?: string } | null = null;
   try {
     await globalConnectorsStore.ensureLoaded();
     const row = await globalConnectorsStore.getAsync(String(scmProviderName), orgId);
+    // Resolve best installation for this repo owner (multi-install orgs)
+    let preferredInstallationId: string | undefined;
+    if (scmProviderName === "github" || scmProviderName === "github_enterprise") {
+      try {
+        const { getTenancyStore } = await import("./tenancy/orgs.js");
+        const installs = await getTenancyStore().listInstallations(orgId);
+        const pick = pickGithubInstallation(
+          installs.map((i) => ({
+            provider: i.provider,
+            installationId: String(i.installationId ?? ""),
+            accountLogin: i.accountLogin,
+            status: i.status,
+          })),
+          preferredGhAccount,
+        );
+        preferredInstallationId = pick?.installationId;
+        if (pick) {
+          log(
+            `clone auth: preferred installation=${pick.installationId} account=${pick.accountLogin ?? "?"} for owner=${preferredGhAccount ?? "?"}`,
+          );
+        }
+      } catch {
+        /* optional */
+      }
+    }
     if (row?.config) {
       const { decryptConfigSecrets } = await import("./connectors-file.js");
       const plain = decryptConfigSecrets(row.config) as Record<string, unknown>;
@@ -177,12 +310,16 @@ export async function runReviewJob(
         undefined;
       if (token) cloneAuth = { provider: String(scmProviderName), token, host };
       // GitHub App on connector — mint installation token for git clone
+      // Prefer tenancy install matching repo owner over a stale connector installationId
+      const connectorInstallId =
+        preferredInstallationId ||
+        (typeof plain.installationId === "string" ? plain.installationId : undefined);
       if (
         !cloneAuth?.token &&
         (scmProviderName === "github" || scmProviderName === "github_enterprise") &&
         plain.appId &&
         (plain.privateKeyPem || plain.privateKey) &&
-        plain.installationId
+        connectorInstallId
       ) {
         const { getInstallationAccessToken } = await import(
           "@codesteward/scm"
@@ -193,14 +330,21 @@ export async function runReviewJob(
             privateKeyPem: String(plain.privateKeyPem ?? plain.privateKey),
             baseUrl: host,
           },
-          installationId: String(plain.installationId),
+          installationId: String(connectorInstallId),
         });
         cloneAuth = {
           provider: String(scmProviderName),
           token: inst.token,
           host,
         };
-        log(`clone auth: GitHub App installation token minted`);
+        log(
+          `clone auth: GitHub App installation token minted (installation=${connectorInstallId}${
+            preferredInstallationId &&
+            String(plain.installationId) !== preferredInstallationId
+              ? `; connector had ${plain.installationId}, using owner match`
+              : ""
+          })`,
+        );
       }
     }
     // Tenancy GitHub App (enterprise SoT)
@@ -209,18 +353,25 @@ export async function runReviewJob(
       (scmProviderName === "github" || scmProviderName === "github_enterprise")
     ) {
       try {
-        const scm = await createOrgScmProvider(orgId, scmProviderName);
+        const scm = await createOrgScmProvider(
+          orgId,
+          scmProviderName,
+          preferredGhAccount,
+        );
         // createScmProvider may hold token getter; prefer explicit mint via tenancy
         const { getTenancyStore } = await import("./tenancy/orgs.js");
         const store = getTenancyStore();
         const cfg = await store.getGitHubAppConfig(orgId);
         const creds = store.resolveGitHubAppCredentials(cfg);
         const installs = await store.listInstallations(orgId);
-        const gh = installs.find(
-          (i) =>
-            i.provider === "github" &&
-            i.status !== "suspended" &&
-            /^\d+$/.test(String(i.installationId ?? "")),
+        const gh = pickGithubInstallation(
+          installs.map((i) => ({
+            provider: i.provider,
+            installationId: String(i.installationId ?? ""),
+            accountLogin: i.accountLogin,
+            status: i.status,
+          })),
+          preferredGhAccount,
         );
         const installationId =
           gh?.installationId ?? process.env.GITHUB_APP_INSTALLATION_ID;
@@ -241,7 +392,9 @@ export async function runReviewJob(
             token: inst.token,
             host: creds.baseUrl ?? cfg?.baseUrl,
           };
-          log(`clone auth: tenancy GitHub App installation token minted`);
+          log(
+            `clone auth: tenancy GitHub App installation token minted (installation=${installationId} account=${gh?.accountLogin ?? "?"})`,
+          );
         }
         void scm;
       } catch (err) {
@@ -276,7 +429,25 @@ export async function runReviewJob(
   let prepared: Awaited<ReturnType<typeof prepareSessionWorkspace>>;
   try {
     prepared = await prepareSessionWorkspace({
-      job: { ...job, repoPath: job.repoPath ?? session.repoPath },
+      job: {
+        ...job,
+        repoPath: job.repoPath ?? session.repoPath,
+        // Prefer job headBranch; fall back to session so clone can fetch PR tip
+        headBranch: job.headBranch ?? session.headBranch,
+        prNumber: job.prNumber ?? session.prNumber ?? job.scm?.prNumber,
+        headSha: job.headSha ?? session.headSha,
+        baseSha: job.baseSha ?? session.baseSha,
+        baseBranch: job.baseBranch ?? session.baseBranch,
+        metadata: {
+          ...(job.metadata ?? {}),
+          headBranch:
+            job.headBranch ??
+            session.headBranch ??
+            (typeof job.metadata?.headBranch === "string"
+              ? job.metadata.headBranch
+              : undefined),
+        },
+      },
       sessionId: session.id,
       orgId,
       cloneAuth,
@@ -287,6 +458,49 @@ export async function runReviewJob(
     log(`workspace prepare failed: ${message}`);
     const failMeta = { ...session.metadata };
     delete failMeta.waitingForWorker;
+    // Surface failure on the PR so users who only watch GitHub see it
+    try {
+      const owner =
+        job.scm?.owner ??
+        session.scmFullName?.split("/")[0] ??
+        preferredGhAccount;
+      const repo =
+        job.scm?.repo ??
+        session.scmFullName?.split("/")[1] ??
+        job.repoId?.split("/")[1];
+      const prNumber = job.scm?.prNumber ?? job.prNumber ?? session.prNumber;
+      if (owner && repo && prNumber != null) {
+        const { createOrgScmProvider } = await import("./org-scm.js");
+        const {
+          upsertPrStatusComment,
+          reviewFailedCommentBody,
+        } = await import("./pr-status-comment.js");
+        const scm = await createOrgScmProvider(orgId, scmProviderName, owner);
+        const existingId =
+          (failMeta.statusCommentId as string | undefined) ||
+          (failMeta.prStatusCommentId as string | undefined);
+        const posted = await upsertPrStatusComment({
+          scm,
+          owner,
+          repo,
+          prNumber: Number(prNumber),
+          existingCommentId: existingId,
+          body: reviewFailedCommentBody({
+            sessionId: session.id,
+            error: message,
+            uiBase: process.env.STEW_PUBLIC_URL,
+          }),
+        });
+        if (posted?.id) failMeta.statusCommentId = posted.id;
+        log(
+          `pr status comment ${existingId ? "updated" : "posted"} for failure on ${owner}/${repo}#${prNumber}`,
+        );
+      }
+    } catch (commentErr) {
+      log(
+        `pr failure comment failed: ${commentErr instanceof Error ? commentErr.message : String(commentErr)}`,
+      );
+    }
     globalSessionStore.update(job.sessionId, {
       status: "failed",
       stage: "failed",
@@ -346,13 +560,17 @@ export async function runReviewJob(
   // In-progress Check Run so branch protection can require codesteward/gate
   if (job.scm?.publish && job.headSha && job.scm.owner && job.scm.repo) {
     try {
-      const scmEarly = await createOrgScmProvider(orgId, job.scm.provider ?? "github");
+      const scmEarly = await createOrgScmProvider(
+        orgId,
+        job.scm.provider ?? "github",
+        preferredGhAccount ?? job.scm.owner,
+      );
       if (scmEarly.postCheckRun) {
         await scmEarly.postCheckRun(job.scm.owner, job.scm.repo, {
           name: process.env.STEW_CHECK_NAME ?? "codesteward/gate",
           headSha: job.headSha,
           status: "in_progress",
-          title: "CodeSteward review running",
+          title: "Codesteward review running",
           summary: `Session ${job.sessionId} · mode ${job.mode}`,
         });
       }
@@ -452,7 +670,13 @@ export async function runReviewJob(
   const sandbox = createSandbox(process.env.STEW_SANDBOX_PROVIDER ?? "null");
   const scmProvider =
     job.scm?.provider ?? process.env.SCM_PROVIDER ?? "github";
-  const scm = await createOrgScmProvider(orgId, scmProvider);
+  // Must match clone install pick — without owner, multi-install orgs mint a token for
+  // the wrong account and postReview/postComment return GitHub 404 (Not Found).
+  const scm = await createOrgScmProvider(
+    orgId,
+    scmProvider,
+    preferredGhAccount ?? job.scm?.owner ?? null,
+  );
 
   const crossRepoLinks = allowCrossRepo
     ? globalSessionStore
@@ -537,6 +761,14 @@ export async function runReviewJob(
             (event.timeoutMs ? ` budget=${event.timeoutMs}ms` : "") +
             (event.error ? ` — ${String(event.error).slice(0, 160)}` : ""),
         );
+      }
+      // Surface SCM publish / graph / policy warnings in worker logs (not only session_events)
+      if (
+        event.type === "log" &&
+        (event.level === "error" || event.level === "warn") &&
+        event.message
+      ) {
+        log(`${job.sessionId} ${event.level}: ${String(event.message).slice(0, 400)}`);
       }
     },
     onCheckpoint: (sess) => {
@@ -649,6 +881,24 @@ export async function runReviewJob(
     log(
       `done job ${job.id} status=${result.session.status} findings=${result.findings.length} verdict=${result.session.verdict} publish=${result.publishedReviewId ?? "-"}`,
     );
+
+    // Flip the webhook "Re-reviewing now…" comment to finished (or note publish failure).
+    // Previously only start + prepare-fail paths touched this comment.
+    await updatePrStatusCommentAfterJob({
+      orgId,
+      job,
+      sessionId: job.sessionId,
+      preferredOwner: preferredGhAccount ?? job.scm?.owner,
+      status: result.session.status,
+      verdict: result.session.verdict,
+      findingCount: result.findings.length,
+      publishedReviewId: result.publishedReviewId,
+      error,
+      statusCommentId:
+        (meta.statusCommentId as string | undefined) ||
+        (meta.prStatusCommentId as string | undefined),
+      log,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const cur = globalSessionStore.get(job.sessionId);
@@ -658,20 +908,41 @@ export async function runReviewJob(
     // Finalize hung Check Run so branch protection is not stuck in_progress
     if (job.scm?.publish && job.headSha && job.scm.owner && job.scm.repo) {
       try {
-        const scmFail = await createOrgScmProvider(orgId, job.scm.provider ?? "github");
+        const scmFail = await createOrgScmProvider(
+          orgId,
+          job.scm.provider ?? "github",
+          preferredGhAccount ?? job.scm.owner,
+        );
         if (scmFail.postCheckRun) {
           await scmFail.postCheckRun(job.scm.owner, job.scm.repo, {
             name: process.env.STEW_CHECK_NAME ?? "codesteward/gate",
             headSha: job.headSha,
             status: "completed",
             conclusion: "failure",
-            title: "CodeSteward: review crashed",
+            title: "Codesteward: review crashed",
             summary: message.slice(0, 1000),
           });
         }
       } catch {
         /* best-effort */
       }
+    }
+
+    // Update stuck "Re-reviewing now" comment on crash when retries exhausted
+    if (exhausted) {
+      await updatePrStatusCommentAfterJob({
+        orgId,
+        job,
+        sessionId: job.sessionId,
+        preferredOwner: preferredGhAccount ?? job.scm?.owner,
+        status: "failed",
+        findingCount: 0,
+        error: message,
+        statusCommentId:
+          (cur?.metadata?.statusCommentId as string | undefined) ||
+          (cur?.metadata?.prStatusCommentId as string | undefined),
+        log,
+      });
     }
 
     globalSessionStore.update(job.sessionId, {

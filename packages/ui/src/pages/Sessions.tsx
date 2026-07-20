@@ -815,6 +815,35 @@ export function Sessions() {
     }
   }
 
+  /** Post findings to the PR again without re-running specialists. */
+  async function republishToPr() {
+    if (!selectedId || !selected) return;
+    setBusy(true);
+    try {
+      const res = await api.publishSession(selectedId, {
+        cloneForGrounding: true,
+      });
+      if (!res.ok) {
+        toast.error(res.error ?? "Republish failed");
+      } else {
+        toast.success(
+          res.summaryOnly
+            ? `Republished summary review (${res.findingCount} findings)`
+            : `Republished · ${res.inlineCount} inline` +
+                (res.conversationCount
+                  ? ` · ${res.conversationCount} conversation`
+                  : "") +
+                ` · ${res.findingCount} findings`,
+        );
+      }
+      await refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const unitProgress = useMemo(() => {
     if (!units.length) return 0;
     // Weight so a long-running single unit is not stuck at 0% forever.
@@ -830,6 +859,14 @@ export function Sessions() {
   }, [units]);
 
   const selected = detail ?? sessions.find((s) => s.id === selectedId) ?? null;
+  const canRepublish = Boolean(
+    selected &&
+      selected.mode === "gate" &&
+      selected.prNumber != null &&
+      (selected.status === "completed" ||
+        selected.status === "completed_with_errors" ||
+        selected.status === "failed"),
+  );
   // "No worker" only when queue will not drain: inline disabled AND unhealthy external,
   // or a session stuck in queued/pending after claim timeout.
   const workerMissing =
@@ -1285,6 +1322,17 @@ export function Sessions() {
             <button type="button" className="ghost" onClick={() => setSelectedId(null)}>
               Close
             </button>
+            {canRepublish && (
+              <button
+                type="button"
+                className="ghost"
+                disabled={busy}
+                title="Post findings to the PR again without re-running agents"
+                onClick={() => void republishToPr()}
+              >
+                Republish to PR
+              </button>
+            )}
             {selected && selected.status !== "running" && (
               <button type="button" className="primary" disabled={busy} onClick={() => void resume()}>
                 Resume

@@ -434,11 +434,33 @@ export class JobsRepository {
     deliveryId: string,
     patch: {
       status?: ScmDeliveryStatus;
-      sessionId?: string;
-      jobId?: string;
-      error?: string;
+      sessionId?: string | null;
+      jobId?: string | null;
+      error?: string | null;
+      /** When true, write NULL for omitted session/job/error (GitHub redeliver reset). */
+      clearFields?: boolean;
     } = {},
   ): Promise<void> {
+    if (patch.clearFields) {
+      await this.db.query(
+        `UPDATE scm_delivery_log SET
+           status = $2,
+           session_id = $3,
+           job_id = $4,
+           error = $5,
+           received_at = CASE WHEN $2 = 'received' THEN now() ELSE received_at END,
+           processed_at = CASE WHEN $2 = 'received' THEN NULL ELSE now() END
+         WHERE delivery_id = $1`,
+        [
+          deliveryId,
+          patch.status ?? "processed",
+          patch.sessionId ?? null,
+          patch.jobId ?? null,
+          patch.error ?? null,
+        ],
+      );
+      return;
+    }
     await this.db.query(
       `UPDATE scm_delivery_log SET
          status = COALESCE($2, status),

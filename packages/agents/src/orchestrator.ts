@@ -1638,6 +1638,7 @@ export class ReviewOrchestrator {
   private async publishScm(
     job: ReviewJob,
     findings: Array<{
+      id?: string;
       path?: string;
       startLine?: number;
       endLine?: number;
@@ -1649,6 +1650,7 @@ export class ReviewOrchestrator {
       existingCode?: string;
       suggestion?: string;
       suggestedFix?: string;
+      fingerprint?: string;
     }>,
     stats: HealPublishStats,
     sessionStatus: "completed" | "completed_with_errors" | "failed",
@@ -1657,7 +1659,7 @@ export class ReviewOrchestrator {
     const scm = this.deps.scm!;
     const { owner, repo, prNumber } = job.scm!;
     const policy = opts?.policy ?? this.deps.policy;
-    const commentCap = Number(process.env.STEW_COMMENT_CAP ?? 25);
+    const commentCap = Number(process.env.STEW_COMMENT_CAP ?? 40);
     const capped = capComments(
       findings as Array<{ severity: Severity } & (typeof findings)[0]>,
       commentCap,
@@ -1671,7 +1673,7 @@ export class ReviewOrchestrator {
       sessionStatus,
     }).replace(
       `**Findings:** ${findings.length}`,
-      `**Findings:** ${findings.length} (${capped.length} inline)`,
+      `**Findings:** ${findings.length} (up to ${capped.length} posted on the PR)`,
     );
     // Git trailer for attestation / audit (visible in PR summary body)
     const trailer = [
@@ -1690,66 +1692,6 @@ export class ReviewOrchestrator {
     });
     const summary = summaryBase + "\n\n### Change map\n\n" + diagram + trailer;
 
-    // Line re-location / grounding (OCR-style) before SCM publish
-    const { relocateLine } = await import("./line-relocate.js");
-    const fileCache = new Map<string, string>();
-    const { readFile } = await import("node:fs/promises");
-    const repoRoot = job.repoPath ?? process.cwd();
-    const { resolveInsideRoot } = await import("./path-jail.js");
-    const inline = [];
-    for (const f of capped) {
-      if (!f.path) continue;
-      let content = fileCache.get(f.path);
-      if (content === undefined) {
-        try {
-          const abs = resolveInsideRoot(repoRoot, f.path);
-          content = await readFile(abs, "utf8");
-          fileCache.set(f.path, content);
-        } catch {
-          content = "";
-          fileCache.set(f.path, content);
-        }
-      }
-      const existing =
-        f.evidence?.find((e) => e.snippet)?.snippet ??
-        f.evidence?.find((e) => e.summary)?.summary ??
-        f.existingCode;
-      const anchor = relocateLine(content || undefined, {
-        path: f.path,
-        startLine: f.startLine,
-        endLine: f.endLine,
-        existingCode: existing,
-        message: f.body ?? f.title,
-      });
-      if (!anchor.grounded && content) {
-        // Drop ungrounded inline comments when file exists (diff-grounded filter)
-        continue;
-      }
-      if (!anchor.startLine) continue;
-      const parts = [
-        `**[${f.severity}/${f.category ?? "other"}]** ${f.title}`,
-        "",
-        f.body ?? "",
-      ];
-      if (f.suggestion?.trim()) {
-        parts.push("", `**Suggestion:** ${f.suggestion.trim()}`);
-      }
-      if (f.suggestedFix?.trim()) {
-        parts.push(
-          "",
-          "**Proposed fix:**",
-          "```",
-          f.suggestedFix.trim(),
-          "```",
-        );
-      }
-      inline.push({
-        path: f.path,
-        line: anchor.startLine,
-        body: parts.join("\n").trim(),
-      });
-    }
-
     const gate = evaluateGate({
       policy,
       findings,
@@ -1764,14 +1706,64 @@ export class ReviewOrchestrator {
       summary +
       `\n\n### Merge gate\n\n- **Mode:** ${gate.advisory ? "advisory" : "enforce"}\n- **Check:** ${gate.checkTitle}\n- **Reasons:** ${gate.reasons.join("; ") || "—"}\n`;
 
-    const posted = await scm.postReview(
+    // Diff-aware inline comments + conversation fallbacks (full UI-style finding bodies).
+    // Never drop findings silently when GitHub rejects a line as outside the PR hunks.
+    const { publishFindingsToPullRequest } = await import(
+      "./scm-findings-publish.js"
+    );
+    const pub = await publishFindingsToPullRequest({
+      scm,
       owner,
       repo,
       prNumber,
-      summaryWithGate,
-      inline,
-      gate.reviewEvent,
-    );
+      headSha: job.headSha,
+      summaryBody: summaryWithGate,
+      reviewEvent: gate.reviewEvent,
+      findings: capped.map((f) => ({
+        id: (f as { id?: string }).id,
+        path: f.path,
+        startLine: f.startLine,
+        endLine: f.endLine,
+        title: f.title,
+        body: f.body,
+        severity: f.severity,
+        category: f.category,
+        suggestion: f.suggestion,
+        suggestedFix: f.suggestedFix,
+        existingCode: f.existingCode,
+        evidence: f.evidence,
+        fingerprint: (f as { fingerprint?: string }).fingerprint,
+      })),
+      commentCap,
+    });
+    for (const e of pub.errors) {
+      await this.emit({
+        type: "log",
+        sessionId: job.sessionId,
+        level: "warn",
+        message: `SCM findings publish: ${e}`,
+        ts: nowIso(),
+      });
+    }
+    await this.emit({
+      type: "log",
+      sessionId: job.sessionId,
+      level: "info",
+      message: `SCM findings: inline=${pub.inlineCount} conversation=${pub.conversationCount} skipped=${pub.skippedCount}`,
+      ts: nowIso(),
+    });
+    // Persist SCM comment ids so re-reviews can match threads later
+    for (const [fid, cid] of Object.entries(pub.postedByFindingId)) {
+      try {
+        await this.deps.findings.update(fid, { scmCommentId: cid });
+      } catch {
+        /* optional */
+      }
+    }
+    const posted = {
+      id: pub.reviewId ?? `conversation-only-${Date.now()}`,
+      htmlUrl: pub.reviewHtmlUrl,
+    };
 
     // Required Check Run for branch protection (GitHub App needs checks:write)
     if (scm.postCheckRun && job.headSha) {

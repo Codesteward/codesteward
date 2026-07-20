@@ -561,6 +561,48 @@ export function createApp() {
   });
 
   /**
+   * Republish findings to the PR for a finished gate session (no agent re-run).
+   * Updates the status comment and posts a new PR review summary (+ inline when grounded).
+   * Reviewer+ (same bar as starting reviews).
+   */
+  app.post("/v1/sessions/:id/publish", async (c) => {
+    const id = c.req.param("id");
+    const session = await globalSessionStore.getLive(id);
+    if (!session) return c.json({ error: "not found" }, 404);
+    try {
+      requireOrgMatch(session.orgId, c.get("orgId") ?? "local", c.get("authMode") as string);
+    } catch {
+      return c.json(orgForbidden(), 403);
+    }
+    // Viewers cannot mutate SCM
+    const role = String(c.get("role") ?? c.get("orgRole") ?? "reviewer").toLowerCase();
+    if (role === "viewer") {
+      return c.json(
+        { error: "forbidden", message: "reviewer or admin role required to republish to SCM" },
+        403,
+      );
+    }
+    let body: { summaryOnly?: boolean; cloneForGrounding?: boolean } = {};
+    try {
+      body = (await c.req.json()) as typeof body;
+    } catch {
+      body = {};
+    }
+    const { republishSessionToScm } = await import("./republish-scm.js");
+    const result = await republishSessionToScm({
+      sessionId: id,
+      orgId: c.get("orgId") ?? session.orgId ?? "local",
+      summaryOnly: body.summaryOnly === true,
+      cloneForGrounding: body.cloneForGrounding !== false,
+    });
+    if (!result.ok) {
+      return c.json(result, result.error?.includes("not found") ? 404 : 409);
+    }
+    const updated = await globalSessionStore.getLive(id);
+    return c.json({ ...result, session: updated });
+  });
+
+  /**
    * Resume an incomplete session from its last successful checkpoint.
    * Re-enqueues a job; worker runs orchestrator with resume=true.
    */
@@ -2551,23 +2593,63 @@ export function createApp() {
       headers[k] = v;
     });
     // VERIFY FIRST — all events including installation*
-    const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
+    // Collect candidate secrets (env + platform App + org connector). Mismatch is the usual 401.
+    const { resolveGithubWebhookSecrets } = await import("./github-webhook-secrets.js");
+    const secrets = await resolveGithubWebhookSecrets({
+      rawBody,
+      headers,
+    });
     const sig =
       headers["x-hub-signature-256"] ?? headers["X-Hub-Signature-256"];
     const strict =
       process.env.STEW_AUTH_STRICT === "1" ||
       process.env.NODE_ENV === "production" ||
       process.env.STEW_REQUIRE_WEBHOOK_SIG === "1";
-    if (!webhookSecret || webhookSecret === "dev-insecure") {
+    // Real secrets only (ignore empty / placeholder)
+    const realSecrets = secrets.filter((s) => s && s !== "dev-insecure");
+    let webhookSecret: string | undefined = realSecrets[0];
+    if (!realSecrets.length) {
       if (strict) {
         return c.json(
-          { error: "webhook_secret_required", message: "Set GITHUB_WEBHOOK_SECRET" },
+          {
+            error: "webhook_secret_required",
+            message:
+              "Set GITHUB_WEBHOOK_SECRET to the same Webhook secret as the GitHub App (Settings → Webhook). Not the client secret.",
+          },
           500,
         );
       }
+      // Dev: no secret configured — accept deliveries (GitHub may still send a signature).
+      console.warn(
+        "[webhooks/github] no GITHUB_WEBHOOK_SECRET / connector webhookSecret — skipping HMAC verify (dev only). " +
+          "If you later set a secret, it must match the GitHub App Webhook secret exactly.",
+      );
+      webhookSecret = "dev-insecure";
     } else {
-      if (!verifyGitHubSignature(rawBody, sig, webhookSecret)) {
-        return c.json({ error: "invalid signature" }, 401);
+      let ok = false;
+      for (const s of realSecrets) {
+        if (verifyGitHubSignature(rawBody, sig, s)) {
+          ok = true;
+          webhookSecret = s;
+          break;
+        }
+      }
+      if (!ok) {
+        console.warn(
+          "[webhooks/github] invalid signature — a local secret IS configured but does not match GitHub's Webhook secret. " +
+            `tried=${realSecrets.length} source(s), hasSigHeader=${Boolean(sig)}, bodyBytes=${rawBody.length}. ` +
+            "Check: env GITHUB_WEBHOOK_SECRET, Platform GitHub App webhookSecret, org connector webhookSecret. " +
+            "GitHub App → Settings → Webhook → secret must match one of those (not Client secret).",
+        );
+        return c.json(
+          {
+            error: "invalid signature",
+            message:
+              "HMAC mismatch: this API process has a webhook secret set, but it does not match the GitHub App Webhook secret. " +
+              "Align them, or unset GITHUB_WEBHOOK_SECRET (and connector webhookSecret) for local dev without verification.",
+          },
+          401,
+        );
       }
     }
     // Durable delivery claim (idempotency)
@@ -2584,7 +2666,23 @@ export function createApp() {
       });
       ghDeliveryId = claim.deliveryId;
       if (claim.duplicate) {
-        return c.json({ ok: true, duplicate: true, deliveryId: ghDeliveryId }, 200);
+        console.info(
+          `[webhooks/github] duplicate delivery=${ghDeliveryId} priorStatus=${claim.priorStatus ?? "?"} (in-flight; not reprocessing)`,
+        );
+        return c.json(
+          {
+            ok: true,
+            duplicate: true,
+            deliveryId: ghDeliveryId,
+            priorStatus: claim.priorStatus,
+          },
+          200,
+        );
+      }
+      if (claim.reprocess) {
+        console.info(
+          `[webhooks/github] reprocessing delivery=${ghDeliveryId} priorStatus=${claim.priorStatus ?? "?"}`,
+        );
       }
     }
     // Handle installation lifecycle after verify
@@ -2628,16 +2726,23 @@ export function createApp() {
         return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
       }
     }
-    // Prefer org-scoped GitHub credentials (installation → product org)
+    // Prefer org-scoped GitHub credentials (installation → product org).
+    // Pass repository owner so multi-install orgs mint the matching installation
+    // token (e.g. scigility vs a personal "local" install) — required for
+    // getPullRequest on issue_comment mentions and for clone auth later.
     let scm: InstanceType<typeof GitHubScm>;
     try {
       const { createOrgScmProvider } = await import("./org-scm.js");
       const { getTenancyStore } = await import("./tenancy/orgs.js");
       let webhookOrgId = "local";
+      let repoOwner: string | undefined;
       try {
         const payloadPeek = JSON.parse(rawBody) as {
           installation?: { id?: number };
-          repository?: { owner?: { login?: string } };
+          repository?: {
+            owner?: { login?: string } | string;
+            full_name?: string;
+          };
         };
         const instId = payloadPeek.installation?.id;
         if (instId) {
@@ -2647,12 +2752,31 @@ export function createApp() {
           );
           if (inst?.orgId) webhookOrgId = inst.orgId;
         }
+        const ownerField = payloadPeek.repository?.owner;
+        if (typeof ownerField === "string" && ownerField.trim()) {
+          repoOwner = ownerField.trim();
+        } else if (
+          ownerField &&
+          typeof ownerField === "object" &&
+          typeof ownerField.login === "string"
+        ) {
+          repoOwner = ownerField.login.trim();
+        } else if (payloadPeek.repository?.full_name?.includes("/")) {
+          repoOwner = payloadPeek.repository.full_name.split("/")[0];
+        }
       } catch {
         /* ignore */
       }
-      scm = (await createOrgScmProvider(webhookOrgId, "github")) as InstanceType<
-        typeof GitHubScm
-      >;
+      scm = (await createOrgScmProvider(
+        webhookOrgId,
+        "github",
+        repoOwner,
+      )) as InstanceType<typeof GitHubScm>;
+      if (repoOwner) {
+        console.info(
+          `[webhooks/github] scm install pick org=${webhookOrgId} preferredOwner=${repoOwner}`,
+        );
+      }
     } catch {
       scm = new GitHubScm();
     }
@@ -2704,6 +2828,42 @@ export function createApp() {
             "./github-outcome-hooks.js"
           );
           return handleSecurityAdvisoryOutcome(input);
+        },
+        onReviewStartedComment: async (input) => {
+          const {
+            upsertPrStatusComment,
+            reviewStartedCommentBody,
+          } = await import("./pr-status-comment.js");
+          const { createOrgScmProvider } = await import("./org-scm.js");
+          const orgId = input.orgId ?? "local";
+          const scm = await createOrgScmProvider(orgId, "github", input.owner);
+          const posted = await upsertPrStatusComment({
+            scm,
+            owner: input.owner,
+            repo: input.repo,
+            prNumber: input.prNumber,
+            body: reviewStartedCommentBody({
+              sessionId: input.sessionId,
+              action: input.action,
+            }),
+          });
+          if (posted?.id) {
+            try {
+              const cur = globalSessionStore.get(input.sessionId);
+              if (cur) {
+                globalSessionStore.update(input.sessionId, {
+                  metadata: {
+                    ...cur.metadata,
+                    statusCommentId: posted.id,
+                    prStatusCommentId: posted.id,
+                  },
+                });
+              }
+            } catch {
+              /* optional */
+            }
+          }
+          return { commentId: posted?.id };
         },
         triageComment: async (input) => {
           const {
@@ -2829,6 +2989,7 @@ export function createApp() {
             metadata: {
               webhook: true,
               ...(session.metadata ?? {}),
+              ...(session.headBranch ? { headBranch: session.headBranch } : {}),
               ...(riskTier !== session.riskTier
                 ? { thoroughBlocked: true, thoroughBlockReason: "org_license_required" }
                 : {}),
@@ -2838,6 +2999,10 @@ export function createApp() {
           const enqueued = await globalQueue.enqueue({
             ...job,
             sessionId: created.id,
+            headBranch: job.headBranch ?? session.headBranch,
+            headSha: job.headSha ?? session.headSha,
+            baseBranch: job.baseBranch ?? session.baseBranch,
+            prNumber: job.prNumber ?? session.prNumber,
             riskTier,
             depth,
           });
@@ -2848,11 +3013,38 @@ export function createApp() {
       rawBody,
     );
     const { markDeliveryProcessed } = await import("./webhook-delivery.js");
+    const sessionId =
+      typeof result.body?.sessionId === "string" ? result.body.sessionId : undefined;
+    const jobId =
+      typeof result.body?.jobId === "string" ? result.body.jobId : undefined;
+    const ignored = Boolean(result.body && (result.body as { ignored?: boolean }).ignored);
+    const reason =
+      typeof (result.body as { reason?: unknown })?.reason === "string"
+        ? String((result.body as { reason: string }).reason)
+        : typeof (result.body as { intent?: unknown })?.intent === "string"
+          ? `intent:${(result.body as { intent: string }).intent}`
+          : undefined;
+    // Always log outcome — silent "processed" with no session is the common redeliver surprise
+    console.info(
+      `[webhooks/github] outcome delivery=${ghDeliveryId} ok=${result.ok} status=${result.status}` +
+        ` session=${sessionId ?? "-"} job=${jobId ?? "-"}` +
+        (ignored ? ` ignored=${reason ?? "true"}` : "") +
+        (!result.ok
+          ? ` error=${JSON.stringify(result.body).slice(0, 240)}`
+          : !sessionId && !ignored
+            ? ` body=${JSON.stringify(result.body).slice(0, 240)}`
+            : ""),
+    );
     await markDeliveryProcessed(ghDeliveryId, {
       status: result.ok ? "processed" : "failed",
-      error: result.ok ? undefined : JSON.stringify(result.body).slice(0, 500),
-      sessionId: typeof result.body?.sessionId === "string" ? result.body.sessionId : undefined,
-      jobId: typeof result.body?.jobId === "string" ? result.body.jobId : undefined,
+      // Persist ignore/fail detail so redeliver forensics is not log-only
+      error: result.ok
+        ? ignored || !sessionId
+          ? JSON.stringify(result.body).slice(0, 500)
+          : undefined
+        : JSON.stringify(result.body).slice(0, 500),
+      sessionId,
+      jobId,
     }).catch(() => undefined);
     return c.json(result.body, result.status as 200 | 202 | 400 | 401);
   });

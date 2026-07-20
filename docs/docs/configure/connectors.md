@@ -12,8 +12,49 @@ Prefer a **GitHub App** (org connector or platform-enforced shared App).
 
 | Setting | Value |
 |---------|--------|
-| **Webhook URL** | `https://<public-api>/v1/webhooks/github` |
-| **Webhook secret** | Same value stored in the connector / env |
+| **Webhook URL** | `https://<public-api>/v1/webhooks/github` (API host, **not** the UI port) |
+| **Webhook secret** | **Exact** same string as GitHub App → **Webhook secret** (not Client secret / not App ID) |
+
+#### 401 Unauthorized on webhook deliveries
+
+A **401** means the API **did** find a webhook secret and the HMAC failed.  
+If **no** secret is configured and you are not in production/strict mode, the API **skips** verification (even if GitHub sends a signature).
+
+| Local secret? | Mode | Result |
+|---------------|------|--------|
+| None / empty | dev | Accept (log: skipping HMAC) |
+| None | production / `STEW_AUTH_STRICT=1` | **500** `webhook_secret_required` |
+| Set, matches GitHub | any | **200/202** |
+| Set, **mismatch** | any | **401** `invalid signature` |
+
+So “I never set a secret” + **401** usually means a secret **is** present for the **product org** that owns the App / installation:
+
+1. Shell / IDE / Docker: `GITHUB_WEBHOOK_SECRET` in the **same** process that runs the API  
+2. **Org GitHub App** created via Connectors / manifest (`saveGitHubAppConfig`) — stored under `STEW_DATA_DIR` as `org_scm_secrets.json` / `scm_apps.json` (per **org id**, often not the string `"local"` if you created a real org)  
+3. Org **Connectors → GitHub → webhookSecret**  
+4. **Platform** GitHub App config `webhookSecret`  
+5. Manifest create: GitHub returns `webhook_secret` once and Codesteward **persists it on the org App** — you may never have typed it, but it is still configured
+
+The API verifies against **all** of those candidates (env → platform → installation’s org App → `local` org App → connectors). A mismatch means GitHub’s current App webhook secret ≠ any of those stored values (e.g. you rotated the secret on github.com without updating Codesteward).
+
+**Fix options**
+
+**A. Match secrets (recommended even for local)**  
+1. GitHub App → **Webhook** → copy **Webhook secret** (not Client secret).  
+2. `export GITHUB_WEBHOOK_SECRET='…'` and **restart API**.  
+3. Redeliver the event.
+
+**B. True “no secret” local dev**  
+1. Unset `GITHUB_WEBHOOK_SECRET` everywhere the API process gets env from.  
+2. Clear connector / platform `webhookSecret` if set.  
+3. Confirm API log on delivery: `skipping HMAC verify (dev only)`.  
+4. Do **not** set `NODE_ENV=production` or `STEW_AUTH_STRICT=1` without a matching secret.
+
+Also:
+
+- Point ngrok at the **API** (e.g. `8081`), not UI (`8080`).  
+- URL path: `https://<ngrok>/v1/webhooks/github`.  
+- GitHub “Recent Deliveries” response body shows `invalid signature` vs `webhook_secret_required`.
 
 ### Webhook events (subscribe)
 

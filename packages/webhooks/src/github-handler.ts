@@ -68,6 +68,18 @@ export interface GitHubWebhookDeps {
     orgId: string;
   }) => Promise<CommentTriageHookResult>;
   /**
+   * Post "Re-reviewing now…" PR comment and persist comment id on the session
+   * so the worker can update it on failure/success.
+   */
+  onReviewStartedComment?: (input: {
+    owner: string;
+    repo: string;
+    prNumber: number;
+    sessionId: string;
+    action?: string;
+    orgId?: string;
+  }) => Promise<{ commentId?: string } | void>;
+  /**
    * Review thread resolved/unresolved → finding outcome (soft accept/reopen).
    * Wired by API to map comment ids → findings.scmCommentId.
    */
@@ -194,12 +206,18 @@ export async function handleGitHubWebhook(
   }
 
   const result = await enqueueFromPr(deps, payload, delivery, action);
-  // SCM-only signal: react on the PR when a repo-triggered review was accepted
+  // SCM-only signal: react + status comment when a repo-triggered review was accepted
   if (result.ok && result.status === 202) {
+    const sid =
+      typeof result.body.sessionId === "string" ? result.body.sessionId : undefined;
+    const orgFromBody =
+      typeof result.body.orgId === "string" ? result.body.orgId : undefined;
     await ackWebhookReviewStarted(deps, {
       owner: payload.repository.owner.login,
       repo: payload.repository.name,
       prNumber: payload.pull_request.number,
+      sessionId: sid,
+      orgId: orgFromBody,
       kind: "pull_request",
       action,
     });
@@ -365,12 +383,17 @@ async function handleIssueCommentMention(
     orgId: productOrgId,
   });
   if (result.ok && result.status === 202) {
+    const sid =
+      typeof result.body.sessionId === "string" ? result.body.sessionId : undefined;
     await ackWebhookReviewStarted(deps, {
       owner,
       repo,
       prNumber,
       kind: "mention",
       commentId: payload.comment?.id,
+      action: "mentioned",
+      sessionId: sid,
+      orgId: productOrgId,
     });
   }
   return result;
@@ -382,6 +405,7 @@ async function handleIssueCommentMention(
  *
  * - @mention → 👀 on the triggering comment
  * - PR open/sync/… → 👀 on the PR itself
+ * - Always try a progress PR comment ("Re-reviewing now…") when sessionId known
  */
 async function ackWebhookReviewStarted(
   deps: GitHubWebhookDeps,
@@ -392,25 +416,44 @@ async function ackWebhookReviewStarted(
     kind: "mention" | "pull_request";
     commentId?: number | string;
     action?: string;
+    sessionId?: string;
+    orgId?: string;
   },
 ): Promise<void> {
-  if (process.env.STEW_PR_REACT === "0" || process.env.STEW_PR_REACT === "false") {
-    return;
-  }
-  const react = deps.scm.createReaction?.bind(deps.scm);
-  if (!react) return;
-  try {
-    if (opts.kind === "mention" && opts.commentId != null) {
-      await react(opts.owner, opts.repo, { commentId: opts.commentId }, "eyes");
-    } else {
-      // PR-level reaction (GitHub treats PRs as issues for this API)
-      await react(opts.owner, opts.repo, { issueNumber: opts.prNumber }, "eyes");
+  if (process.env.STEW_PR_REACT !== "0" && process.env.STEW_PR_REACT !== "false") {
+    const react = deps.scm.createReaction?.bind(deps.scm);
+    if (react) {
+      try {
+        if (opts.kind === "mention" && opts.commentId != null) {
+          await react(opts.owner, opts.repo, { commentId: opts.commentId }, "eyes");
+        } else {
+          await react(opts.owner, opts.repo, { issueNumber: opts.prNumber }, "eyes");
+        }
+      } catch (err) {
+        console.warn(
+          "[webhooks] start reaction failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
-  } catch (err) {
-    console.warn(
-      "[webhooks] start reaction failed:",
-      err instanceof Error ? err.message : err,
-    );
+  }
+
+  if (opts.sessionId && deps.onReviewStartedComment) {
+    try {
+      await deps.onReviewStartedComment({
+        owner: opts.owner,
+        repo: opts.repo,
+        prNumber: opts.prNumber,
+        sessionId: opts.sessionId,
+        action: opts.action,
+        orgId: opts.orgId,
+      });
+    } catch (err) {
+      console.warn(
+        "[webhooks] start status comment failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 }
 
@@ -491,6 +534,7 @@ async function enqueueFromPr(
       baseSha,
       headSha,
       baseBranch,
+      headBranch,
       prNumber,
       riskTier,
       depth: "normal",
@@ -505,7 +549,9 @@ async function enqueueFromPr(
         prNumber,
         publish: true,
       },
-      metadata: Object.keys(metadata).length ? metadata : undefined,
+      metadata: Object.keys(metadata).length
+        ? { ...metadata, headBranch }
+        : { headBranch },
     },
   });
 
@@ -520,6 +566,7 @@ async function enqueueFromPr(
       repo: fullName,
       sessionId: result.sessionId,
       jobId: result.jobId,
+      orgId: productOrgId,
       files: paths.length,
       trigger: action === "mentioned" ? "mention" : "pull_request",
       reviewFocus: extra?.reviewFocus,

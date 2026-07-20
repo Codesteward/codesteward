@@ -36,6 +36,8 @@ export const ReviewJobSchema = z.object({
   baseSha: z.string().optional(),
   headSha: z.string().optional(),
   baseBranch: z.string().optional(),
+  /** PR / review head branch (not base). Used for SCM clone when SHA is not in shallow history. */
+  headBranch: z.string().optional(),
   prNumber: z.number().optional(),
   riskTier: RiskTierSchema.default("full"),
   depth: ReviewDepthSchema.default("normal"),

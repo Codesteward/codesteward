@@ -14,7 +14,13 @@ export async function claimDelivery(input: {
   orgId?: string;
   repoId?: string;
   rawBody?: string;
-}): Promise<{ accepted: boolean; duplicate: boolean; deliveryId: string }> {
+}): Promise<{
+  accepted: boolean;
+  duplicate: boolean;
+  reprocess: boolean;
+  deliveryId: string;
+  priorStatus?: string;
+}> {
   const id =
     input.deliveryId ||
     createHash("sha256")
@@ -41,9 +47,44 @@ export async function claimDelivery(input: {
           status: "received",
         });
         if (!result.isNew) {
-          return { accepted: false, duplicate: true, deliveryId: id };
+          const prior = result.log.status;
+          // GitHub "Redeliver" reuses the same delivery id. Allow re-run after
+          // we already finished (processed/failed). Only skip concurrent in-flight
+          // claims — unless the row is stale (crash before markProcessed).
+          const staleMs = Number(process.env.STEW_WEBHOOK_CLAIM_STALE_MS ?? 120_000);
+          const receivedAt = result.log.receivedAt
+            ? new Date(result.log.receivedAt).getTime()
+            : 0;
+          const ageMs = receivedAt ? Date.now() - receivedAt : Number.POSITIVE_INFINITY;
+          const inFlightFresh = prior === "received" && ageMs < staleMs;
+          if (inFlightFresh) {
+            return {
+              accepted: false,
+              duplicate: true,
+              reprocess: false,
+              deliveryId: id,
+              priorStatus: prior,
+            };
+          }
+          await db.jobs.markDeliveryProcessed(id, {
+            status: "received",
+            error: null,
+            sessionId: null,
+            jobId: null,
+            clearFields: true,
+          });
+          console.info(
+            `[webhook-delivery] reprocess delivery=${id} priorStatus=${prior} ageMs=${Number.isFinite(ageMs) ? Math.round(ageMs) : "?"} (GitHub redeliver)`,
+          );
+          return {
+            accepted: true,
+            duplicate: false,
+            reprocess: true,
+            deliveryId: id,
+            priorStatus: prior,
+          };
         }
-        return { accepted: true, duplicate: false, deliveryId: id };
+        return { accepted: true, duplicate: false, reprocess: false, deliveryId: id };
       }
     }
   } catch (err) {
@@ -65,8 +106,36 @@ export async function claimDelivery(input: {
   } catch {
     rows = [];
   }
-  if (rows.some((r) => r.id === id && r.provider === input.provider)) {
-    return { accepted: false, duplicate: true, deliveryId: id };
+  const existing = rows.find((r) => r.id === id && r.provider === input.provider);
+  if (existing) {
+    const prior = existing.status ?? "processed";
+    const staleMs = Number(process.env.STEW_WEBHOOK_CLAIM_STALE_MS ?? 120_000);
+    const ageMs = existing.at
+      ? Date.now() - new Date(existing.at).getTime()
+      : Number.POSITIVE_INFINITY;
+    const inFlightFresh = prior === "received" && ageMs < staleMs;
+    if (inFlightFresh) {
+      return {
+        accepted: false,
+        duplicate: true,
+        reprocess: false,
+        deliveryId: id,
+        priorStatus: prior,
+      };
+    }
+    existing.status = "received";
+    existing.at = new Date().toISOString();
+    await writeFile(file, JSON.stringify(rows, null, 2), "utf8");
+    console.info(
+      `[webhook-delivery] reprocess delivery=${id} priorStatus=${prior} (file store)`,
+    );
+    return {
+      accepted: true,
+      duplicate: false,
+      reprocess: true,
+      deliveryId: id,
+      priorStatus: prior,
+    };
   }
   rows.push({
     id,
@@ -77,12 +146,18 @@ export async function claimDelivery(input: {
   });
   if (rows.length > 5000) rows = rows.slice(-5000);
   await writeFile(file, JSON.stringify(rows, null, 2), "utf8");
-  return { accepted: true, duplicate: false, deliveryId: id };
+  return { accepted: true, duplicate: false, reprocess: false, deliveryId: id };
 }
 
 export async function markDeliveryProcessed(
   deliveryId: string,
-  opts?: { status?: "processed" | "failed"; error?: string; sessionId?: string; jobId?: string },
+  opts?: {
+    status?: "processed" | "failed" | "received";
+    error?: string | null;
+    sessionId?: string | null;
+    jobId?: string | null;
+    clearFields?: boolean;
+  },
 ): Promise<void> {
   try {
     const { isDatabaseEnabled, tryCreateStewardDb } = await import("@codesteward/db");
@@ -94,6 +169,7 @@ export async function markDeliveryProcessed(
           error: opts?.error,
           sessionId: opts?.sessionId,
           jobId: opts?.jobId,
+          clearFields: opts?.clearFields,
         });
         return;
       }

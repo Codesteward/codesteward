@@ -136,6 +136,13 @@ export interface ScmProvider {
     number: number,
     body: string,
   ): Promise<PostedComment>;
+  /** Update an existing issue/PR comment body (e.g. progress → failed). */
+  updateComment?(
+    owner: string,
+    repo: string,
+    commentId: string | number,
+    body: string,
+  ): Promise<PostedComment>;
   /**
    * Upload SARIF to GitHub Code Scanning so findings appear under Security → Code scanning.
    * GitHub only; requires code scanning enabled and token with `security_events: write`.

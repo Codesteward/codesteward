@@ -136,28 +136,23 @@ export function connectorConfigToScmOpts(
  */
 async function githubAppOptsFromTenancy(
   orgId: string,
+  preferredAccountLogin?: string | null,
 ): Promise<CreateScmOptions | null> {
   try {
     const { getTenancyStore } = await import("./tenancy/orgs.js");
+    const { pickGithubInstallation } = await import("./github-installation-pick.js");
     const store = getTenancyStore();
     const installs = await store.listInstallations(orgId);
-    // Prefer real numeric installation IDs; skip pending/state placeholders
-    const gh =
-      installs.find(
-        (i) =>
-          i.provider === "github" &&
-          i.status !== "suspended" &&
-          i.status !== "deleted" &&
-          /^\d+$/.test(String(i.installationId ?? "")),
-      ) ??
-      installs.find(
-        (i) =>
-          i.provider === "github" &&
-          i.status !== "suspended" &&
-          i.status !== "deleted" &&
-          i.installationId &&
-          !String(i.installationId).startsWith("pending:"),
-      );
+    // Prefer installation whose accountLogin matches the target GitHub org/user
+    const gh = pickGithubInstallation(
+      installs.map((i) => ({
+        provider: i.provider,
+        installationId: String(i.installationId ?? ""),
+        accountLogin: i.accountLogin,
+        status: i.status,
+      })),
+      preferredAccountLogin,
+    );
     const installationId =
       gh?.installationId ?? process.env.GITHUB_APP_INSTALLATION_ID;
 
@@ -222,10 +217,12 @@ function hasAuth(opts: CreateScmOptions): boolean {
 
 /**
  * Create an SCM provider using org-scoped connector + GitHub App credentials.
+ * @param preferredAccountLogin - GitHub org/user that owns the repo (picks matching installation)
  */
 export async function createOrgScmProvider(
   orgId: string,
   providerName?: string,
+  preferredAccountLogin?: string | null,
 ): Promise<ScmProvider> {
   const provider = normalizeProvider(
     providerName ?? process.env.SCM_PROVIDER ?? "github",
@@ -279,7 +276,16 @@ export async function createOrgScmProvider(
 
   // GitHub App (platform-enforced or org tenancy) — prefer over connector PAT when complete
   if (provider === "github" || provider === "github_enterprise") {
-    const appOpts = await githubAppOptsFromTenancy(orgId);
+    const connectorAccount =
+      typeof (row?.config as { accountLogin?: string } | undefined)?.accountLogin ===
+      "string"
+        ? (row?.config as { accountLogin?: string }).accountLogin
+        : undefined;
+    // Prefer tenancy install matching repo owner over a stale connector installationId
+    const appOpts = await githubAppOptsFromTenancy(
+      orgId,
+      preferredAccountLogin ?? connectorAccount,
+    );
     if (appOpts?.githubApp) {
       opts = {
         ...opts,
