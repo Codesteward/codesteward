@@ -22,7 +22,7 @@ The generic [Docker Marketplace app](https://marketplace.digitalocean.com/apps/d
 
 ```bash
 cd deploy/cloud/do
-export IMAGE_TAG=1.3.0   # product image tag
+export IMAGE_TAG=1.4.0   # product image tag
 # optional: export DOMAIN=steward.example.com ACME_EMAIL=you@example.com
 # optional: export REGION=nyc3 SIZE=s-2vcpu-4gb DROPLET_NAME=codesteward
 bash ./deploy.sh

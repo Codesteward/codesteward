@@ -10,7 +10,7 @@ if command -v curl >/dev/null; then
 fi
 export DOMAIN="${DOMAIN:-}"
 export ACME_EMAIL="${ACME_EMAIL:-}"
-export IMAGE_TAG="${IMAGE_TAG:-1.3.0}"
+export IMAGE_TAG="${IMAGE_TAG:-1.4.0}"
 if [[ -x "$INSTALL_DIR/deploy/cloud/first-boot.sh" ]]; then
   bash "$INSTALL_DIR/deploy/cloud/first-boot.sh"
 else

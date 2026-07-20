@@ -19,7 +19,7 @@ https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/quic
 | `InstanceType` | Default `t3.large` (8 GB) |
 | `Domain` | Optional — enables Let's Encrypt via nginx edge |
 | `AcmeEmail` | Used when Domain is set |
-| `ImageTag` | Default `1.3.0` |
+| `ImageTag` | Default `1.4.0` |
 | `AllowedCIDR` | Restrict `0.0.0.0/0` for real use |
 
 ## After create

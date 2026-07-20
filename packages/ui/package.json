@@ -1,6 +1,6 @@
 {
   "name": "@codesteward/ui",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "CodeSteward Review product UI",
   "author": "bitkaio LLC",
   "type": "module",

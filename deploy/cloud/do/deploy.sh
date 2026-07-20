@@ -15,7 +15,7 @@ SIZE="${SIZE:-s-2vcpu-4gb}"
 IMAGE="${IMAGE:-ubuntu-24-04-x64}"
 DOMAIN="${DOMAIN:-}"
 ACME_EMAIL="${ACME_EMAIL:-}"
-IMAGE_TAG="${IMAGE_TAG:-1.3.0}"
+IMAGE_TAG="${IMAGE_TAG:-1.4.0}"
 GIT_REF="${GIT_REF:-main}"
 
 command -v doctl >/dev/null 2>&1 || {

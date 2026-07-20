@@ -55,7 +55,7 @@ Requires a **paid cloud account**. Resources bill to that account.
 
 ```bash
 sudo bash -c '
-  export IMAGE_TAG=1.3.0
+  export IMAGE_TAG=1.4.0
   # optional: DOMAIN=steward.example.com
   git clone --depth 1 https://github.com/Codesteward/codesteward.git /opt/codesteward
   bash /opt/codesteward/deploy/cloud/first-boot.sh

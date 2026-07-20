@@ -11,6 +11,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+### Changed
+
+### Fixed
+
+---
+
+## [1.4.0] — 2026-07-20
+
+Indirect eval / outcome loop, reliable GitHub App multi-install gate reviews, PR status + republish, and per-finding SCM comments.
+
+### Added
+
 - **Automatic / indirect eval (outcome loop)** — learn from what users and merges actually do:
   - Merge webhooks (GitHub `closed`+merged, GitLab `merge`) enqueue `jobKind=pr_outcome` (no agent pipeline)
   - Classifies findings: accepted / fixed / thumbs_up / false_positive / dismissed / unaddressed_at_merge

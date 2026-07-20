@@ -1,6 +1,6 @@
 {
   "name": "@codesteward/db",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Postgres data layer for CodeSteward Review (sessions, findings, jobs, learning)",
   "type": "module",
   "main": "./dist/index.js",
