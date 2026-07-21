@@ -19,6 +19,7 @@ import { Prompts } from "./pages/Prompts";
 import { PullRequests } from "./pages/PullRequests";
 import { Reports } from "./pages/Reports";
 import { Sessions } from "./pages/Sessions";
+import { TraceExplorer } from "./pages/TraceExplorer";
 import { AccountSettings } from "./pages/AccountSettings";
 import { OrgSettings } from "./pages/OrgSettings";
 import { PlatformSettings } from "./pages/PlatformSettings";
@@ -158,6 +159,7 @@ export function App() {
       >
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="sessions" element={<Sessions />} />
+        <Route path="traces" element={<TraceExplorer />} />
         <Route path="reports" element={<Reports />} />
         <Route path="findings" element={<Findings />} />
         <Route path="prs" element={<PullRequests />} />

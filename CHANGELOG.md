@@ -21,8 +21,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - **Platform ClickHouse product traces** — optional install-wide sink (UI: Platform settings). When enabled, **every
   org** dual-writes full session observations (agents, tools, LLM I/O, metadata; secret-redacted, no normal truncation)
   for session deep-dive + analytics. Orgs cannot disable ingestion; they may only override **TTL days**
-  (`GET/PUT /v1/org/trace-ttl`). Read path: `GET /v1/sessions/:id/traces`. Env: `CLICKHOUSE_URL`, `CLICKHOUSE_USER`,
-  `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE`, `STEW_CLICKHOUSE_DEFAULT_TTL_DAYS`.
+  (`GET/PUT /v1/org/trace-ttl`). Read paths: `GET /v1/org/trace-storage`, `GET /v1/org/traces/sessions`,
+  `GET /v1/sessions/:id/traces`. Env: `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`,
+  `CLICKHOUSE_DATABASE`, `STEW_CLICKHOUSE_DEFAULT_TTL_DAYS`.
+- **Traces UI** — org-scoped **Traces** menu (any tenant member, not platform-only) when ClickHouse is enabled:
+  list sessions with stored observations, open a session, expand generations/tools/spans with full I/O.
+- **ClickHouse compose overlay** — `deploy/compose/docker-compose.clickhouse.yml` (+ `clickhouse/config.d`) for local
+  product-trace testing with the category stack; configure the sink in **Platform → ClickHouse** (no env wire file).
 
 ### Changed
 

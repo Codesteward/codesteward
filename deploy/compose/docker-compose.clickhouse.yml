@@ -1,0 +1,54 @@
+# Codesteward — ClickHouse product trace store (compose overlay)
+#
+# Add ClickHouse next to the category stack (same project network so the API
+# can reach host "clickhouse"). Connection is configured in the UI
+# (Platform → ClickHouse) — no env wire-up file required.
+#
+#   cd deploy/compose
+#   docker compose \
+#     -f docker-compose.category.yml \
+#     -f docker-compose.clickhouse.yml \
+#     up --build -d
+#
+# Then in the UI as platform admin:
+#   URL:      http://clickhouse:8123
+#   User:     steward
+#   Password: steward
+#   Database: codesteward
+#   → Save & test
+#
+# Host ping:  curl -s http://localhost:8123/ping
+# Docs:       deploy/compose/clickhouse/README.md
+
+services:
+  clickhouse:
+    image: ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:24.12}
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE:-codesteward}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-steward}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-steward}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+      - ./clickhouse/config.d/codesteward.xml:/etc/clickhouse-server/config.d/codesteward.xml:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -q Ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    # Ensure API can resolve "clickhouse" on the default project network
+    # (implicit when this file is merged with category.yml)
+
+volumes:
+  clickhouse-data:
+  clickhouse-logs:

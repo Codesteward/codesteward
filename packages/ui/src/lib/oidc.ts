@@ -62,28 +62,55 @@ function fromEnv(): SpaOidcConfig | null {
   return null;
 }
 
+function parseOidcReady(j: {
+  status?: string;
+  issuer?: string;
+  clientId?: string;
+  scopes?: string[];
+}): SpaOidcConfig | null {
+  if (j.status === "ready" && j.issuer && j.clientId) {
+    return {
+      issuer: j.issuer.replace(/\/$/, ""),
+      clientId: j.clientId,
+      scopes: j.scopes?.length ? j.scopes : ["openid", "profile", "email"],
+    };
+  }
+  return null;
+}
+
+/**
+ * SPA OIDC config: build-time Vite env, then runtime API.
+ * Prefer same-origin `/v1/...` (nginx proxy) so Docker UI works without VITE_API_URL.
+ */
 export async function loadSpaOidcConfig(): Promise<SpaOidcConfig | null> {
   const env = fromEnv();
   if (env) return env;
-  try {
-    const base = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "") ?? "";
-    const res = await fetch(`${base}/v1/auth/oidc/status`);
-    if (!res.ok) return null;
-    const j = (await res.json()) as {
-      status?: string;
-      issuer?: string;
-      clientId?: string;
-      scopes?: string[];
-    };
-    if (j.status === "ready" && j.issuer && j.clientId) {
-      return {
-        issuer: j.issuer.replace(/\/$/, ""),
-        clientId: j.clientId,
-        scopes: j.scopes?.length ? j.scopes : ["openid", "profile", "email"],
+
+  const base = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "") ?? "";
+  const paths = [`${base}/v1/auth/oidc/status`, `${base}/v1/auth/status`];
+
+  for (const path of paths) {
+    try {
+      const res = await fetch(path, { credentials: "same-origin" });
+      if (!res.ok) continue;
+      const j = (await res.json()) as {
+        status?: string;
+        issuer?: string;
+        clientId?: string;
+        scopes?: string[];
+        oidc?: {
+          status?: string;
+          issuer?: string;
+          clientId?: string;
+          scopes?: string[];
+        };
       };
+      // /v1/auth/oidc/status is flat; /v1/auth/status nests under oidc
+      const cfg = parseOidcReady(j.oidc ? { ...j.oidc, status: j.oidc.status } : j);
+      if (cfg) return cfg;
+    } catch {
+      /* try next */
     }
-  } catch {
-    /* ignore */
   }
   return null;
 }

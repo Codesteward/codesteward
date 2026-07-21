@@ -34,6 +34,8 @@ type NavItem = {
 function buildNavGroups(opts: {
   saasBilling: boolean;
   platformOk: boolean;
+  /** Product ClickHouse traces enabled — show org-wide deep-dive for any tenant user */
+  tracesEnabled: boolean;
 }): { label: string; items: NavItem[] }[] {
   const tenantItems: NavItem[] = [
     { to: "/connectors", label: "Connectors", icon: "connectors" },
@@ -73,6 +75,20 @@ function buildNavGroups(opts: {
     icon: "settings",
     end: true,
   });
+  const reviewItems: NavItem[] = [
+    { to: "/sessions?mode=gate", label: "Gate", icon: "gate", mode: "gate" },
+    { to: "/sessions?mode=steward", label: "Steward", icon: "steward", mode: "steward" },
+    { to: "/findings", label: "Findings", icon: "findings" },
+    { to: "/reports", label: "Reports", icon: "reports" },
+  ];
+  // Org users + platform operators: deep-dive only when product ClickHouse is on
+  if (opts.tracesEnabled) {
+    reviewItems.push({ to: "/traces", label: "Traces", icon: "traces" });
+  }
+  reviewItems.push(
+    { to: "/prs", label: "PRs", icon: "prs" },
+    { to: "/cross-repo", label: "Cross-Repo", icon: "crossRepo" },
+  );
   return [
     {
       label: "Overview",
@@ -83,14 +99,7 @@ function buildNavGroups(opts: {
     },
     {
       label: "Review",
-      items: [
-        { to: "/sessions?mode=gate", label: "Gate", icon: "gate", mode: "gate" },
-        { to: "/sessions?mode=steward", label: "Steward", icon: "steward", mode: "steward" },
-        { to: "/findings", label: "Findings", icon: "findings" },
-        { to: "/reports", label: "Reports", icon: "reports" },
-        { to: "/prs", label: "PRs", icon: "prs" },
-        { to: "/cross-repo", label: "Cross-Repo", icon: "crossRepo" },
-      ],
+      items: reviewItems,
     },
     {
       label: "Trust",
@@ -113,6 +122,8 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   const toast = useToast();
   const [saasBilling, setSaasBilling] = useState(false);
   const [platformOk, setPlatformOk] = useState(false);
+  /** Any org member can open Traces when platform ClickHouse is enabled */
+  const [tracesEnabled, setTracesEnabled] = useState(false);
 
   useEffect(() => {
     void api
@@ -123,6 +134,16 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
       .authMe()
       .then((r) => setPlatformOk(isPlatformOperator(r.user, r.authMode)))
       .catch(() => setPlatformOk(false));
+    const refreshTracesNav = () => {
+      void api
+        .traceStorageStatus()
+        .then((s) => setTracesEnabled(Boolean(s.enabled)))
+        .catch(() => setTracesEnabled(false));
+    };
+    refreshTracesNav();
+    // Re-check when active org changes (install-wide flag, but keep status fresh)
+    window.addEventListener(ORG_CHANGED_EVENT, refreshTracesNav);
+    return () => window.removeEventListener(ORG_CHANGED_EVENT, refreshTracesNav);
   }, []);
 
   async function openBillingPortal() {
@@ -145,7 +166,7 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
     }
   }
 
-  const groups = buildNavGroups({ saasBilling, platformOk });
+  const groups = buildNavGroups({ saasBilling, platformOk, tracesEnabled });
 
   return (
     <>

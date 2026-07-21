@@ -593,13 +593,32 @@ export const api = {
       platformDefaultTtlDays: number;
       effectiveTtlDays: number;
     }>("/v1/org/trace-ttl", { method: "PUT", body: JSON.stringify(body) }),
+  /** Whether product ClickHouse traces are enabled (for nav / deep-dive). */
+  traceStorageStatus: () =>
+    req<{
+      orgId: string;
+      enabled: boolean;
+      platformDefaultTtlDays: number;
+      orgTtlDays?: number | null;
+      effectiveTtlDays: number;
+      database?: string;
+      table?: string;
+    }>("/v1/org/trace-storage"),
+  /** Sessions that have ClickHouse observations for this org. */
+  traceSessions: (limit?: number) =>
+    req<{
+      enabled: boolean;
+      sessions: TraceSessionSummary[];
+      count?: number;
+      note?: string;
+    }>(`/v1/org/traces/sessions${limit != null ? `?limit=${limit}` : ""}`),
   sessionTraces: (sessionId: string, limit?: number) =>
     req<{
       sessionId: string;
       orgId: string;
       enabled: boolean;
       count?: number;
-      observations: Array<Record<string, unknown>>;
+      observations: TraceObservationRow[];
       note?: string;
     }>(
       `/v1/sessions/${encodeURIComponent(sessionId)}/traces${
@@ -1571,6 +1590,51 @@ export interface SessionAudit {
   };
   completedAt?: string;
 }
+
+/** ClickHouse session summary for product trace deep-dive (org-scoped). */
+export type TraceSessionSummary = {
+  sessionId: string;
+  firstTs: string;
+  lastTs: string;
+  observationCount: number;
+  traceCount: number;
+  totalTokens: number;
+  repoId: string;
+  status?: string;
+  mode?: string;
+  verdict?: string;
+};
+
+/** Row shape from GET /v1/sessions/:id/traces (ClickHouse). */
+export type TraceObservationRow = {
+  ts?: string;
+  org_id?: string;
+  session_id?: string;
+  trace_id?: string;
+  traceId?: string;
+  observation_id?: string;
+  observationId?: string;
+  parent_observation_id?: string;
+  kind?: string;
+  name?: string;
+  role?: string;
+  model?: string;
+  unit_id?: string;
+  unit_label?: string;
+  repo_id?: string;
+  tenant_id?: string;
+  runner?: string;
+  level?: string;
+  status_message?: string;
+  input?: unknown;
+  output?: unknown;
+  metadata?: unknown;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  duration_ms?: number;
+  ttl_days?: number;
+};
 
 export interface Session {
   id: string;

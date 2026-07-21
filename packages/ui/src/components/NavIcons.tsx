@@ -14,6 +14,7 @@ import {
   FileText,
   ListChecks,
   MessageSquareText,
+  Network,
   Plug,
   ScrollText,
   Server,
@@ -40,6 +41,8 @@ const MAP: Record<string, LucideIcon> = {
   findings: ListChecks,
   /** Human-readable session reports */
   reports: FileText,
+  /** Product ClickHouse session / agent trace deep-dive (org + platform) */
+  traces: Network,
   /** Pull requests */
   prs: GitPullRequest,
   /** Cross-repo fan-out links */

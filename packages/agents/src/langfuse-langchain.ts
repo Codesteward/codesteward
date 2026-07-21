@@ -14,6 +14,7 @@ import {
   buildLangfuseTraceArgs,
   getLangfuse,
   redactForLangfuse,
+  redactSecretsOnly,
   sanitizeLangfuseSessionId,
   type ClickHouseWriter,
   type LangfuseCredentials,
@@ -265,6 +266,7 @@ export function safeJson(value: unknown, max = 12_000): unknown {
   }
 }
 
+/** Full messages for product ClickHouse (secrets redacted, never truncated). */
 function serializeMessages(messages: BaseMessage[][]): unknown {
   return messages.map((thread) =>
     thread.map((m) => {
@@ -274,7 +276,7 @@ function serializeMessages(messages: BaseMessage[][]): unknown {
           : ((m as { role?: string }).role ?? m.constructor?.name ?? "message");
       const row: Record<string, unknown> = {
         role,
-        content: redactForLangfuse(messageContentToString(m.content)),
+        content: redactSecretsOnly(messageContentToString(m.content)),
       };
       const toolCalls =
         (m as { tool_calls?: unknown }).tool_calls ??
@@ -283,6 +285,11 @@ function serializeMessages(messages: BaseMessage[][]): unknown {
       return row;
     }),
   );
+}
+
+/** Size-capped copy for Langfuse UI only (not product storage). */
+function forLangfuseIo(value: unknown): unknown {
+  return safeJson(value, 12_000);
 }
 
 /**
@@ -617,12 +624,13 @@ export class DualLangfuseCallbackHandler extends BaseCallbackHandler {
           ? "tool"
           : "span";
 
-    // Platform ClickHouse product sink — full I/O (no truncation); secrets redacted on write
+    // Product ClickHouse: prefer full payload (inputFull); never use Langfuse-capped copy
+    const chInput = rest.inputFull !== undefined ? rest.inputFull : rest.input;
     if (this.clickhouse && this.ctx.sessionId) {
       this.chPending.set(runId, {
         kind: chKind,
         name: obsName,
-        input: rest.input,
+        input: chInput,
         model: rest.model != null ? String(rest.model) : undefined,
         startedAt: Date.now(),
         metadata: {
@@ -645,9 +653,18 @@ export class DualLangfuseCallbackHandler extends BaseCallbackHandler {
 
         const rawParams = rest.modelParameters as Record<string, unknown> | undefined;
         const modelParameters = sanitizeModelParameters(rawParams);
-        const { modelParameters: _drop, ...restWithoutParams } = rest;
+        const {
+          modelParameters: _drop,
+          inputFull: _if,
+          outputFull: _of,
+          ...restWithoutParams
+        } = rest;
+        // Langfuse may size-cap; product store keeps full via inputFull
+        const lfInput =
+          rest.inputLf !== undefined ? rest.inputLf : forLangfuseIo(rest.input);
         const args: Record<string, unknown> = {
           ...restWithoutParams,
+          input: lfInput,
           // Session-scoped ids prevent Langfuse upsert into a prior review's observation
           id: this.obsId(runId),
           traceId: binding.traceId,
@@ -664,6 +681,7 @@ export class DualLangfuseCallbackHandler extends BaseCallbackHandler {
             ...((bodyMeta as Record<string, unknown> | undefined) ?? {}),
           }),
         };
+        delete (args as { inputLf?: unknown }).inputLf;
 
         // Call client.generation/span DIRECTLY (not TraceClient) so parentObservationId
         // is preserved and traceId is explicit for this review.
@@ -694,9 +712,10 @@ export class DualLangfuseCallbackHandler extends BaseCallbackHandler {
     const handles = this.open.get(runId);
     if (handles) {
       this.open.delete(runId);
+      const { outputFull: _omit, ...lfEnd } = endArgs;
       for (const h of handles) {
         try {
-          h.obs.end(endArgs);
+          h.obs.end(lfEnd);
         } catch {
           /* per-dest */
         }
@@ -737,7 +756,9 @@ export class DualLangfuseCallbackHandler extends BaseCallbackHandler {
           statusMessage:
             typeof endArgs.statusMessage === "string" ? endArgs.statusMessage : undefined,
           input: pending.input,
-          output: endArgs.output,
+          // Prefer full output for product store (Langfuse may get a capped copy)
+          output:
+            endArgs.outputFull !== undefined ? endArgs.outputFull : endArgs.output,
           promptTokens: usage?.promptTokens,
           completionTokens: usage?.completionTokens,
           totalTokens: usage?.totalTokens,
@@ -772,10 +793,13 @@ export class DualLangfuseCallbackHandler extends BaseCallbackHandler {
       (metadata?.ls_model_name as string | undefined) ??
       serializedName(llm, "chat_model");
     const inv = (extraParams?.invocation_params ?? {}) as Record<string, unknown>;
+    const fullMessages = serializeMessages(messages);
     await this.startObs(runId, parentRunId, "generation", {
       name: runName ?? `chat.${this.role}`,
       model: String(model),
-      input: serializeMessages(messages),
+      input: fullMessages,
+      inputFull: fullMessages,
+      inputLf: forLangfuseIo(fullMessages),
       modelParameters: inv,
       metadata: {
         langfuseKind: "chat_model",
@@ -820,7 +844,8 @@ export class DualLangfuseCallbackHandler extends BaseCallbackHandler {
   override async handleLLMEnd(output: LLMResult, runId: string): Promise<void> {
     const { text, usage, model } = extractLlmOutput(output);
     this.endObs(runId, {
-      output: text,
+      output: forLangfuseIo(text),
+      outputFull: text,
       ...(usage
         ? {
             usage: {
@@ -853,10 +878,12 @@ export class DualLangfuseCallbackHandler extends BaseCallbackHandler {
     parentRunId?: string,
   ): Promise<void> {
     const name = runName ?? serializedName(chain, "chain");
-    // Normalize LC wire format so Langfuse span I/O is human-readable JSON (not {lc:1,...})
+    const fullIn = normalizeLangfuseValue(inputs);
     await this.startObs(runId, parentRunId, "span", {
       name: String(name),
-      input: safeJson(inputs),
+      input: fullIn,
+      inputFull: fullIn,
+      inputLf: forLangfuseIo(fullIn),
       metadata: {
         langfuseKind: "chain",
         langgraph_node: metadata?.langgraph_node,
@@ -870,7 +897,11 @@ export class DualLangfuseCallbackHandler extends BaseCallbackHandler {
     outputs: Record<string, unknown>,
     runId: string,
   ): Promise<void> {
-    this.endObs(runId, { output: safeJson(outputs) });
+    const full = normalizeLangfuseValue(outputs);
+    this.endObs(runId, {
+      output: forLangfuseIo(full),
+      outputFull: full,
+    });
   }
 
   override async handleChainError(err: Error, runId: string): Promise<void> {
@@ -905,9 +936,12 @@ export class DualLangfuseCallbackHandler extends BaseCallbackHandler {
         parsedInput = redactForLangfuse(input);
       }
     }
+    const fullIn = normalizeLangfuseValue(parsedInput);
     await this.startObs(runId, parentRunId, "span", {
       name: `tool:${name}`,
-      input: safeJson(parsedInput),
+      input: fullIn,
+      inputFull: fullIn,
+      inputLf: forLangfuseIo(fullIn),
       metadata: {
         langfuseKind: "tool",
         toolName: name,
@@ -917,7 +951,11 @@ export class DualLangfuseCallbackHandler extends BaseCallbackHandler {
   }
 
   override async handleToolEnd(output: unknown, runId: string): Promise<void> {
-    this.endObs(runId, { output: safeJson(output) });
+    const full = normalizeLangfuseValue(output);
+    this.endObs(runId, {
+      output: forLangfuseIo(full),
+      outputFull: full,
+    });
   }
 
   override async handleToolError(err: Error, runId: string): Promise<void> {

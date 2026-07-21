@@ -4097,19 +4097,37 @@ export function createApp() {
       clear?: boolean;
       test?: boolean;
     };
-    const { putPlatformClickHouse, maskClickHouse, loadPlatformClickHouseForRuntime } =
-      await import("./platform-clickhouse-store.js");
-    const saved = await putPlatformClickHouse(body.clear ? { clear: true } : body);
+    const {
+      putPlatformClickHouse,
+      maskClickHouse,
+      loadPlatformClickHouseForRuntime,
+    } = await import("./platform-clickhouse-store.js");
+    // Default enabled when saving a URL (UI "Save & test" should activate the sink)
+    const toSave = body.clear
+      ? { clear: true as const }
+      : {
+          ...body,
+          enabled: body.enabled !== false,
+        };
+    const saved = await putPlatformClickHouse(toSave);
     let test: { ok: boolean; message?: string } | undefined;
     if (body.test && !body.clear) {
       try {
+        // Prefer just-saved store (UI path) — not only env
         const cfg = await loadPlatformClickHouseForRuntime();
-        if (!cfg) {
-          test = { ok: false, message: "ClickHouse not fully configured" };
+        if (!cfg?.url) {
+          test = {
+            ok: false,
+            message:
+              "ClickHouse not fully configured (need URL). From the API container use http://clickhouse:8123 when ClickHouse is on the same Compose network, or http://host.docker.internal:8123 for a host-published port.",
+          };
         } else {
           const { ensureClickHouseSchema } = await import("@codesteward/model-router");
           await ensureClickHouseSchema(cfg);
-          test = { ok: true, message: "Schema ensure OK" };
+          test = {
+            ok: true,
+            message: `Schema ensure OK (${cfg.url.replace(/\/\/([^:]+):[^@]+@/, "//$1:***@")} / db=${cfg.database ?? "default"})`,
+          };
         }
       } catch (err) {
         test = {
@@ -4188,6 +4206,82 @@ export function createApp() {
       platformDefaultTtlDays: platformDefault,
       effectiveTtlDays: resolveTraceTtlDays(platformDefault, doc.traceTtlDays),
     });
+  });
+
+  /**
+   * Whether product ClickHouse trace storage is on for this install.
+   * Used by UI to show/hide the Traces deep-dive menu (any authenticated user).
+   */
+  app.get("/v1/org/trace-storage", async (c) => {
+    const orgId = c.get("orgId") ?? "local";
+    const { loadPlatformClickHouseForRuntime, resolveTraceTtlDays } = await import(
+      "./platform-clickhouse-store.js"
+    );
+    const { loadOrgTraceTtlDays } = await import("./org-settings-store.js");
+    const platform = await loadPlatformClickHouseForRuntime();
+    if (!platform) {
+      return c.json({
+        orgId,
+        enabled: false,
+        platformDefaultTtlDays: 90,
+        effectiveTtlDays: 90,
+      });
+    }
+    const orgTtl = await loadOrgTraceTtlDays(orgId);
+    const platformDefault = platform.defaultTtlDays ?? 90;
+    return c.json({
+      orgId,
+      enabled: true,
+      platformDefaultTtlDays: platformDefault,
+      orgTtlDays: orgTtl,
+      effectiveTtlDays: resolveTraceTtlDays(platformDefault, orgTtl),
+      database: platform.database,
+      table: platform.table,
+    });
+  });
+
+  /** Sessions that have observations in platform ClickHouse (for deep-dive list). */
+  app.get("/v1/org/traces/sessions", async (c) => {
+    const orgId = c.get("orgId") ?? "local";
+    const { loadPlatformClickHouseForRuntime } = await import(
+      "./platform-clickhouse-store.js"
+    );
+    const { queryOrgTraceSessions } = await import("@codesteward/model-router");
+    const cfg = await loadPlatformClickHouseForRuntime();
+    if (!cfg) {
+      return c.json({
+        enabled: false,
+        sessions: [],
+        note: "Platform ClickHouse is not configured.",
+      });
+    }
+    try {
+      const limit = Number(c.req.query("limit") ?? 100);
+      const sessions = await queryOrgTraceSessions(cfg, {
+        orgId,
+        limit: Number.isFinite(limit) ? limit : 100,
+      });
+      // Enrich with product session metadata when present
+      const enriched = sessions.map((s) => {
+        const live = globalSessionStore.get(s.sessionId);
+        return {
+          ...s,
+          status: live?.status,
+          mode: live?.mode,
+          verdict: live?.verdict,
+          repoId: s.repoId || live?.repoId || "",
+        };
+      });
+      return c.json({ enabled: true, sessions: enriched, count: enriched.length });
+    } catch (err) {
+      return c.json(
+        {
+          error: "clickhouse_query_failed",
+          message: err instanceof Error ? err.message : String(err),
+        },
+        502,
+      );
+    }
   });
 
   /** Session trace tree from platform ClickHouse (product SoT). */

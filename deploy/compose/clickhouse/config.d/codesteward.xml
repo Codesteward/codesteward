@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<!-- Codesteward product traces — HTTP + native accessible from Docker network -->
+<clickhouse>
+  <listen_host>::</listen_host>
+  <listen_host>0.0.0.0</listen_host>
+
+  <!-- Prefer async inserts for high-frequency observation dual-write -->
+  <profiles>
+    <default>
+      <async_insert>1</async_insert>
+      <wait_for_async_insert>0</wait_for_async_insert>
+      <async_insert_busy_timeout_ms>200</async_insert_busy_timeout_ms>
+    </default>
+  </profiles>
+
+  <!-- Keep default logging reasonable for local dev -->
+  <logger>
+    <level>information</level>
+    <console>true</console>
+  </logger>
+</clickhouse>

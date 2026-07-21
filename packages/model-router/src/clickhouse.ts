@@ -114,7 +114,11 @@ function authHeaders(cfg: ClickHouseConfig): Record<string, string> {
 }
 
 function baseUrl(cfg: ClickHouseConfig): string {
-  return (cfg.url || process.env.CLICKHOUSE_URL || "").replace(/\/+$/, "");
+  let raw = (cfg.url || process.env.CLICKHOUSE_URL || "").trim().replace(/\/+$/, "");
+  if (raw && !/^https?:\/\//i.test(raw)) {
+    raw = `http://${raw}`;
+  }
+  return raw;
 }
 
 export function isClickHouseConfigComplete(
@@ -147,16 +151,34 @@ async function chQuery(
 ): Promise<{ ok: boolean; status: number; text: string }> {
   const url = baseUrl(cfg);
   if (!url) return { ok: false, status: 0, text: "no url" };
-  const u = new URL(url);
+  let u: URL;
+  try {
+    u = new URL(url.includes("://") ? url : `http://${url}`);
+  } catch {
+    return { ok: false, status: 0, text: `invalid CLICKHOUSE_URL: ${url}` };
+  }
+  // Default HTTP port when only host is given
+  if (!u.port && (u.protocol === "http:" || u.protocol === "https:")) {
+    u.port = u.protocol === "https:" ? "8443" : "8123";
+  }
   u.searchParams.set("database", databaseName(cfg));
   u.searchParams.set("query", query);
-  const res = await fetch(u.toString(), {
-    method: "POST",
-    headers: authHeaders(cfg),
-    body: body ?? "",
-  });
-  const text = await res.text();
-  return { ok: res.ok, status: res.status, text };
+  try {
+    const res = await fetch(u.toString(), {
+      method: "POST",
+      headers: authHeaders(cfg),
+      body: body ?? "",
+    });
+    const text = await res.text();
+    return { ok: res.ok, status: res.status, text };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      status: 0,
+      text: `network error talking to ${u.origin}: ${msg}. From the API container use host "clickhouse" only if that service shares the Compose network (merge clickhouse.yml with your stack). From Docker to a host-published port use http://host.docker.internal:8123 (Mac/Windows) or the host gateway IP.`,
+    };
+  }
 }
 
 export async function ensureClickHouseSchema(cfg: ClickHouseConfig): Promise<void> {
@@ -164,9 +186,12 @@ export async function ensureClickHouseSchema(cfg: ClickHouseConfig): Promise<voi
   const table = tableName(cfg);
   const createDb = await chQuery(cfg, `CREATE DATABASE IF NOT EXISTS ${db}`);
   if (!createDb.ok && !/exist/i.test(createDb.text)) {
-    console.warn("[clickhouse] create database failed", createDb.status, createDb.text.slice(0, 300));
+    throw new Error(
+      `[clickhouse] create database failed ${createDb.status}: ${createDb.text.slice(0, 400)}`,
+    );
   }
-  // Per-row TTL via ttl_days column (org override or platform default)
+  // Per-row TTL via ttl_days. ClickHouse requires Date/DateTime for TTL — cast DateTime64.
+  // @see BAD_TTL_EXPRESSION when using DateTime64 directly in TTL
   const ddl = `
 CREATE TABLE IF NOT EXISTS ${db}.${table} (
   ts DateTime64(3, 'UTC'),
@@ -197,7 +222,7 @@ CREATE TABLE IF NOT EXISTS ${db}.${table} (
 ) ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org_id, session_id, ts, observation_id)
-TTL ts + toIntervalDay(ttl_days)
+TTL toDateTime(ts) + toIntervalDay(ttl_days)
 SETTINGS index_granularity = 8192
 `.trim();
   const createTable = await chQuery(cfg, ddl);
@@ -365,6 +390,68 @@ FORMAT JSON
   try {
     const parsed = JSON.parse(res.text) as { data?: Array<Record<string, unknown>> };
     return parsed.data ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export type ClickHouseSessionSummary = {
+  sessionId: string;
+  firstTs: string;
+  lastTs: string;
+  observationCount: number;
+  traceCount: number;
+  totalTokens: number;
+  repoId: string;
+};
+
+/** List sessions that have product traces in ClickHouse for an org. */
+export async function queryOrgTraceSessions(
+  cfg: ClickHouseConfig,
+  args: {
+    orgId: string;
+    limit?: number;
+  },
+): Promise<ClickHouseSessionSummary[]> {
+  if (!isClickHouseConfigComplete(cfg)) return [];
+  await ensureClickHouseSchema(cfg);
+  const db = databaseName(cfg);
+  const table = tableName(cfg);
+  const limit = Math.min(Math.max(args.limit ?? 100, 1), 500);
+  const org = args.orgId.replace(/'/g, "\\'");
+  const q = `
+SELECT
+  session_id AS sessionId,
+  min(ts) AS firstTs,
+  max(ts) AS lastTs,
+  count() AS observationCount,
+  uniqExact(trace_id) AS traceCount,
+  sum(total_tokens) AS totalTokens,
+  any(repo_id) AS repoId
+FROM ${db}.${table}
+WHERE org_id = '${org}' AND session_id != ''
+GROUP BY session_id
+ORDER BY lastTs DESC
+LIMIT ${limit}
+FORMAT JSON
+`.trim();
+  const res = await chQuery(cfg, q);
+  if (!res.ok) {
+    throw new Error(`[clickhouse] session list failed ${res.status}: ${res.text.slice(0, 400)}`);
+  }
+  try {
+    const parsed = JSON.parse(res.text) as {
+      data?: Array<Record<string, unknown>>;
+    };
+    return (parsed.data ?? []).map((r) => ({
+      sessionId: String(r.sessionId ?? r.session_id ?? ""),
+      firstTs: String(r.firstTs ?? r.first_ts ?? ""),
+      lastTs: String(r.lastTs ?? r.last_ts ?? ""),
+      observationCount: Number(r.observationCount ?? r.observation_count ?? 0),
+      traceCount: Number(r.traceCount ?? r.trace_count ?? 0),
+      totalTokens: Number(r.totalTokens ?? r.total_tokens ?? 0),
+      repoId: String(r.repoId ?? r.repo_id ?? ""),
+    }));
   } catch {
     return [];
   }
