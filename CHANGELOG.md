@@ -37,6 +37,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- **DeepAgents empty filesystem tools** — built-in `ls` / `read_file` / `glob` / `grep` used an empty
+  in-memory backend, so specialists often “found nothing” and guessed findings. Bind
+  `FilesystemBackend` to the review clone (`virtualMode`), deny writes, strengthen deep-tools prompts,
+  and add `sandbox_ls` plus smarter `sandbox_read` path normalization.
+
 ---
 
 ## [1.4.0] — 2026-07-20

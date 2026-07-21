@@ -1,12 +1,16 @@
 import type { Sandbox } from "@codesteward/sandbox";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { resolveInsideRoot, tenantIsolationMode } from "../path-jail.js";
+import {
+  normalizeReviewToolPath,
+  rewriteShellCommandPaths,
+  tenantIsolationMode,
+} from "../path-jail.js";
 
 export interface SandboxToolsOpts {
   /**
-   * Host path of the review workspace (clone/mount). Required for multi-tenant
-   * path jailing when the sandbox is local/in-place.
+   * Host path of this unit's review workspace (primary clone or cross-repo clone).
+   * Required for multi-tenant path jailing when the sandbox is local/in-place.
    */
   workspaceRoot?: string;
 }
@@ -15,9 +19,8 @@ export interface SandboxToolsOpts {
  * Sandbox tools for DeepAgents / specialists.
  * Requires a ready SandboxSession (create once per review unit).
  *
- * Multi-tenant: sandbox_read resolves paths under workspaceRoot only.
- * sandbox_exec is only safe on docker/k8s (bind-mount jail). Local host shells
- * cannot prevent `cat ../other-session` — use STEW_TENANT_ISOLATION=strict.
+ * Multi-tenant: all paths are normalized + jailed under workspaceRoot.
+ * sandbox_exec is only a hard boundary on docker/k8s — use STEW_TENANT_ISOLATION=strict in prod.
  */
 export function createSandboxTools(
   sandbox: Sandbox,
@@ -27,10 +30,30 @@ export function createSandboxTools(
   const workspaceRoot = opts.workspaceRoot?.trim() || undefined;
   const mode = tenantIsolationMode();
 
+  const jailRel = (raw: string | undefined, fallback = "."): string => {
+    const p = (raw ?? fallback).trim() || fallback;
+    if (!workspaceRoot || mode === "off") {
+      // Still strip virtual leading /
+      return p.replace(/^\/+/, "") || ".";
+    }
+    return normalizeReviewToolPath(p, workspaceRoot);
+  };
+
   const sandbox_exec = tool(
     async ({ command, timeoutMs }) => {
-      // Block obvious sibling escapes in the command string (best-effort, not a security boundary)
-      if (mode !== "off" && /(?:^|[\s;'"`])\.\.(\/|\\)/.test(command)) {
+      let execCmd = command;
+      if (mode !== "off" && workspaceRoot) {
+        const rewritten = rewriteShellCommandPaths(command, workspaceRoot);
+        if (!rewritten.ok) {
+          return JSON.stringify({
+            exitCode: 1,
+            stdout: "",
+            stderr: rewritten.reason,
+            durationMs: 0,
+          });
+        }
+        execCmd = rewritten.command;
+      } else if (mode !== "off" && /(?:^|[\s;'"`])\.\.(\/|\\)/.test(command)) {
         return JSON.stringify({
           exitCode: 1,
           stdout: "",
@@ -39,7 +62,7 @@ export function createSandboxTools(
           durationMs: 0,
         });
       }
-      const r = await sandbox.exec(sessionId, command, {
+      const r = await sandbox.exec(sessionId, execCmd, {
         timeoutMs: timeoutMs ?? 60_000,
       });
       return JSON.stringify({
@@ -52,7 +75,7 @@ export function createSandboxTools(
     {
       name: "sandbox_exec",
       description:
-        "Run a shell command in the isolated review sandbox (typecheck, tests, scripts). Stay inside the review workspace; network is restricted.",
+        "Run a shell command in this unit's workspace only (cwd = unit root). Use relative paths (e.g. ls ., cat src/foo.ts) — never host/session/cross prefixes.",
       schema: z.object({
         command: z.string(),
         timeoutMs: z.number().int().positive().optional(),
@@ -61,33 +84,52 @@ export function createSandboxTools(
   );
 
   const sandbox_read = tool(
-    async ({ path }) => {
-      let readPath = path;
-      if (workspaceRoot && mode !== "off") {
-        try {
-          // Resolve on host for jail; docker sessions still receive the relative path
-          const abs = resolveInsideRoot(workspaceRoot, path);
-          // Prefer path relative to workspace for portable docker cwd
-          readPath = abs.startsWith(workspaceRoot)
-            ? abs.slice(workspaceRoot.length).replace(/^[/\\]+/, "") || "."
-            : path;
-        } catch (err) {
-          return err instanceof Error ? err.message : String(err);
-        }
+    async ({ path: rawPath }) => {
+      let readPath: string;
+      try {
+        readPath = jailRel(rawPath, ".");
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
       }
       const r = await sandbox.exec(
         sessionId,
         `head -c 50000 ${JSON.stringify(readPath)}`,
       );
-      return r.stdout || r.stderr;
+      if (!r.stdout && r.stderr) return r.stderr;
+      if (!r.stdout) {
+        return `empty or missing file: ${readPath} (unit workspace relative; use paths from Diff/context or ls /)`;
+      }
+      return r.stdout;
     },
     {
       name: "sandbox_read",
       description:
-        "Read a file from the sandbox workspace only (truncated). Absolute paths outside the review tree are refused.",
+        "Read a file from this unit's workspace (first ~50KB). Paths are relative to the unit root (or virtual /src/foo.ts). Host paths like /workspace/…/cross/… are rewritten when they map into this unit; paths outside the unit are refused.",
       schema: z.object({ path: z.string() }),
     },
   );
 
-  return [sandbox_exec, sandbox_read];
+  const sandbox_ls = tool(
+    async ({ path: rawPath }) => {
+      let listPath: string;
+      try {
+        listPath = jailRel(rawPath ?? ".", ".");
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+      const r = await sandbox.exec(
+        sessionId,
+        `ls -la ${JSON.stringify(listPath)} 2>&1 | head -n 200`,
+      );
+      return r.stdout || r.stderr || `empty listing: ${listPath}`;
+    },
+    {
+      name: "sandbox_ls",
+      description:
+        "List files in this unit's workspace. Use `.` or `/` for the unit root — not session/cross host paths.",
+      schema: z.object({ path: z.string().optional() }),
+    },
+  );
+
+  return [sandbox_exec, sandbox_read, sandbox_ls];
 }

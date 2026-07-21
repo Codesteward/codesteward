@@ -151,12 +151,12 @@ export async function packRepoContext(opts: {
   }
 
   const header = [
-    `Repository path: ${opts.repoPath}`,
+    // Do not include host absolute repoPath — agents copy it into ls/shell incorrectly.
     `Files in context: ${included.length}${truncated ? " (truncated by budget)" : ""}`,
     `Paths requested: ${roots.join(", ")}`,
     "",
     "Review the following source files for bugs, security issues, and missing tests.",
-    "Cite FILE paths and line numbers in findings.",
+    "Cite FILE paths (workspace-relative) and line numbers in findings.",
     "",
   ].join("\n");
 

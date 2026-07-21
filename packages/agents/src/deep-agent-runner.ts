@@ -290,6 +290,23 @@ export class DeepAgentRunner implements AgentRunner {
       .slice(0, 20)
       .map((r) => `- ${r.pathScope}: ${r.title ?? r.id}`)
       .join("\n");
+    const isCrossRepoUnit = Boolean(unit.metadata?.crossRepo);
+    // Never put host absolute paths in agent-facing text — models copy them into
+    // ls/shell (e.g. workspace/local/ses_…/cross/Owner__repo) and break.
+    const workspaceHint = repoPath
+      ? [
+          isCrossRepoUnit
+            ? `CROSS-REPO UNIT: filesystem tools are jailed to THIS linked repo only (not the primary session tree, not sibling sessions).`
+            : `PRIMARY UNIT: filesystem tools are jailed to the primary review clone only (not other sessions).`,
+          `For ls/read_file/glob/grep/sandbox_*: use virtual paths under / (e.g. ls path=/ , read_file /src/foo.ts) or relative paths from the unit root (ls ., cat README.md).`,
+          `Do NOT use host/session paths: workspace/…, /workspace/…, local/ses_…, cross/Owner__repo/ — tool root is already this unit; those prefixes are rewritten or refused.`,
+          isCrossRepoUnit
+            ? `Linked repo id: ${String(unit.metadata?.repoId ?? ctx.repoId)}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "WARNING: No workspace root — file tools may be empty; use packed Diff/context only.";
     const promptVars = {
       severity_floor: String(policy.severityFloor ?? "medium"),
       path_rules: rulesForPaths,
@@ -298,14 +315,21 @@ export class DeepAgentRunner implements AgentRunner {
       unit_label: unit.label,
       paths: unit.paths.map((p) => `- ${p}`).join("\n"),
       context_text: ctx.contextText
-        ? ctx.contextText.slice(0, 16000)
-        : "WARNING: No packed source/diff — use sandbox_read on unit paths before concluding.",
+        ? `${workspaceHint}\n\n${ctx.contextText.slice(0, 16000)}`
+        : `${workspaceHint}\n\nWARNING: No packed source/diff — use read_file or sandbox_read on unit paths before concluding.`,
       graph_context: "",
     };
     const system = renderSpecialistSystem(ctx.promptPack, role, promptVars, { deep: true });
     let user = renderSpecialistUser(ctx.promptPack, role, promptVars);
     if (unit.metadata && Object.keys(unit.metadata).length) {
-      user += `\n\nUnit metadata: ${JSON.stringify(unit.metadata).slice(0, 2000)}`;
+      // Strip host paths from agent-visible metadata (repoPath is for runners only)
+      const { repoPath: _rp, ...safeMeta } = unit.metadata as Record<
+        string,
+        unknown
+      > & { repoPath?: string };
+      if (Object.keys(safeMeta).length) {
+        user += `\n\nUnit metadata: ${JSON.stringify(safeMeta).slice(0, 2000)}`;
+      }
     }
 
     try {
@@ -315,11 +339,52 @@ export class DeepAgentRunner implements AgentRunner {
       const model =
         this.deps.modelName ??
         (await resolveDeepAgentsModel(modelRouter, role));
+
+      // DeepAgents ships ls/read_file/glob/grep via FilesystemMiddleware.
+      // Default StateBackend is an EMPTY virtual FS → tools return "No files found"
+      // and specialists invent findings. Bind FilesystemBackend to the review clone.
       const agentArgs: Record<string, unknown> = {
         model,
         tools,
         systemPrompt: system,
       };
+      if (repoPath) {
+        try {
+          const { FilesystemBackend } = await import("deepagents");
+          const { createReviewFilesystemBackend } = await import(
+            "./review-fs-backend.js"
+          );
+          const inner = new FilesystemBackend({
+            rootDir: repoPath,
+            // Virtual absolute paths under THIS unit root only (e.g. /src/foo.ts)
+            virtualMode: true,
+            maxFileSizeMb: Number(process.env.STEW_DEEPAGENTS_MAX_FILE_MB ?? 8) || 8,
+          });
+          // Path normalizer keeps tenant jail + rewrites mistaken host/cross paths
+          agentArgs.backend = createReviewFilesystemBackend(
+            inner as never,
+            repoPath,
+          );
+          // Review agents are read-only on the unit tree
+          agentArgs.permissions = [
+            { operations: ["read"], paths: ["/**"], mode: "allow" },
+            { operations: ["write"], paths: ["/**"], mode: "deny" },
+          ];
+          console.info(
+            `[agents] deepagent filesystem backend root=${repoPath} virtualMode=1 jail=1 cross=${isCrossRepoUnit ? 1 : 0} role=${role}`,
+          );
+        } catch (err) {
+          console.warn(
+            "[agents] FilesystemBackend unavailable — built-in ls/read_file may see empty FS:",
+            err instanceof Error ? err.message : err,
+          );
+        }
+      } else {
+        console.warn(
+          `[agents] deepagent role=${role}: no repoPath — built-in file tools will be empty; rely on packed context + sandbox tools`,
+        );
+      }
+
       if (process.env.STEW_LANGGRAPH_CHECKPOINT === "1") {
         console.warn(
           "[agents] STEW_LANGGRAPH_CHECKPOINT=1: framework checkpointer not fully integrated; using CodeSteward session checkpoints only",
