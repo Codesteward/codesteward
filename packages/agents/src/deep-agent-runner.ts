@@ -298,8 +298,9 @@ export class DeepAgentRunner implements AgentRunner {
           isCrossRepoUnit
             ? `CROSS-REPO UNIT: filesystem tools are jailed to THIS linked repo only (not the primary session tree, not sibling sessions).`
             : `PRIMARY UNIT: filesystem tools are jailed to the primary review clone only (not other sessions).`,
-          `For ls/read_file/glob/grep/sandbox_*: use virtual paths under / (e.g. ls path=/ , read_file /src/foo.ts) or relative paths from the unit root (ls ., cat README.md).`,
-          `Do NOT use host/session paths: workspace/…, /workspace/…, local/ses_…, cross/Owner__repo/ — tool root is already this unit; those prefixes are rewritten or refused.`,
+          `For ls/read_file/glob/grep: ALWAYS use virtual absolute paths starting with / (ls path=/, read_file /src/foo.ts). Do NOT pass "." or bare relative paths to those tools.`,
+          `For sandbox_*: cwd is the unit root — relative paths are OK (ls ., cat README.md).`,
+          `Do NOT use host/session paths: workspace/…, /workspace/…, local/ses_…, cross/Owner__repo/ — those are rewritten or refused.`,
           isCrossRepoUnit
             ? `Linked repo id: ${String(unit.metadata?.repoId ?? ctx.repoId)}`
             : "",
@@ -365,13 +366,16 @@ export class DeepAgentRunner implements AgentRunner {
             inner as never,
             repoPath,
           );
-          // Review agents are read-only on the unit tree
-          agentArgs.permissions = [
-            { operations: ["read"], paths: ["/**"], mode: "allow" },
-            { operations: ["write"], paths: ["/**"], mode: "deny" },
-          ];
+          // CRITICAL: do NOT set DeepAgents `permissions` for path allow/deny.
+          // When permissions.length > 0, enforcePermission() requires every tool
+          // path to start with `/` (validatePath). Models often pass `.` or
+          // `src/foo.ts` → uncaught `path must be absolute: "."` kills the
+          // specialist before the backend runs. Read-only + jail is enforced
+          // by createReviewFilesystemBackend (write/edit refused + path jail).
+          // Prefer empty permissions so relative paths reach the normalizer.
+          agentArgs.permissions = [];
           console.info(
-            `[agents] deepagent filesystem backend root=${repoPath} virtualMode=1 jail=1 cross=${isCrossRepoUnit ? 1 : 0} role=${role}`,
+            `[agents] deepagent filesystem backend root=${repoPath} virtualMode=1 jail=1 permissions=off(read-only-backend) cross=${isCrossRepoUnit ? 1 : 0} role=${role}`,
           );
         } catch (err) {
           console.warn(

@@ -59,7 +59,8 @@ export const FindingSchema = z.object({
   /** Plain-language remediation guidance (always optional). */
   suggestion: z.string().optional(),
   /**
-   * Concrete code that would fix the issue (replacement snippet or small patch body).
+   * Proposed fix as a unified git-style diff (--- / +++ / @@ / - / +).
+   * Models may still emit plain snippets; extract/publish normalize to unified diff.
    * Populated when org runtime STEW_SUGGESTED_CODE_FIXES=1.
    */
   suggestedFix: z.string().optional(),

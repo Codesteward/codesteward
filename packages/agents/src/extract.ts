@@ -9,6 +9,7 @@ import {
   applyProductConfidence,
   scoreEmptyScanConfidence,
 } from "./confidence.js";
+import { normalizeSuggestedFixAsDiff } from "./suggested-fix-diff.js";
 
 const LlmFindingSchema = z
   .object({
@@ -361,7 +362,12 @@ function toCandidate(
   const min = getSuggestedFixMinConfidence();
   const suggestedFix =
     f.suggestedFix?.trim() && confidence + 1e-9 >= min
-      ? f.suggestedFix
+      ? normalizeSuggestedFixAsDiff({
+          path: f.path,
+          suggestedFix: f.suggestedFix,
+          existingCode: f.existingCode,
+          startLine: f.startLine,
+        })
       : undefined;
   const reasoning = f.reasoning?.trim() || undefined;
   // Dual form: first-class field for verifier + evidence entry for audit/SARIF/store merges

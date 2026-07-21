@@ -10,7 +10,7 @@ name: codesteward-neo4j
 x-graph-env: &graph-env
   GRAPH_MOCK: "0"
   GRAPH_MCP_MODE: stdio
-  GRAPH_MCP_COMMAND: codesteward-mcp
+  GRAPH_MCP_COMMAND: /opt/graph-venv/bin/codesteward-mcp
   GRAPH_BACKEND: neo4j
   NEO4J_URI: bolt://neo4j:7687
   NEO4J_USER: neo4j

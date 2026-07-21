@@ -523,6 +523,149 @@ export function TraceExplorer() {
         }
       />
 
+      <details className="card" style={{ marginBottom: "1rem", padding: "0.75rem 1rem" }}>
+        <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: "0.9rem" }}>
+          What am I looking at? · event types · specialists · internal steps (Runnable…)
+        </summary>
+        <div
+          className="stack"
+          style={{
+            gap: 10,
+            marginTop: 10,
+            fontSize: "0.85rem",
+            lineHeight: 1.55,
+            color: "var(--text-secondary)",
+          }}
+        >
+          <div>
+            <strong style={{ color: "var(--text)" }}>Traces</strong> are a{" "}
+            <em>replay of how the review agents worked</em> for one product session: which
+            specialist ran, what was sent to the model, which tools it called, and what came
+            back. They are stored in ClickHouse when platform trace storage is enabled — not
+            the findings list itself.
+          </div>
+          <div>
+            <strong style={{ color: "var(--text)" }}>Left column</strong> lists sessions that
+            have stored events. <strong style={{ color: "var(--text)" }}>Right column</strong>{" "}
+            is a timeline grouped by specialist run (each group is one agent invocation).
+          </div>
+
+          <div>
+            <strong style={{ color: "var(--text)" }}>Event types (badges)</strong>
+          </div>
+          <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
+            <li style={{ marginBottom: 6 }}>
+              <strong style={{ color: "var(--text)" }}>LLM call</strong> (
+              <span className="mono">generation</span>) — a request/response to a language
+              model: system + user prompts in, assistant text (and optional tool-call plans)
+              out. Token counts and model name appear when available.
+            </li>
+            <li style={{ marginBottom: 6 }}>
+              <strong style={{ color: "var(--text)" }}>Tool</strong> — the agent invoked a
+              product tool (e.g. <span className="mono">read_file</span>,{" "}
+              <span className="mono">graph_query</span>, <span className="mono">sandbox_exec</span>
+              ). “What was sent” is the tool arguments; “What came back” is the tool result.
+            </li>
+            <li style={{ marginBottom: 6 }}>
+              <strong style={{ color: "var(--text)" }}>Summary</strong> — a compact end-of-run
+              rollup for that specialist (high-level outcome, not full chat).
+            </li>
+            <li style={{ marginBottom: 6 }}>
+              <strong style={{ color: "var(--text)" }}>Step</strong> (
+              <span className="mono">span</span>) — a structural or framework span. Useful ones
+              may be product-named; many are low-level graph internals (see below).
+            </li>
+          </ul>
+
+          <div>
+            <strong style={{ color: "var(--text)" }}>Specialists</strong> (roles such as{" "}
+            <span className="mono">security</span>, <span className="mono">correctness</span>,{" "}
+            <span className="mono">rules</span>) are parallel agent runs inside a review. Filter
+            by specialist to isolate one role. Trace titles like “security specialist” map to
+            those roles.
+          </div>
+
+          <div>
+            <strong style={{ color: "var(--text)" }}>Show internal steps</strong>
+          </div>
+          <div>
+            Off by default so the timeline stays readable (LLM + tools + summaries). Turn it{" "}
+            <em>on</em> when you are debugging agent plumbing, empty tools, or odd control flow.
+            Internal names come from <strong style={{ color: "var(--text)" }}>LangChain /
+            LangGraph / DeepAgents</strong> — the library stack that runs the agent loop — not
+            from your application domain names.
+          </div>
+          <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
+            <li style={{ marginBottom: 6 }}>
+              <strong style={{ color: "var(--text)" }} className="mono">
+                RunnableSequence
+              </strong>{" "}
+              — a pipeline that runs several steps <em>in order</em> (e.g. format prompt → call
+              model → parse). Seeing many of these is normal; they are the framework’s way of
+              composing work, not separate “bugs.”
+            </li>
+            <li style={{ marginBottom: 6 }}>
+              <strong style={{ color: "var(--text)" }} className="mono">
+                RunnableLambda
+              </strong>{" "}
+              — a small anonymous function node in that pipeline (data shape, routing, light
+              transforms). Usually no user-facing content; empty or tiny I/O is expected.
+            </li>
+            <li style={{ marginBottom: 6 }}>
+              <strong style={{ color: "var(--text)" }} className="mono">
+                CompiledStateGraph
+              </strong>{" "}
+              / graph nodes — the agent state machine (LangGraph). One specialist run is often
+              one compiled graph execution.
+            </li>
+            <li style={{ marginBottom: 6 }}>
+              <strong style={{ color: "var(--text)" }} className="mono">
+                ChannelWrite
+              </strong>
+              ,{" "}
+              <strong style={{ color: "var(--text)" }} className="mono">
+                Branch
+              </strong>
+              ,{" "}
+              <strong style={{ color: "var(--text)" }} className="mono">
+                __start__
+              </strong>
+              ,{" "}
+              <strong style={{ color: "var(--text)" }} className="mono">
+                __end__
+              </strong>{" "}
+              — graph wiring (write to state channels, conditional branches, entry/exit).
+              Rarely useful for review quality; hide them unless debugging the runtime.
+            </li>
+          </ul>
+
+          <div>
+            <strong style={{ color: "var(--text)" }}>Reading a step</strong>
+          </div>
+          <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
+            <li style={{ marginBottom: 6 }}>
+              <strong style={{ color: "var(--text)" }}>What was sent</strong> — inputs to that
+              step (prompts, tool args). Prefer the readable view; use{" "}
+              <em>Raw JSON</em> only when debugging structure.
+            </li>
+            <li style={{ marginBottom: 6 }}>
+              <strong style={{ color: "var(--text)" }}>What came back</strong> — model text, tool
+              results, or structured payloads. Empty tool results often mean a path/FS issue or
+              a refused sandbox call, not a blank UI.
+            </li>
+          </ul>
+
+          <div className="muted" style={{ fontSize: "0.8rem" }}>
+            <strong>Tip:</strong> start with LLM calls + tools for a given specialist; open
+            internal steps only when the agent seems stuck or tools return errors. Findings and
+            verdicts stay on{" "}
+            <Link to="/sessions">Sessions</Link> /{" "}
+            <Link to="/findings">Findings</Link> — traces explain{" "}
+            <em>how</em> the agents worked, not the final gate decision alone.
+          </div>
+        </div>
+      </details>
+
       {listErr && (
         <div className="banner error" style={{ marginBottom: 12 }}>
           {listErr}

@@ -104,10 +104,11 @@ describe("extractFindingsFromLlm", () => {
       });
       const out = extractFindingsFromLlm(content, { role: "correctness" });
       assert.equal(out.length, 2);
-      assert.equal(out[0]!.suggestedFix, "const x = 1;");
+      assert.ok(out[0]!.suggestedFix?.includes("--- a/a.ts"));
+      assert.ok(out[0]!.suggestedFix?.includes("+const x = 1;"));
       assert.equal(out[0]!.existingCode, "let x = 1;");
       assert.equal(out[0]!.suggestion?.includes("const"), true);
-      assert.equal(out[1]!.suggestedFix, "return null;");
+      assert.ok(out[1]!.suggestedFix?.includes("+return null;"));
       assert.equal(out[1]!.existingCode, "return undefined;");
     } finally {
       if (prev === undefined) delete process.env.STEW_SUGGESTED_FIX_MIN_CONFIDENCE;
@@ -144,7 +145,7 @@ describe("extractFindingsFromLlm", () => {
       assert.equal(out[0]!.suggestedFix, undefined);
       assert.equal(out[0]!.suggestion, "maybe fix");
       assert.ok((out[1]!.confidence ?? 0) >= 0.8);
-      assert.equal(out[1]!.suggestedFix, "goodFix();");
+      assert.ok(out[1]!.suggestedFix?.includes("+goodFix();"));
     } finally {
       if (prev === undefined) delete process.env.STEW_SUGGESTED_FIX_MIN_CONFIDENCE;
       else process.env.STEW_SUGGESTED_FIX_MIN_CONFIDENCE = prev;

@@ -8,10 +8,7 @@ import type {
 import { nowIso } from "@codesteward/core";
 import type { ModelRouter } from "@codesteward/model-router";
 import { severityCounts } from "./judge.js";
-import {
-  fencedCodeBlock,
-  markdownLanguageFromPath,
-} from "./scm-findings-publish.js";
+import { fencedCodeBlock } from "./scm-findings-publish.js";
 
 export interface SessionReport {
   /** Full human-readable markdown */
@@ -237,8 +234,9 @@ function findingsSection(findings: BuildSessionReportInput["findings"]): string 
         : "";
       const fix = f.suggestedFix?.trim()
         ? `\n  - **Proposed fix:**\n${fencedCodeBlock(
-            f.suggestedFix.trim().slice(0, 800),
-            markdownLanguageFromPath(f.path),
+            // Always ```diff — content is (or is normalized to) unified diff
+            f.suggestedFix.trim().slice(0, 1200),
+            "diff",
           )}`
         : "";
       return (

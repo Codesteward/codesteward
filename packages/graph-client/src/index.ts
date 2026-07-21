@@ -5,4 +5,6 @@ export {
   getEmbeddedGraphBridge,
   McpStdioBridge,
   ensureEmbeddedGraphMcp as startEmbeddedGraphBridge,
+  resolveGraphMcpSpawn,
 } from "./stdio-bridge.js";
+export type { ResolvedMcpSpawn, StdioBridgeOptions } from "./stdio-bridge.js";

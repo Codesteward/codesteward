@@ -36,11 +36,22 @@ function assertRebuildPath(scope: GraphToolScope, repoPath: string | undefined):
   return abs;
 }
 
+function isInfraSpawnError(msg: string): boolean {
+  return /spawn\s|EACCES|ENOENT|graph MCP stdio|Permission denied|binary not found/i.test(
+    msg,
+  );
+}
+
 /**
  * Graph tools for specialists. Scope is pinned by the orchestrator — agents
  * cannot switch tenant_id. Optional repoId on query is limited to allowedRepoIds.
  */
 export function createGraphTools(graph: GraphClient, scope: GraphToolScope) {
+  const defaultRebuildPath = (): string | undefined => {
+    const root = scope.workspaceRoot?.trim();
+    return root || undefined;
+  };
+
   const graph_status = tool(
     async () => {
       try {
@@ -48,20 +59,47 @@ export function createGraphTools(graph: GraphClient, scope: GraphToolScope) {
           tenantId: scope.tenantId,
           repoId: scope.repoId,
         });
-        return JSON.stringify(s);
-      } catch (err) {
+        const lastBuild =
+          (s as { last_build?: unknown }).last_build ??
+          (s as { lastBuild?: unknown }).lastBuild ??
+          null;
+        const needsRebuild = lastBuild == null;
         return JSON.stringify({
-          available: false,
-          error: err instanceof Error ? err.message : String(err),
+          ...s,
+          available: true,
           tenantId: scope.tenantId,
           repoId: scope.repoId,
-          hint: "Graph MCP unreachable or repo not indexed — continue without structural evidence",
+          ...(needsRebuild
+            ? {
+                next_step:
+                  "Graph has no last_build for this repo. Call graph_rebuild (omit repoPath — uses this unit workspace), then graph_query.",
+              }
+            : {
+                next_step:
+                  "Graph is indexed. Call graph_query (lexical/referential/dependency) for structural evidence.",
+              }),
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const infra = isInfraSpawnError(msg);
+        return JSON.stringify({
+          available: false,
+          error: msg,
+          tenantId: scope.tenantId,
+          repoId: scope.repoId,
+          hint: infra
+            ? "Graph MCP failed to start (worker infrastructure). graph_rebuild will fail the same way — continue with file tools/Diff; ops must fix GRAPH_MCP_COMMAND / codesteward-mcp install."
+            : "Graph unreachable or error — try graph_rebuild once, else continue without structural evidence.",
+          next_step: infra
+            ? "Do not retry graph tools for this unit; use read_file/sandbox and packed context."
+            : "Call graph_rebuild (no repoPath), then graph_status, then graph_query.",
         });
       }
     },
     {
       name: "graph_status",
-      description: "Return Codesteward Graph status for the current repo (nodes, edges, last_build).",
+      description:
+        "Return Codesteward Graph status for the current repo (nodes, edges, last_build). If last_build is null, call graph_rebuild before graph_query.",
       schema: z.object({}),
     },
   );
@@ -69,27 +107,48 @@ export function createGraphTools(graph: GraphClient, scope: GraphToolScope) {
   const graph_rebuild = tool(
     async ({ repoPath, changedFiles }) => {
       try {
-        const safePath = assertRebuildPath(scope, repoPath);
+        // Default to this unit's workspace so agents never invent host paths
+        const rawPath = (repoPath ?? "").trim() || defaultRebuildPath();
+        const safePath = assertRebuildPath(scope, rawPath);
+        if (!safePath) {
+          return JSON.stringify({
+            ok: false,
+            error:
+              "graph_rebuild needs a workspace path; none pinned for this unit (orchestrator should set unit repoPath).",
+          });
+        }
         const r = await graph.rebuild({
           tenantId: scope.tenantId,
           repoId: scope.repoId,
           repoPath: safePath,
           changedFiles: changedFiles ?? undefined,
         });
-        return JSON.stringify(r);
+        return JSON.stringify({
+          ...r,
+          ok: true,
+          repoId: scope.repoId,
+          next_step: "Call graph_query for structural evidence on this repo.",
+        });
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         return JSON.stringify({
           ok: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: msg,
+          hint: isInfraSpawnError(msg)
+            ? "Graph MCP cannot start — not an agent path issue. Continue without graph."
+            : "Rebuild failed; continue with file tools if appropriate.",
         });
       }
     },
     {
       name: "graph_rebuild",
       description:
-        "Parse/rebuild the structural graph for this repository only (full or incremental). Path must be this session's workspace.",
+        "Parse/rebuild the structural graph for THIS unit's repository. Prefer omitting repoPath (defaults to the unit workspace). Call when graph_status shows last_build=null or empty results, then graph_query.",
       schema: z.object({
-        repoPath: z.string().optional(),
+        repoPath: z
+          .string()
+          .optional()
+          .describe("Optional; defaults to this unit workspace. Do not pass host/session paths."),
         changedFiles: z.array(z.string()).optional(),
       }),
     },
@@ -105,20 +164,34 @@ export function createGraphTools(graph: GraphClient, scope: GraphToolScope) {
           repoId: rid,
           limit: limit ?? 50,
         });
-        return JSON.stringify(r).slice(0, 12000);
+        const text = JSON.stringify(r);
+        // Empty / no-build style results: nudge rebuild once
+        const emptyHint =
+          /"results"\s*:\s*\[\s*\]/.test(text) ||
+          /last_build["']?\s*:\s*null/.test(text)
+            ? {
+                next_step:
+                  "Empty graph results — if you have not rebuilt this unit yet, call graph_rebuild then retry graph_query.",
+              }
+            : {};
+        return JSON.stringify({ ...r, ...emptyHint }).slice(0, 12000);
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         return JSON.stringify({
           available: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: msg,
           queryType,
           query,
+          next_step: isInfraSpawnError(msg)
+            ? "Graph MCP down — skip graph for this unit."
+            : "If the graph was never built, call graph_rebuild then retry; else continue without structural evidence.",
         });
       }
     },
     {
       name: "graph_query",
       description:
-        "Query the structural code graph for this review (and allowed linked repos). queryType: lexical|referential|semantic|dependency.",
+        "Query the structural code graph for this review (and allowed linked repos). queryType: lexical|referential|semantic|dependency. If empty and no prior rebuild this unit, call graph_rebuild first.",
       schema: z.object({
         queryType: z.enum(["lexical", "referential", "semantic", "dependency", "cypher", "gremlin"]),
         query: z.string().default(""),

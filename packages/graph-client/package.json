@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "echo 'no tests'",
+    "test": "tsc -p tsconfig.json && node --test dist/__tests__/*.test.js",
     "lint": "echo 'lint:ok'"
   },
   "dependencies": {

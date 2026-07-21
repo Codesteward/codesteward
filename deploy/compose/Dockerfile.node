@@ -32,9 +32,12 @@ RUN pnpm install --frozen-lockfile=false \
 
 FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS runtime
 # uv installs a private Python 3.12 + codesteward-mcp for embedded Graph (stdio in workers).
+# IMPORTANT: install CPython under /opt (not /root/.local). The entrypoint drops to uid 1001;
+# a shebang/interpreter under mode-700 /root causes spawn EACCES for codesteward-mcp.
 COPY --from=ghcr.io/astral-sh/uv:0.6.14@sha256:3362a526af7eca2fcd8604e6a07e873fb6e4286d8837cb753503558ce1213664 /uv /usr/local/bin/uv
 COPY deploy/compose/requirements-graph.txt /tmp/requirements-graph.txt
 # hadolint ignore=DL3008
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates openssh-client bash \
   && rm -rf /var/lib/apt/lists/* \
@@ -42,6 +45,8 @@ RUN apt-get update \
   && uv python install 3.12 \
   && uv venv /opt/graph-venv --python 3.12 \
   && uv pip install --python /opt/graph-venv -r /tmp/requirements-graph.txt \
+  && chmod -R a+rX /opt/uv-python /opt/graph-venv \
+  && chmod a+x /opt/graph-venv/bin/codesteward-mcp /opt/graph-venv/bin/python* 2>/dev/null || true \
   && rm -f /tmp/requirements-graph.txt \
   && groupadd --system --gid 1001 steward \
   && useradd --system --uid 1001 --gid steward --home-dir /app --shell /usr/sbin/nologin steward \
@@ -70,7 +75,8 @@ ENV NODE_ENV=production \
     HOME=/tmp \
     PATH="/opt/graph-venv/bin:${PATH}" \
     GRAPH_MCP_MODE=stdio \
-    GRAPH_MCP_COMMAND=codesteward-mcp \
+    # Absolute path avoids PATH/EACCES surprises when dropping to uid 1001
+    GRAPH_MCP_COMMAND=/opt/graph-venv/bin/codesteward-mcp \
     GRAPH_BACKEND=auto
 ARG SERVICE=api
 ENV SERVICE=${SERVICE}

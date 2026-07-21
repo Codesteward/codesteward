@@ -32,7 +32,7 @@ x-stew-env: &stew-env
   PORT: "8081"
   GRAPH_MOCK: "0"
   GRAPH_MCP_MODE: stdio
-  GRAPH_MCP_COMMAND: codesteward-mcp
+  GRAPH_MCP_COMMAND: /opt/graph-venv/bin/codesteward-mcp
   GRAPH_BACKEND: graphqlite
   GRAPHQLITE_PATH: /data/graph.db
   STEW_DEBUG_LLM: ${STEW_DEBUG_LLM:-1}

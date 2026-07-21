@@ -86,18 +86,21 @@ const OUTPUT_FORMAT_WITH_CODE_FIX =
   "Per-finding confidence = your self-assessed certainty 0–1 (diagnostic only; the product computes its own evidence-based score). " +
   REASONING_CONTRACT +
   " When findings is empty, always set emptyScanConfidence 0–1 for how sure you are that nothing actionable was missed. " +
-  "For each finding: suggestion = short plain-language guidance; suggestedFix = the concrete code that would fix the issue " +
-  "(a drop-in replacement snippet for the cited lines, or a minimal multi-line fragment — not a full file rewrite). " +
+  "For each finding: suggestion = short plain-language guidance; suggestedFix = a **unified git diff** " +
+  "(```diff style body only, no markdown fences inside JSON) for the cited lines — " +
+  "prefer form with --- a/<path>, +++ b/<path>, @@ hunk, then -old / +new lines. " +
+  "Not a full-file rewrite; keep the hunk minimal. " +
   "existingCode = the current lines being replaced when helpful for grounding. " +
   "Omit suggestedFix only when a safe concrete fix cannot be proposed from the context.";
 
 const CODE_FIX_GUIDANCE =
-  "CODE FIXES ENABLED: Prefer actionable findings with a concrete suggestedFix. " +
-  "Keep suggestedFix minimal and correct; match the file's style. " +
+  "CODE FIXES ENABLED: Prefer actionable findings with a concrete suggestedFix as a **unified git diff**. " +
+  "Always use unified diff format for suggestedFix (--- / +++ / @@ / - / +), never a bare code snippet. " +
+  "Keep the hunk minimal and correct; match the file's style. " +
   "Do not invent APIs or imports that are not present in the packed context. " +
   "Only set suggestedFix when the fix is well-grounded in path/line context " +
   "(the product gates suggestedFix on evidence-based confidence, not your self-score alone). " +
-  "suggestion remains the human-readable explanation; suggestedFix is the code.";
+  "suggestion remains the human-readable explanation; suggestedFix is always the unified diff body.";
 
 /** Org/runtime: STEW_SUGGESTED_CODE_FIXES=1 enables concrete fix snippets on findings. */
 export function isSuggestedCodeFixesEnabled(
@@ -131,17 +134,23 @@ const DEEP_TOOLS_DEFAULT = `You are running inside Codesteward Review with REAL 
 FILE ACCESS (this unit's workspace root is virtual \`/\` — jailed per session/unit):
 - Prefer: ls, read_file, glob, grep — these read THIS unit's cloned tree only.
 - Also: sandbox_read { path } and sandbox_exec { command } (cwd = unit root).
-- Paths: workspace-relative or virtual absolute only — e.g. \`/\`, \`/src/foo.ts\`, \`package.json\`, unit paths from the prompt.
-- NEVER use host/session paths: \`workspace/…\`, \`/workspace/…\`, \`local/ses_…\`, \`cross/Owner__repo/\`. Those are not valid tool paths (tools rewrite or refuse them). Cross-repo code is a separate unit with its own root.
+- Paths for ls/read_file/glob/grep MUST be virtual absolute starting with \`/\`:
+  - list root: ls path=\`/\`  (NOT \`.\` — relative paths fail)
+  - file: read_file file_path=\`/src/foo.ts\`
+- sandbox_* may use relative paths (\`.\`, \`src/foo.ts\`) because cwd is the unit root.
+- NEVER use host/session paths: \`workspace/…\`, \`/workspace/…\`, \`local/ses_…\`, \`cross/Owner__repo/\`. Cross-repo code is a separate unit with its own root.
 
 GRAPH (structural, not a substitute for source):
-- graph_status, graph_query (lexical / referential / …), and related graph tools for call chains, imports, auth guards.
+- Workflow: graph_status → if last_build is null OR available=false with a rebuild hint → graph_rebuild (omit repoPath) → graph_query.
+- Tools: graph_status, graph_rebuild, graph_query (lexical / referential / semantic / dependency), graph_augment.
+- If graph_status error mentions spawn/EACCES/ENOENT, Graph MCP is down — do not loop; use file tools only.
+- Never pass host paths to graph_rebuild; omit repoPath so it uses this unit workspace.
 
 RULES:
 1. SOURCE CODE FIRST — open Diff/context, then read the files you cite with read_file or sandbox_read.
 2. If ls/glob return empty, retry with unit paths from the prompt or sandbox_read; do not invent APIs or line-level bugs.
 3. Do not claim a finding without having read the relevant file content (or packed Diff) unless the claim is purely graph-topology.
-4. graph_query supports cross-file / auth / call-chain claims; it does not replace reading code.
+4. For structural claims (callers, auth guards, imports): graph_status → rebuild if needed → graph_query; graph does not replace reading code.
 5. Stay read-only on the review tree (no write_file / edit_file).
 6. You cannot access other review sessions or other units' host trees — only this unit root + allowed graph repo ids.`;
 

@@ -6,6 +6,7 @@
 import type { Severity } from "@codesteward/core";
 import type { DiffFile, ReviewComment, ScmProvider } from "@codesteward/scm";
 import { capComments } from "./noise.js";
+import { normalizeSuggestedFixAsDiff } from "./suggested-fix-diff.js";
 
 export type PublishableFinding = {
   id?: string;
@@ -230,7 +231,15 @@ export function formatFindingPrCommentBody(
     parts.push("", `**Suggestion:** ${f.suggestion.trim()}`);
   }
   if (f.suggestedFix?.trim()) {
-    parts.push("", "**Proposed fix:**", fencedCodeBlock(f.suggestedFix, lang));
+    // Always ```diff so GH/GFM and comment parsers use diff highlighting
+    // (models sometimes emit plain snippets; normalize to unified diff).
+    const fixDiff = normalizeSuggestedFixAsDiff({
+      path: f.path ?? "file",
+      suggestedFix: f.suggestedFix,
+      existingCode: f.existingCode,
+      startLine: f.startLine,
+    });
+    parts.push("", "**Proposed fix:**", fencedCodeBlock(fixDiff, "diff"));
   }
   if (f.fingerprint) {
     parts.push("", `<!-- fingerprint:${f.fingerprint} -->`);

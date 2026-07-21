@@ -161,10 +161,17 @@ export function normalizeReviewToolPath(
   return abs.slice(root.length).replace(/^[/\\]+/, "") || ".";
 }
 
-/** Virtual absolute path for DeepAgents FilesystemBackend (virtualMode). */
+/**
+ * Virtual absolute path for DeepAgents FilesystemBackend (virtualMode).
+ * Always returns a path starting with `/` — DeepAgents tools/docs require this
+ * even when permissions middleware is disabled.
+ */
 export function toVirtualReviewPath(relativePath: string): string {
-  const r = (relativePath ?? "").trim().replace(/\\/g, "/");
-  if (!r || r === ".") return "/";
+  let r = (relativePath ?? "").trim().replace(/\\/g, "/");
+  if (!r || r === "." || r === "./") return "/";
+  // Collapse accidental `//` and strip trailing dots-only segments
+  r = r.replace(/\/{2,}/g, "/");
+  if (r === "/" || r === "/.") return "/";
   return r.startsWith("/") ? r : `/${r}`;
 }
 

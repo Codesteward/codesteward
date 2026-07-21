@@ -34,12 +34,17 @@ export function createReviewFilesystemBackend(
   inner: AnyBackend,
   workspaceRoot: string,
 ): AnyBackend {
+  /**
+   * Map model-supplied paths (`.`, relative, host/cross mistakes) to virtual
+   * absolute paths under the unit root. Never return a non-absolute string —
+   * DeepAgents FilesystemBackend virtualMode expects `/…`.
+   */
   const map = (p: string | null | undefined, fallback = "/"): string => {
     try {
       const rel = normalizeReviewToolPath(p ?? fallback, workspaceRoot);
-      return toVirtualReviewPath(rel);
+      const v = toVirtualReviewPath(rel);
+      return v.startsWith("/") ? v : `/${v}`;
     } catch (err) {
-      // Return a virtual path that will fail cleanly inside the backend rather than escape
       throw err;
     }
   };
@@ -48,7 +53,9 @@ export function createReviewFilesystemBackend(
     id: inner.id,
     ls: async (path: string) => {
       try {
-        return await inner.ls(map(path, "/"));
+        // Default empty / relative root → unit root
+        const raw = path == null || path === "" ? "/" : path;
+        return await inner.ls(map(raw, "/"));
       } catch (err) {
         return {
           error: err instanceof Error ? err.message : String(err),

@@ -29,3 +29,4 @@ export * from "./graph-scope.js";
 export * from "./gate.js";
 export * from "./prompt-pack.js";
 export * from "./scm-findings-publish.js";
+export * from "./suggested-fix-diff.js";

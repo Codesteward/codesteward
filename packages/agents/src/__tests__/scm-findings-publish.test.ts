@@ -25,7 +25,7 @@ describe("fencedCodeBlock", () => {
 });
 
 describe("formatFindingPrCommentBody", () => {
-  it("highlights context and proposed fix from path", () => {
+  it("uses language from path for context and always ```diff for proposed fix", () => {
     const body = formatFindingPrCommentBody(
       {
         path: "internal/controller/queue.go",
@@ -35,12 +35,31 @@ describe("formatFindingPrCommentBody", () => {
         severity: "high",
         category: "security",
         existingCode: "if err != nil {\n  return err\n}",
+        // plain snippet — must be normalized to unified diff + fenced as diff
         suggestedFix: "if err != nil {\n  return fmt.Errorf(\"wrap: %w\", err)\n}",
       },
       { inline: true },
     );
     assert.match(body, /```go\n/);
-    assert.equal((body.match(/```go\n/g) ?? []).length, 2);
-    assert.doesNotMatch(body, /```\nfunc/);
+    assert.match(body, /\*\*Proposed fix:\*\*\n```diff\n/);
+    assert.match(body, /--- a\/internal\/controller\/queue\.go/);
+    assert.match(body, /\+if err != nil \{/);
+    assert.doesNotMatch(body, /\*\*Proposed fix:\*\*\n```go\n/);
+  });
+
+  it("keeps already-unified suggestedFix as ```diff", () => {
+    const body = formatFindingPrCommentBody(
+      {
+        path: "src/a.ts",
+        startLine: 1,
+        title: "T",
+        body: "B",
+        severity: "low",
+        suggestedFix:
+          "--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,1 @@\n-old\n+new\n",
+      },
+      { inline: true },
+    );
+    assert.match(body, /```diff\n--- a\/src\/a\.ts/);
   });
 });

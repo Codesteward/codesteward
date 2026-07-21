@@ -235,24 +235,33 @@ export function Findings() {
                           </div>
                         )}
                         {f.suggestedFix?.trim() && (
-                          <pre
-                            className="mono"
-                            style={{
-                              fontSize: "0.72rem",
-                              marginTop: 6,
-                              maxWidth: 440,
-                              maxHeight: 140,
-                              overflow: "auto",
-                              padding: "0.45rem 0.55rem",
-                              borderRadius: 8,
-                              border: "1px solid var(--border)",
-                              background: "var(--bg-panel, rgba(0,0,0,0.25))",
-                              whiteSpace: "pre-wrap",
-                            }}
-                          >
-                            {f.suggestedFix.trim().slice(0, 1200)}
-                            {f.suggestedFix.trim().length > 1200 ? "\n…" : ""}
-                          </pre>
+                          <div style={{ marginTop: 6 }}>
+                            <div
+                              className="muted"
+                              style={{ fontSize: "0.72rem", marginBottom: 2 }}
+                            >
+                              Proposed fix{" "}
+                              <span className="mono">(unified diff)</span>
+                            </div>
+                            <pre
+                              className="mono"
+                              style={{
+                                fontSize: "0.72rem",
+                                margin: 0,
+                                maxWidth: 440,
+                                maxHeight: 140,
+                                overflow: "auto",
+                                padding: "0.45rem 0.55rem",
+                                borderRadius: 8,
+                                border: "1px solid var(--border)",
+                                background: "var(--bg-panel, rgba(0,0,0,0.25))",
+                                whiteSpace: "pre-wrap",
+                              }}
+                            >
+                              {f.suggestedFix.trim().slice(0, 1200)}
+                              {f.suggestedFix.trim().length > 1200 ? "\n…" : ""}
+                            </pre>
+                          </div>
                         )}
                         {(f.evidence ?? []).some(
                           (e) => e.type === "graph" || e.type === "tool" || e.summary,

@@ -29,7 +29,7 @@ spec:
             - name: GRAPH_MCP_MODE
               value: "stdio"
             - name: GRAPH_MCP_COMMAND
-              value: "codesteward-mcp"
+              value: "/opt/graph-venv/bin/codesteward-mcp"
             - name: GRAPH_BACKEND
               value: {{ .Values.graph.backend | quote }}
             {{- if eq .Values.graph.backend "neo4j" }}

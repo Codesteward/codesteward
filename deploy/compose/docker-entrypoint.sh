@@ -30,6 +30,20 @@ if [ "$(id -u)" = "0" ]; then
     mkdir -p "$STEW_CHECKPOINT_DIR"
     chown -R "${STEWARD_UID}:${STEWARD_GID}" "$STEW_CHECKPOINT_DIR" 2>/dev/null || true
   fi
+  # Legacy images installed uv CPython under /root/.local (mode 700 /root).
+  # Worker drops to uid 1001 → codesteward-mcp shebang cannot load libpython (EACCES).
+  # o+x on ancestors allows path traversal; o+rX on the tree allows lib load.
+  if [ -d /root/.local/share/uv ]; then
+    chmod o+x /root /root/.local /root/.local/share 2>/dev/null || true
+    chmod -R o+rX /root/.local/share/uv 2>/dev/null || true
+  fi
+  if [ -d /opt/uv-python ]; then
+    chmod -R a+rX /opt/uv-python 2>/dev/null || true
+  fi
+  if [ -x /opt/graph-venv/bin/codesteward-mcp ]; then
+    chmod a+rX /opt/graph-venv /opt/graph-venv/bin 2>/dev/null || true
+    chmod a+x /opt/graph-venv/bin/codesteward-mcp 2>/dev/null || true
+  fi
   # Drop privileges (util-linux setpriv is present on bookworm-slim)
   if command -v setpriv >/dev/null 2>&1; then
     exec setpriv --reuid="${STEWARD_UID}" --regid="${STEWARD_GID}" --clear-groups -- "$@"
