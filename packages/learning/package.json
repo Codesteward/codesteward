@@ -1,6 +1,6 @@
 {
   "name": "@codesteward/learning",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Finding reactions and org memories for noise suppression",
   "type": "module",
   "main": "./dist/index.js",

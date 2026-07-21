@@ -29,5 +29,5 @@ runcmd:
     fi
     export DOMAIN="${DOMAIN:-}"
     export ACME_EMAIL="${ACME_EMAIL:-}"
-    export IMAGE_TAG="${IMAGE_TAG:-1.4.0}"
+    export IMAGE_TAG="${IMAGE_TAG:-1.5.0}"
     bash "$INSTALL_DIR/deploy/cloud/first-boot.sh"

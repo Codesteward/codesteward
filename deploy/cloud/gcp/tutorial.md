@@ -18,7 +18,7 @@ gcloud config set project YOUR_PROJECT_ID
 ```bash
 export DOMAIN=           # e.g. steward.example.com
 export ACME_EMAIL=       # e.g. you@example.com
-export IMAGE_TAG=1.4.0
+export IMAGE_TAG=1.5.0
 ```
 
 3. Deploy:

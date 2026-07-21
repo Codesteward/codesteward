@@ -1,7 +1,7 @@
 {
   "name": "@codesteward/worker",
-  "version": "1.4.0",
-  "description": "Review worker — pulls jobs (Postgres/file + optional NATS/RabbitMQ/Pulsar broker) and runs orchestrator",
+  "version": "1.5.0",
+  "description": "Review worker \u2014 pulls jobs (Postgres/file + optional NATS/RabbitMQ/Pulsar broker) and runs orchestrator",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

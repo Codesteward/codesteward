@@ -9,7 +9,7 @@ az group create -n codesteward-rg -l eastus
 az deployment group create \
   -g codesteward-rg \
   -f deploy/cloud/azure/main.bicep \
-  --parameters adminPublicKey="$(cat ~/.ssh/id_rsa.pub)" imageTag=1.4.0
+  --parameters adminPublicKey="$(cat ~/.ssh/id_rsa.pub)" imageTag=1.5.0
 ```
 
 ## Deploy button (after ARM export is published)

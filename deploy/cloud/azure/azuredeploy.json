@@ -59,7 +59,7 @@
     },
     "imageTag": {
       "type": "string",
-      "defaultValue": "1.4.0",
+      "defaultValue": "1.5.0",
       "metadata": {
         "description": "Container image tag"
       }

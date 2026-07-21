@@ -44,7 +44,7 @@ Parameters:
     Description: Required when Domain is set
   ImageTag:
     Type: String
-    Default: "1.4.0"
+    Default: "1.5.0"
   GitRef:
     Type: String
     Default: main

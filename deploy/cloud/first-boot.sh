@@ -5,7 +5,7 @@
 # Env (optional):
 #   DOMAIN          Public DNS name (HTTPS CN; self-signed unless you replace certs/)
 #   ACME_EMAIL      Reserved for future Let's Encrypt automation
-#   IMAGE_TAG       App/UI image tag (default from VERSION file or 1.4.0)
+#   IMAGE_TAG       App/UI image tag (default from VERSION file or 1.5.0)
 #   PUBLIC_IP       Override auto-detected public IP
 #   SKIP_DOCKER_INSTALL=1
 #   COMPOSE_PROJECT_DIR  Default: directory of this script
@@ -17,7 +17,7 @@ set -euo pipefail
 CLOUD_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_DIR="${COMPOSE_PROJECT_DIR:-$CLOUD_ROOT/compose}"
 VERSION_FILE="$CLOUD_ROOT/VERSION"
-IMAGE_TAG="${IMAGE_TAG:-$(tr -d '[:space:]' <"$VERSION_FILE" 2>/dev/null || echo 1.4.0)}"
+IMAGE_TAG="${IMAGE_TAG:-$(tr -d '[:space:]' <"$VERSION_FILE" 2>/dev/null || echo 1.5.0)}"
 STATE_DIR="${STATE_DIR:-/var/lib/codesteward}"
 CRED_FILE="${CRED_FILE:-$STATE_DIR/credentials.txt}"
 ENV_FILE="$COMPOSE_DIR/.env"
@@ -301,7 +301,7 @@ main() {
   fi
   # Strip uninterpolated IaC placeholders (e.g. Azure left ${imageTag} in customData)
   case "${IMAGE_TAG:-}" in
-    *'${'*|*imageTag*) IMAGE_TAG="$(tr -d '[:space:]' <"$VERSION_FILE" 2>/dev/null || echo 1.4.0)"; log "Using IMAGE_TAG=$IMAGE_TAG" ;;
+    *'${'*|*imageTag*) IMAGE_TAG="$(tr -d '[:space:]' <"$VERSION_FILE" 2>/dev/null || echo 1.5.0)"; log "Using IMAGE_TAG=$IMAGE_TAG" ;;
   esac
   case "${DOMAIN:-}" in
     *'${'*|domain) DOMAIN="" ;;

@@ -389,21 +389,21 @@ Swarm: also download `docker-compose.stack.swarm.yml`, then
 
 ## Changelog & release
 
-- **[CHANGELOG.md](./CHANGELOG.md)** — Keep a Changelog (current: **1.4.0**)
+- **[CHANGELOG.md](./CHANGELOG.md)** — Keep a Changelog (current: **1.5.0**)
 - **CI** — `.github/workflows/ci.yml` (build, typecheck, unit tests, Semgrep, zizmor, dependency-review)
 - **Release** — tag `vX.Y.Z` → `.github/workflows/release.yml` publishes GHCR images + GitHub Release notes from the matching changelog section:
 
 ```bash
-# After CHANGELOG has ## [1.4.0] and versions are bumped
-git tag v1.4.0
-git push origin v1.4.0
+# After CHANGELOG has ## [1.5.0] and versions are bumped
+git tag v1.5.0
+git push origin v1.5.0
 ```
 
 Images ([Codesteward/codesteward](https://github.com/Codesteward/codesteward) → GHCR, lowercased):
 
 | Image | Dockerfile | Tags |
 |-------|------------|------|
-| `ghcr.io/codesteward/codesteward` | `deploy/compose/Dockerfile.node` (API; `SERVICE=worker` for workers) | product semver (`1.4.0`) |
+| `ghcr.io/codesteward/codesteward` | `deploy/compose/Dockerfile.node` (API; `SERVICE=worker` for workers) | product semver (`1.5.0`) |
 | `ghcr.io/codesteward/codesteward/ui` | `deploy/compose/Dockerfile.ui` | product semver |
 | `ghcr.io/codesteward/codesteward/keycloak` | `deploy/compose/keycloak/Dockerfile` | **upstream Keycloak** (`26.7.0`, not product) |
 | Helm chart `oci://ghcr.io/codesteward/codesteward/charts/codesteward` | `deploy/helm/codesteward` | product semver |

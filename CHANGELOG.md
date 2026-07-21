@@ -9,38 +9,81 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+---
+
+## [1.5.0] — 2026-07-21
+
+Product session traces (ClickHouse), pull-only deploy stack, DeepAgents/workspace reliability, Graph MCP stdio
+fixes, and unified-diff proposed fixes for SCM comments.
+
 ### Added
 
-- **Pull-only stack** — standalone `deploy/compose/docker-compose.stack.yml` (optional `docker-compose.stack.swarm.yml`
-  for Swarm overlay only): published GHCR images, no monorepo / no build.
-- **Re-review GitHub thread resolve** — when lifecycle marks prior findings `fixed` (fingerprint gone after a new
-  push/session), resolve matching PR review threads via GraphQL when `scmCommentId` / fingerprint / finding markers match.
-  Disable with `STEW_RESOLVE_FIXED_THREADS=0`.
-- **Org Analytics** — token totals, average tokens per session, estimated total cost, and average cost per session
-  (from session `tokenUsage` / list-price estimates).
-- **Platform ClickHouse product traces** — optional install-wide sink (UI: Platform settings). When enabled, **every
-  org** dual-writes full session observations (agents, tools, LLM I/O, metadata; secret-redacted, no normal truncation)
+- **Platform ClickHouse product traces** — optional install-wide sink (**Platform settings**). When enabled, every
+  org dual-writes full session observations (agents, tools, LLM I/O, metadata; secret-redacted, no normal truncation)
   for session deep-dive + analytics. Orgs cannot disable ingestion; they may only override **TTL days**
   (`GET/PUT /v1/org/trace-ttl`). Read paths: `GET /v1/org/trace-storage`, `GET /v1/org/traces/sessions`,
   `GET /v1/sessions/:id/traces`. Env: `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`,
   `CLICKHOUSE_DATABASE`, `STEW_CLICKHOUSE_DEFAULT_TTL_DAYS`.
-- **Traces UI** — org-scoped **Traces** menu (any tenant member, not platform-only) when ClickHouse is enabled:
-  list sessions with stored observations, open a session, expand generations/tools/spans with full I/O.
-- **ClickHouse compose overlay** — `deploy/compose/docker-compose.clickhouse.yml` (+ `clickhouse/config.d`) for local
-  product-trace testing with the category stack; configure the sink in **Platform → ClickHouse** (no env wire file).
+- **Traces UI** — org-scoped **Traces** nav (any tenant member when ClickHouse is enabled): list sessions with
+  stored observations, expand generations / tools / spans with readable I/O (raw JSON optional). Collapsible
+  help for event types and LangChain internals (`RunnableSequence`, `RunnableLambda`, graph spans).
+- **ClickHouse compose overlay** — `deploy/compose/docker-compose.clickhouse.yml` (+ `clickhouse/config.d`) for
+  local product-trace testing; configure the sink in **Platform → ClickHouse** (no preferred env wire file).
+- **Pull-only stack** — standalone `deploy/compose/docker-compose.stack.yml` (optional
+  `docker-compose.stack.swarm.yml` for Swarm): published GHCR images, no monorepo / no build.
+- **Re-review GitHub thread resolve** — when lifecycle marks prior findings `fixed` (fingerprint gone after a new
+  push/session), resolve matching PR review threads via GraphQL when `scmCommentId` / fingerprint / finding markers
+  match. Disable with `STEW_RESOLVE_FIXED_THREADS=0`.
+- **Org Analytics** — token totals, average tokens per session, estimated total cost, and average cost per session
+  (from session `tokenUsage` / list-price estimates).
+- **Langfuse dual-write / sticky session IDs** — full agent + subagent turns dual-written with product `sessionId`
+  (org + platform destinations); specialist trace ids scoped per unit/role for parallel runs.
 
 ### Changed
 
-- **PR finding code blocks** use GFM language tags from the file path (e.g. `go`, `typescript`, `yaml`) so GitHub
-  highlights **Context** and **Proposed fix** snippets.
+- **Proposed fixes are always unified git diffs** — specialists are prompted for unified-diff `suggestedFix`;
+  extract normalizes plain snippets → `---/+++/@@` hunks; PR comments, session reports, and Findings UI always
+  render **Proposed fix** as a ` ```diff ` fence (Context blocks still use path language, e.g. `go` / `ts`).
+  Fixes GH comment parsers that previously saw language-tagged fences around diff-shaped bodies.
+- **PR finding Context blocks** continue to use GFM language tags from the file path for non-fix snippets.
 - **Finding status mix** labels are humanized (`false_positive` → “False positive”).
+- **DeepAgents review filesystem** — `FilesystemBackend` rooted on the unit clone (`virtualMode`), path jail +
+  host/cross-repo rewrite, empty permissions (avoids `path must be absolute` kills), read-only write/edit refuse,
+  sandbox tools jailed to unit cwd, prompts no longer leak host `repoPath`.
+- **Worker Graph MCP** — default `GRAPH_MCP_COMMAND=/opt/graph-venv/bin/codesteward-mcp`; image installs uv CPython
+  under `UV_PYTHON_INSTALL_DIR=/opt/uv-python` (readable by uid 1001); entrypoint opens legacy `/root/.local/share/uv`
+  when needed; stdio protocol is **NDJSON** (not Content-Length) for `codesteward-mcp`.
 
 ### Fixed
 
-- **DeepAgents empty filesystem tools** — built-in `ls` / `read_file` / `glob` / `grep` used an empty
-  in-memory backend, so specialists often “found nothing” and guessed findings. Bind
-  `FilesystemBackend` to the review clone (`virtualMode`), deny writes, strengthen deep-tools prompts,
-  and add `sandbox_ls` plus smarter `sandbox_read` path normalization.
+- **DeepAgents empty filesystem tools** — built-in `ls` / `read_file` / `glob` / `grep` bound to the review clone
+  instead of an empty in-memory FS; `sandbox_ls` / smarter `sandbox_read`; cross-repo mistaken host paths
+  (`workspace/local/ses_…/cross/…`) rewritten or refused.
+- **DeepAgents `path must be absolute: "."`** — non-empty DeepAgents `permissions` forced absolute paths before
+  our normalizer and aborted specialists under `STEW_REQUIRE_TOOL_AGENTS`. Permissions cleared; jail/read-only
+  enforced in the review backend.
+- **Graph MCP `spawn … EACCES` as steward** — uv CPython lived under mode-700 `/root`; shebang could not load
+  `libpython` after privilege drop. Fixed install path + entrypoint chmod.
+- **Worker not claiming jobs after Graph MCP hang** — Content-Length framing broke `codesteward-mcp` NDJSON
+  init; worker never entered dequeue. NDJSON write/parse + short init timeout; job loop starts even if graph soft-fails.
+- **Cross-repo specialist path probing** — unit-rooted tools + prompt/metadata host-path redaction so agents do not
+  `ls` session tree prefixes relative to the linked clone.
+
+### Upgrade notes
+
+1. Pull images / chart for **1.5.0**:
+   ```bash
+   helm upgrade --install codesteward oci://ghcr.io/codesteward/codesteward/charts/codesteward \
+     --version 1.5.0 \
+     --set image.tag=1.5.0 \
+     --set ui.image.tag=1.5.0
+   ```
+2. **Optional product traces:** deploy ClickHouse (or managed), set platform ClickHouse in UI, or compose
+   `docker-compose.clickhouse.yml`. Members see **Traces** when the sink is enabled.
+3. **Workers:** rebuild so Graph MCP binary + NDJSON client ship; confirm logs show
+   `[graph-mcp] stdio session ready` then `[worker] starting Codesteward review worker`.
+4. **Suggested code fixes:** existing DB rows may still store plain snippets; new extracts + PR publish always
+   emit unified ` ```diff ` for proposed fixes.
 
 ---
 
