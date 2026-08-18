@@ -13,7 +13,7 @@
 #   docker build --build-arg KEYCLOAK_VERSION=$KC -t codesteward-keycloak:$KC \
 #     -f Dockerfile .
 
-ARG KEYCLOAK_VERSION=26.7.0
+ARG KEYCLOAK_VERSION=26.7.1
 FROM quay.io/keycloak/keycloak:${KEYCLOAK_VERSION}
 
 USER root
