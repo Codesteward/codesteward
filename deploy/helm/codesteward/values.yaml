@@ -166,7 +166,7 @@ keycloak:
   image:
     # Official image from Codesteward/codesteward releases
     repository: ghcr.io/codesteward/codesteward/keycloak
-    tag: "26.7.0"
+    tag: \"26.8.1"
     pullPolicy: IfNotPresent
   replicas: 1
   port: 8083
